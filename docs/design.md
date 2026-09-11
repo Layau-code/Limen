@@ -1,8 +1,8 @@
-# AIGate MVP 设计
+# Limen MVP 设计
 
 ## 1. 目标
 
-用最小范围验证一个生产思维的 AI Gateway 请求闭环：上游通过 OpenAI-Compatible API 发起请求，AIGate 完成鉴权并将请求转发到 OpenAI，同时正确处理普通响应、SSE 流、超时和客户端断开。
+用最小范围验证一个生产思维的 AI Gateway 请求闭环：上游通过 OpenAI-Compatible API 发起请求，Limen 完成鉴权并将请求转发到 OpenAI，同时正确处理普通响应、SSE 流、超时和客户端断开。
 
 成功标准：
 
@@ -29,7 +29,7 @@ HTTP API
 ```
 
 - **HTTP API**：解析请求、校验基本格式、映射响应与错误。
-- **Authentication**：验证 AIGate API Key，不负责用户体系或权限管理。
+- **Authentication**：验证 Limen API Key，不负责用户体系或权限管理。
 - **Chat Completion Service**：协调一次请求，不包含 HTTP 框架细节。
 - **OpenAI Client**：构造上游请求并管理连接、超时和响应体。
 - **Response / SSE Relay**：将上游响应及时转发给客户端，不解析或聚合完整流。
@@ -38,7 +38,7 @@ HTTP API
 
 ## 4. 请求数据流
 
-1. 客户端携带 AIGate API Key 调用 `/v1/chat/completions`。
+1. 客户端携带 Limen API Key 调用 `/v1/chat/completions`。
 2. API 层完成鉴权和最小请求校验。
 3. 服务层将请求上下文传给 OpenAI Client。
 4. OpenAI Client 使用服务端保存的 OpenAI Key 请求 Provider。
@@ -48,7 +48,7 @@ HTTP API
 
 ## 5. 错误处理
 
-- AIGate 鉴权失败返回 `401`。
+- Limen 鉴权失败返回 `401`。
 - 请求格式错误返回 `400`。
 - 上游超时映射为网关超时错误。
 - 上游在响应开始前失败时，尽可能保留有用状态与错误信息。
@@ -59,7 +59,7 @@ HTTP API
 
 ## 6. 配置与安全
 
-首版配置至少包含监听地址、AIGate API Key、OpenAI API Key、OpenAI Base URL 和请求超时。敏感配置仅通过运行环境注入，不提交到仓库。
+首版配置至少包含监听地址、Limen API Key、OpenAI API Key、OpenAI Base URL 和请求超时。敏感配置仅通过运行环境注入，不提交到仓库。
 
 日志允许记录请求 ID、路径、模型、状态、总延迟和取消原因；不得记录鉴权头、Provider Key 或默认记录完整 Prompt/Response。
 

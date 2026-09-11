@@ -1,12 +1,16 @@
-# AIGate
+# Limen
 
-AIGate 是一个使用 Go 实现、兼容 OpenAI API 协议的 AI Gateway，为内部 AI 应用和 Agent 提供统一的模型访问入口。
+Limen（拉丁语：门槛、入口）是一个使用 Go 实现、兼容 OpenAI API 协议的 AI Gateway。
+
+它位于 AI 应用与模型 Provider 之间，为内部 AI 应用和 Agent 提供统一、可靠、可观测的模型访问入口。
+
+> One gateway between agents and models.
 
 ```text
 AI Application / Agent
           |
           v
-        AIGate
+         Limen
           |
           v
      OpenAI Provider
@@ -38,4 +42,3 @@ AI Application / Agent
 ## 文档维护
 
 代码行为、配置、API 或架构发生变化时，相关文档必须在同一次改动中同步更新。
-
