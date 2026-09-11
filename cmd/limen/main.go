@@ -15,6 +15,7 @@ import (
 )
 
 func main() {
+	// main 负责组装依赖并管理 HTTP 服务生命周期。
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
 	if err != nil {

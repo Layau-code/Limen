@@ -15,6 +15,7 @@ type apiError struct {
 	Code    string `json:"code,omitempty"`
 }
 
+// writeError 返回统一的 OpenAI 兼容错误响应。
 func writeError(w http.ResponseWriter, status int, message, kind, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

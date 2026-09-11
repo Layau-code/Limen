@@ -19,6 +19,7 @@ type Handler struct {
 	service *gateway.Service
 }
 
+// New 创建 Limen 的 HTTP 路由和请求处理器。
 func New(apiKey string, service *gateway.Service) http.Handler {
 	handler := &Handler{apiKey: apiKey, service: service}
 	mux := http.NewServeMux()
@@ -26,6 +27,7 @@ func New(apiKey string, service *gateway.Service) http.Handler {
 	return mux
 }
 
+// chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !validBearerToken(r.Header.Get("Authorization"), h.apiKey) {
 		writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
@@ -39,7 +41,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Model string `json:"model"`
 	}
-	if json.Unmarshal(body, &request) != nil || strings.TrimSpace(request.Model) == "" {
+	if err := json.Unmarshal(body, &request); err != nil || strings.TrimSpace(request.Model) == "" {
 		writeError(w, http.StatusBadRequest, "model is required", "invalid_request_error", "invalid_model")
 		return
 	}
@@ -50,11 +52,13 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	h.forward(w, r, body)
 }
 
+// validBearerToken 使用常量时间比较校验 Limen API Key。
 func validBearerToken(header, expected string) bool {
 	token, found := strings.CutPrefix(header, "Bearer ")
 	return found && len(token) == len(expected) && subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }
 
+// forward 调用上游服务，并按响应类型转发普通内容或 SSE 数据。
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, body []byte) {
 	response, err := h.service.Forward(r.Context(), body)
 	if err != nil {
@@ -79,6 +83,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, body []byte) {
 	_, _ = io.Copy(w, response.Body)
 }
 
+// relayStream 逐块转发 SSE 数据，并在每块写入后刷新客户端。
 func relayStream(w http.ResponseWriter, source io.Reader) {
 	flusher, canFlush := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)

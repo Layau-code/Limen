@@ -17,6 +17,7 @@ type Service struct {
 	timeout time.Duration
 }
 
+// New 创建一个用于访问 OpenAI Chat Completions 接口的服务。
 func New(client *http.Client, baseURL, apiKey string, timeout time.Duration) *Service {
 	return &Service{
 		client:  client,
@@ -26,6 +27,7 @@ func New(client *http.Client, baseURL, apiKey string, timeout time.Duration) *Se
 	}
 }
 
+// Forward 将已校验的请求体转发到 OpenAI，并传播调用方的取消信号。
 func (s *Service) Forward(ctx context.Context, body []byte) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
@@ -50,10 +52,12 @@ type cancelOnClose struct {
 	cancel context.CancelFunc
 }
 
+// Read 从上游响应体读取数据。
 func (body *cancelOnClose) Read(buffer []byte) (int, error) {
 	return body.body.Read(buffer)
 }
 
+// Close 关闭上游响应体，并释放关联的请求上下文。
 func (body *cancelOnClose) Close() error {
 	err := body.body.Close()
 	body.cancel()

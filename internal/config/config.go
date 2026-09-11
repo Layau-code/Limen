@@ -14,6 +14,7 @@ type Config struct {
 	RequestTimeout time.Duration
 }
 
+// Load 从环境变量读取配置，并校验启动所需的密钥。
 func Load() (Config, error) {
 	cfg := Config{
 		Addr:           valueOrDefault("LIMEN_ADDR", ":8080"),
@@ -35,6 +36,7 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// valueOrDefault 返回环境变量值；变量为空时使用默认值。
 func valueOrDefault(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
