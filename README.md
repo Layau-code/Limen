@@ -37,7 +37,7 @@ AI Application / Agent
 
 ## 状态
 
-当前 MVP 已提供可运行服务。核心设计见 [`docs/design.md`](docs/design.md)，开发协作约束见 [`AGENTS.md`](AGENTS.md)。
+当前 MVP 已提供可运行服务。核心设计见 [`docs/design.md`](docs/design.md)，开发协作约束见 [`AGENTS.md`](AGENTS.md)，实施计划见 [`docs/plans/2026-09-11-limen-mvp.md`](docs/plans/2026-09-11-limen-mvp.md)。
 
 ## 快速开始
 
