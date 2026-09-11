@@ -4,7 +4,7 @@ Limen（拉丁语：门槛、入口）是一个使用 Go 实现、兼容 OpenAI 
 
 它位于 AI 应用与模型 Provider 之间，为内部 AI 应用和 Agent 提供统一、可靠、可观测的模型访问入口。
 
-> One gateway between agents and models.
+> 连接 Agent 与模型的统一入口。
 
 ```text
 AI Application / Agent

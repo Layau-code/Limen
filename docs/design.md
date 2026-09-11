@@ -28,11 +28,11 @@ HTTP API
   -> Response / SSE Relay
 ```
 
-- **HTTP API**：解析请求、校验基本格式、映射响应与错误。
-- **Authentication**：验证 Limen API Key，不负责用户体系或权限管理。
-- **Chat Completion Service**：协调一次请求，不包含 HTTP 框架细节。
-- **OpenAI Client**：构造上游请求并管理连接、超时和响应体。
-- **Response / SSE Relay**：将上游响应及时转发给客户端，不解析或聚合完整流。
+- **HTTP API 层**：解析请求、校验基本格式、映射响应与错误。
+- **鉴权模块**：验证 Limen API Key，不负责用户体系或权限管理。
+- **聊天补全服务**：协调一次请求，不包含 HTTP 框架细节。
+- **OpenAI 客户端**：构造上游请求并管理连接、超时和响应体。
+- **响应与 SSE 转发模块**：将上游响应及时转发给客户端，不解析或聚合完整流。
 
 只有出现第二个真实 Provider 后，才根据重复点提取稳定的 Provider 接口。
 
