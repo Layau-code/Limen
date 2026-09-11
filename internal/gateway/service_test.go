@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -64,4 +65,21 @@ func TestForwardPropagatesCancellation(t *testing.T) {
 		t.Fatal("provider request was not canceled")
 	}
 	<-done
+}
+
+func TestForwardTimesOut(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		<-r.Context().Done()
+	}))
+	defer provider.Close()
+
+	service := New(provider.Client(), provider.URL, "provider-secret", 10*time.Millisecond)
+	response, err := service.Forward(context.Background(), []byte(`{"model":"gpt-test"}`))
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
 }

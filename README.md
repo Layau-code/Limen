@@ -37,7 +37,30 @@ AI Application / Agent
 
 ## 状态
 
-项目处于设计阶段，尚未提供可运行服务。核心设计见 [`docs/design.md`](docs/design.md)，开发协作约束见 [`AGENTS.md`](AGENTS.md)。
+当前 MVP 已提供可运行服务。核心设计见 [`docs/design.md`](docs/design.md)，开发协作约束见 [`AGENTS.md`](AGENTS.md)。
+
+## 快速开始
+
+要求 Go 1.24+。先设置服务端密钥并启动：
+
+```bash
+export LIMEN_API_KEY=local-limen-key
+export OPENAI_API_KEY=your-openai-key
+go run ./cmd/limen
+```
+
+然后通过兼容 OpenAI 的接口发起请求：
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H 'Authorization: Bearer local-limen-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+可选配置：`LIMEN_ADDR`（默认 `:8080`）、`OPENAI_BASE_URL`（默认 `https://api.openai.com/v1`）和 `LIMEN_REQUEST_TIMEOUT`（默认 `60s`）。
+
+开发检查使用 `make check`，会运行格式检查、`go vet ./...` 和竞态测试。
 
 ## 文档维护
 

@@ -84,3 +84,23 @@ func TestChatRelaysSSE(t *testing.T) {
 		t.Fatalf("stream = %q", got)
 	}
 }
+
+func TestChatRelaysProviderError(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"busy"}}`))
+	}))
+	defer provider.Close()
+
+	service := gateway.New(provider.Client(), provider.URL, "provider-secret", time.Second)
+	handler := New("limen-secret", service)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test"}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusTooManyRequests || response.Body.String() != `{"error":{"message":"busy"}}` {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}

@@ -14,7 +14,7 @@
 
 ## 2. 范围
 
-MVP 包含 API 层、鉴权、OpenAI 转发和基础日志。只支持 `POST /v1/chat/completions`，只接入 OpenAI。
+MVP 包含 API 层、鉴权、OpenAI 转发和基础日志。只支持 `POST /v1/chat/completions`，只接入 OpenAI。请求体上限为 4 MiB。
 
 MVP 明确不解决多 Provider、动态路由、重试与故障转移、限流、计费、持久化和完整监控平台。这些能力不应以“预留框架”的形式增加当前复杂度。
 
@@ -55,11 +55,11 @@ HTTP API
 - 流式响应开始后发生错误时结束连接并记录原因，不尝试 Retry 或 Fallback。
 - 客户端断开属于取消事件，不记录为服务端故障。
 
-具体错误响应结构在实现计划中依据 OpenAI 兼容性测试确定。
+错误响应使用兼容 OpenAI 的结构：`{"error":{"message":"...","type":"...","code":"..."}}`。
 
 ## 6. 配置与安全
 
-首版配置至少包含监听地址、Limen API Key、OpenAI API Key、OpenAI Base URL 和请求超时。敏感配置仅通过运行环境注入，不提交到仓库。
+首版配置包含 `LIMEN_ADDR`、`LIMEN_API_KEY`、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `LIMEN_REQUEST_TIMEOUT`。服务使用 `net/http` 和 `log/slog`；敏感配置仅通过运行环境注入，不提交到仓库。
 
 日志允许记录请求 ID、路径、模型、状态、总延迟和取消原因；不得记录鉴权头、Provider Key 或默认记录完整 Prompt/Response。
 
