@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/gateway"
+	"github.com/huz/limen/internal/provider"
 )
 
 func TestChatRejectsInvalidRequests(t *testing.T) {
@@ -44,16 +45,16 @@ func TestChatRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestChatRelaysProviderResponse(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":"chat-1"}`))
 	}))
-	defer provider.Close()
+	defer providerServer.Close()
 
-	service := gateway.New(provider.Client(), provider.URL, "provider-secret", time.Second)
-	handler := New("limen-secret", service)
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test"}`))
+	openAI := provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret", time.Second)
+	handler := New("limen-secret", gateway.NewRouter(openAI, nil))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
 	request.Header.Set("Authorization", "Bearer limen-secret")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -64,18 +65,18 @@ func TestChatRelaysProviderResponse(t *testing.T) {
 }
 
 func TestChatRelaysSSE(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		_, _ = io.WriteString(w, "data: first\n\n")
 		flusher.Flush()
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	}))
-	defer provider.Close()
+	defer providerServer.Close()
 
-	service := gateway.New(provider.Client(), provider.URL, "provider-secret", time.Second)
-	handler := New("limen-secret", service)
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","stream":true}`))
+	openAI := provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret", time.Second)
+	handler := New("limen-secret", gateway.NewRouter(openAI, nil))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}],"stream":true}`))
 	request.Header.Set("Authorization", "Bearer limen-secret")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -86,21 +87,60 @@ func TestChatRelaysSSE(t *testing.T) {
 }
 
 func TestChatRelaysProviderError(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"message":"busy"}}`))
 	}))
-	defer provider.Close()
+	defer providerServer.Close()
 
-	service := gateway.New(provider.Client(), provider.URL, "provider-secret", time.Second)
-	handler := New("limen-secret", service)
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test"}`))
+	openAI := provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret", time.Second)
+	handler := New("limen-secret", gateway.NewRouter(openAI, nil))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}]}`))
 	request.Header.Set("Authorization", "Bearer limen-secret")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusTooManyRequests || response.Body.String() != `{"error":{"message":"busy"}}` {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestChatRoutesClaudeAndRejectsUnknownModel(t *testing.T) {
+	var claudeRequests int
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claudeRequests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer providerServer.Close()
+
+	router := gateway.NewRouter(nil, provider.NewAnthropic(providerServer.Client(), providerServer.URL, "anthropic-secret", time.Second))
+	handler := New("limen-secret", router)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"claude-test","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || claudeRequests != 1 {
+		t.Fatalf("status=%d claude_requests=%d", response.Code, claudeRequests)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"unknown","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown model status = %d", response.Code)
+	}
+}
+
+func TestChatRejectsUnsupportedContent(t *testing.T) {
+	handler := New("limen-secret", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-test","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported content status = %d", response.Code)
 	}
 }

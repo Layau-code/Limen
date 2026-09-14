@@ -12,31 +12,32 @@ Limen 是使用 Go 实现、兼容 OpenAI API 协议的 AI Gateway。它位于 A
 - 需要统一管理模型访问的后端平台团队。
 - 本项目不面向普通终端用户提供聊天产品。
 
-## 当前阶段：MVP
+## 当前阶段：Provider 抽象与第二 Provider
 
-MVP 只完成一条可验证的最小链路：
+当前阶段继续维护一条可验证的最小链路：
 
 ```text
 Client / Agent
   -> OpenAI-Compatible API
   -> API Key Authentication
-  -> OpenAI Provider
+  -> OpenAI / Anthropic Provider
   -> Streaming / Non-streaming Response
   -> Logs
 ```
 
-MVP 包含：
+当前阶段包含：
 
 - `POST /v1/chat/completions`。
-- OpenAI Provider。
+- OpenAI Provider 和 Anthropic Claude Provider。
+- 按模型名前缀进行 Provider 路由。
 - 流式与非流式转发。
 - 基础 API Key 鉴权。
 - 请求取消、超时和资源释放。
 - 结构化日志、单元测试和必要的集成测试。
 
-MVP 不包含：
+当前阶段不包含：
 
-- 其他 Provider 和复杂 Provider 抽象。
+- 第三个及以上 Provider。
 - 多模型动态路由、Retry、Fallback、熔断。
 - RPM、TPM 和分布式限流。
 - Usage 持久化、成本统计、计费。
@@ -55,6 +56,14 @@ MVP 不包含：
 6. 错误应保留原因并在 API 边界统一映射，不记录密钥或完整敏感请求。
 7. 新行为必须有测试；修复缺陷前先添加可复现测试。
 8. 优先保证代码能运行、能测试、能理解、能解释、能分析性能。
+
+## Provider 适配规范
+
+- Provider 只接收 `internal/provider.ChatRequest`，不得依赖 HTTP Handler 或 `http.ResponseWriter`。
+- Provider 负责自己的鉴权、请求格式、响应格式和 SSE 转换；Router 只负责模型前缀选择。
+- 新增 Provider 必须同时覆盖普通响应、流式响应、上游错误、超时和取消传播。
+- Provider 的请求和响应转换必须通过本地 `httptest.Server` 验证，不依赖真实密钥或外部网络。
+- 统一接口或适配器中的每个生产方法都必须有简体中文用途注释。
 
 ## 代码与注释
 
@@ -97,7 +106,7 @@ MVP 不包含：
 
 一次改动只有同时满足以下条件才算完成：
 
-- 行为符合当前 MVP 范围。
+- 行为符合当前阶段范围。
 - 每个新增或修改的生产方法都有合理用途注释，代码结构清晰且没有不必要的复杂化。
 - 正常路径、关键错误路径和取消路径有验证。
 - 没有明显的资源泄漏、竞态或敏感信息暴露。

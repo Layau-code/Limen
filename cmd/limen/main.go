@@ -12,6 +12,7 @@ import (
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
+	"github.com/huz/limen/internal/provider"
 )
 
 func main() {
@@ -23,10 +24,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	service := gateway.New(http.DefaultClient, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.RequestTimeout)
+	openAI := provider.NewOpenAI(http.DefaultClient, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.RequestTimeout)
+	anthropic := provider.NewAnthropic(http.DefaultClient, cfg.AnthropicBaseURL, cfg.AnthropicAPIKey, cfg.RequestTimeout)
+	router := gateway.NewRouter(openAI, anthropic)
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.New(cfg.LimenAPIKey, service)),
+		Handler:           httpapi.WithLogging(logger, httpapi.New(cfg.LimenAPIKey, router)),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}

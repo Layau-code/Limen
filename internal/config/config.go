@@ -7,24 +7,28 @@ import (
 )
 
 type Config struct {
-	Addr           string
-	LimenAPIKey    string
-	OpenAIAPIKey   string
-	OpenAIBaseURL  string
-	RequestTimeout time.Duration
+	Addr             string
+	LimenAPIKey      string
+	OpenAIAPIKey     string
+	OpenAIBaseURL    string
+	AnthropicAPIKey  string
+	AnthropicBaseURL string
+	RequestTimeout   time.Duration
 }
 
 // Load 从环境变量读取配置，并校验启动所需的密钥。
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:           valueOrDefault("LIMEN_ADDR", ":8080"),
-		LimenAPIKey:    os.Getenv("LIMEN_API_KEY"),
-		OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
-		OpenAIBaseURL:  valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		RequestTimeout: 60 * time.Second,
+		Addr:             valueOrDefault("LIMEN_ADDR", ":8080"),
+		LimenAPIKey:      os.Getenv("LIMEN_API_KEY"),
+		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:    valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicBaseURL: valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		RequestTimeout:   60 * time.Second,
 	}
-	if cfg.LimenAPIKey == "" || cfg.OpenAIAPIKey == "" {
-		return Config{}, errors.New("LIMEN_API_KEY and OPENAI_API_KEY are required")
+	if cfg.LimenAPIKey == "" || cfg.OpenAIAPIKey == "" || cfg.AnthropicAPIKey == "" {
+		return Config{}, errors.New("LIMEN_API_KEY, OPENAI_API_KEY, and ANTHROPIC_API_KEY are required")
 	}
 	if raw := os.Getenv("LIMEN_REQUEST_TIMEOUT"); raw != "" {
 		timeout, err := time.ParseDuration(raw)
