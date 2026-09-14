@@ -12,7 +12,7 @@ Limen 是使用 Go 实现、兼容 OpenAI API 协议的 AI Gateway。它位于 A
 - 需要统一管理模型访问的后端平台团队。
 - 本项目不面向普通终端用户提供聊天产品。
 
-## 当前阶段：Provider 抽象与第二 Provider
+## 当前阶段：模型注册表与配置化路由
 
 当前阶段继续维护一条可验证的最小链路：
 
@@ -20,6 +20,7 @@ Limen 是使用 Go 实现、兼容 OpenAI API 协议的 AI Gateway。它位于 A
 Client / Agent
   -> OpenAI-Compatible API
   -> API Key Authentication
+  -> Model Registry / Router
   -> OpenAI / Anthropic Provider
   -> Streaming / Non-streaming Response
   -> Logs
@@ -27,9 +28,10 @@ Client / Agent
 
 当前阶段包含：
 
-- `POST /v1/chat/completions`。
+- `POST /v1/chat/completions` 和 `GET /v1/models`。
 - OpenAI Provider 和 Anthropic Claude Provider。
-- 按模型名前缀进行 Provider 路由。
+- 启动时加载的只读模型注册表与逻辑模型映射。
+- 未配置注册表时的模型前缀兼容路由。
 - 流式与非流式转发。
 - 基础 API Key 鉴权。
 - 请求取消、超时和资源释放。
@@ -38,7 +40,8 @@ Client / Agent
 当前阶段不包含：
 
 - 第三个及以上 Provider。
-- 多模型动态路由、Retry、Fallback、熔断。
+- 配置热加载、远程配置、模型权重和健康路由。
+- Retry、Fallback、熔断。
 - RPM、TPM 和分布式限流。
 - Usage 持久化、成本统计、计费。
 - 管理后台、数据库、Redis、消息队列。
@@ -60,7 +63,9 @@ Client / Agent
 ## Provider 适配规范
 
 - Provider 只接收 `internal/provider.ChatRequest`，不得依赖 HTTP Handler 或 `http.ResponseWriter`。
-- Provider 负责自己的鉴权、请求格式、响应格式和 SSE 转换；Router 只负责模型前缀选择。
+- Provider 负责自己的鉴权、请求格式、响应格式和 SSE 转换；不得包含逻辑模型映射。
+- 模型注册表负责保存映射，Router 负责解析逻辑模型、替换上游模型并选择 Provider。
+- 模型注册表在启动时构建并保持只读；不通过全局变量或请求路径修改。
 - 新增 Provider 必须同时覆盖普通响应、流式响应、上游错误、超时和取消传播。
 - Provider 的请求和响应转换必须通过本地 `httptest.Server` 验证，不依赖真实密钥或外部网络。
 - 统一接口或适配器中的每个生产方法都必须有简体中文用途注释。
@@ -98,6 +103,7 @@ Client / Agent
 
 - 提交保持小而聚焦，不夹带无关重构。
 - 配置来自环境变量或配置文件，密钥不得写入代码、日志或仓库。
+- 模型配置必须在启动时完整校验；仅要求注册表实际引用的 Provider Key。
 - 对外 API 优先兼容 OpenAI 协议；有意偏离时必须记录原因。
 - 新增依赖、后台服务或基础设施前，先说明其解决的当前问题。
 - 完成改动前运行 `make check`；该命令必须完成格式检查、`go vet ./...` 和 `go test ./... -race`。

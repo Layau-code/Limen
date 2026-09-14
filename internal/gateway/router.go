@@ -3,38 +3,48 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/huz/limen/internal/provider"
 )
 
-// Router 根据模型名前缀选择对应的 Provider。
+// Router 根据模型注册表选择对应的 Provider。
 type Router struct {
 	openAI    provider.Provider
 	anthropic provider.Provider
+	registry  *ModelRegistry
 }
 
-// NewRouter 创建 OpenAI 和 Anthropic Provider 路由器。
-func NewRouter(openAI, anthropic provider.Provider) *Router {
-	return &Router{openAI: openAI, anthropic: anthropic}
+// NewRouter 创建使用指定模型注册表的 Provider 路由器。
+func NewRouter(openAI, anthropic provider.Provider, registry *ModelRegistry) *Router {
+	return &Router{openAI: openAI, anthropic: anthropic, registry: registry}
 }
 
-// Chat 将聊天请求转发给模型名前缀对应的 Provider。
+// Chat 解析逻辑模型，并将请求转发给注册表指定的 Provider。
 func (r *Router) Chat(ctx context.Context, request provider.ChatRequest) (provider.Response, error) {
-	switch {
-	case strings.HasPrefix(request.Model, "gpt-"), strings.HasPrefix(request.Model, "o1-"), strings.HasPrefix(request.Model, "o3-"):
+	model, found := r.registry.Resolve(request.Model)
+	if !found {
+		return provider.Response{}, &UnsupportedModelError{Model: request.Model}
+	}
+	request.Model = model.UpstreamModel
+	switch model.Provider {
+	case "openai":
 		if r.openAI == nil {
 			return provider.Response{}, &ProviderUnavailableError{Name: "OpenAI"}
 		}
 		return r.openAI.Chat(ctx, request)
-	case strings.HasPrefix(request.Model, "claude-"):
+	case "anthropic":
 		if r.anthropic == nil {
 			return provider.Response{}, &ProviderUnavailableError{Name: "Anthropic"}
 		}
 		return r.anthropic.Chat(ctx, request)
 	default:
-		return provider.Response{}, &UnsupportedModelError{Model: request.Model}
+		return provider.Response{}, &ProviderUnavailableError{Name: model.Provider}
 	}
+}
+
+// Models 返回 Router 当前公开的模型列表。
+func (r *Router) Models() []Model {
+	return r.registry.List()
 }
 
 // ProviderUnavailableError 表示目标 Provider 尚未配置。

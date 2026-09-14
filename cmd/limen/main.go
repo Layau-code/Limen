@@ -15,8 +15,8 @@ import (
 	"github.com/huz/limen/internal/provider"
 )
 
+// main 组装 Limen 依赖并管理 HTTP 服务生命周期。
 func main() {
-	// main 负责组装依赖并管理 HTTP 服务生命周期。
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
 	if err != nil {
@@ -26,7 +26,24 @@ func main() {
 
 	openAI := provider.NewOpenAI(http.DefaultClient, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.RequestTimeout)
 	anthropic := provider.NewAnthropic(http.DefaultClient, cfg.AnthropicBaseURL, cfg.AnthropicAPIKey, cfg.RequestTimeout)
-	router := gateway.NewRouter(openAI, anthropic)
+	registry := gateway.NewCompatibilityRegistry()
+	if len(cfg.Models) > 0 {
+		models := make([]gateway.Model, 0, len(cfg.Models))
+		for _, model := range cfg.Models {
+			models = append(models, gateway.Model{
+				ID:            model.ID,
+				Provider:      model.Provider,
+				UpstreamModel: model.UpstreamModel,
+				DisplayName:   model.DisplayName,
+			})
+		}
+		registry, err = gateway.NewModelRegistry(models)
+		if err != nil {
+			logger.Error("invalid model registry", "error", err)
+			os.Exit(1)
+		}
+	}
+	router := gateway.NewRouter(openAI, anthropic, registry)
 	server := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.WithLogging(logger, httpapi.New(cfg.LimenAPIKey, router)),

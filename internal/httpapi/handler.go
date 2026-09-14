@@ -26,13 +26,13 @@ func New(apiKey string, router *gateway.Router) http.Handler {
 	handler := &Handler{apiKey: apiKey, router: router}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
+	mux.HandleFunc("GET /v1/models", handler.models)
 	return mux
 }
 
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
-	if !validBearerToken(r.Header.Get("Authorization"), h.apiKey) {
-		writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
+	if !h.authenticate(w, r) {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
@@ -50,6 +50,37 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.forward(w, r, request)
+}
+
+// models 鉴权并返回当前可用的 OpenAI 兼容模型列表。
+func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	if h.router == nil {
+		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
+		return
+	}
+	response := modelsResponse{Object: "list"}
+	for _, model := range h.router.Models() {
+		response.Data = append(response.Data, modelResponse{
+			ID:      model.ID,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: model.Provider,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+// authenticate 校验请求中的 Limen Bearer Key，并在失败时写入统一错误。
+func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) bool {
+	if validBearerToken(r.Header.Get("Authorization"), h.apiKey) {
+		return true
+	}
+	writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
+	return false
 }
 
 // validBearerToken 使用常量时间比较校验 Limen API Key。
@@ -107,6 +138,18 @@ type incomingMessage struct {
 	Role      string          `json:"role"`
 	Content   json.RawMessage `json:"content"`
 	ToolCalls json.RawMessage `json:"tool_calls"`
+}
+
+type modelsResponse struct {
+	Object string          `json:"object"`
+	Data   []modelResponse `json:"data"`
+}
+
+type modelResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
 
 // parseChatRequest 将 OpenAI 请求解析为内部统一请求，并拒绝暂不支持的内容。
