@@ -30,10 +30,11 @@ func main() {
 	if len(cfg.Models) > 0 {
 		models := make([]gateway.Model, 0, len(cfg.Models))
 		for _, model := range cfg.Models {
+			target := model.Targets[0]
 			models = append(models, gateway.Model{
 				ID:            model.ID,
-				Provider:      model.Provider,
-				UpstreamModel: model.UpstreamModel,
+				Provider:      target.Provider,
+				UpstreamModel: target.UpstreamModel,
 				DisplayName:   model.DisplayName,
 			})
 		}
