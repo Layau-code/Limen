@@ -22,6 +22,8 @@ var (
 	ErrAccountingSuspended = run.ErrAccountingSuspended
 	// ErrNotFound 表示指定租户下资源不存在。
 	ErrNotFound = errors.New("store resource not found")
+	// ErrDatabaseRequired 表示迁移缺少数据库连接。
+	ErrDatabaseRequired = errors.New("database is required")
 )
 
 // AdmissionInput 是 Store 包对 Run 准入参数的兼容别名。

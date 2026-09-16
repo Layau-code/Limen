@@ -27,6 +27,33 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadDatabaseConfiguration(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_DATABASE_URL", "postgresql://limen:secret@db.example/limen?sslmode=require")
+	t.Setenv("LIMEN_TENANT_ID", "tenant-1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseURL == "" || cfg.TenantID != "tenant-1" {
+		t.Fatalf("database config = %+v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidDatabaseURL(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_DATABASE_URL", "https://not-postgres.example")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid database URL error")
+	}
+}
+
 func TestLoadUsesRoutingDefaults(t *testing.T) {
 	t.Setenv("LIMEN_API_KEY", "limen-secret")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")

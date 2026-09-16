@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"github.com/huz/limen/internal/httpapi"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
+	"github.com/huz/limen/internal/store"
+	_ "github.com/lib/pq"
 )
 
 // main 组装 Limen 依赖并管理 HTTP 服务生命周期。
@@ -72,12 +75,41 @@ func main() {
 	})
 	health := httpapi.NewHealth()
 	var runService run.Service
-	if os.Getenv("LIMEN_RUN_STORE") == "memory" {
+	var database *sql.DB
+	if cfg.DatabaseURL != "" {
+		database, err = sql.Open("postgres", cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("open database failed", "error", err)
+			os.Exit(1)
+		}
+		defer database.Close()
+		pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := database.PingContext(pingCtx); err != nil {
+			cancelPing()
+			logger.Error("database health check failed", "error", err)
+			os.Exit(1)
+		}
+		cancelPing()
+		migrationCtx, cancelMigration := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := store.ApplyMigrations(migrationCtx, database); err != nil {
+			cancelMigration()
+			logger.Error("database migration failed", "error", err)
+			os.Exit(1)
+		}
+		if err := store.EnsureTenant(migrationCtx, database, cfg.TenantID); err != nil {
+			cancelMigration()
+			logger.Error("database tenant initialization failed", "error", err)
+			os.Exit(1)
+		}
+		cancelMigration()
+		runService = store.NewPostgresStore(database)
+	}
+	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRuns(cfg.LimenAPIKey, router, health, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenant(cfg.LimenAPIKey, router, health, cfg.TenantID, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,

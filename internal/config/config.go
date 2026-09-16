@@ -57,6 +57,8 @@ type Config struct {
 	Routing          Routing
 	RequestTimeout   time.Duration
 	ConfigVersion    string
+	DatabaseURL      string
+	TenantID         string
 }
 
 type modelsDocument struct {
@@ -86,9 +88,19 @@ func Load() (Config, error) {
 		},
 		RequestTimeout: 60 * time.Second,
 		ConfigVersion:  "compatibility-v1",
+		DatabaseURL:    os.Getenv("LIMEN_DATABASE_URL"),
+		TenantID:       valueOrDefault("LIMEN_TENANT_ID", "local"),
 	}
 	if cfg.LimenAPIKey == "" {
 		return Config{}, errors.New("LIMEN_API_KEY is required")
+	}
+	if cfg.DatabaseURL != "" {
+		if err := validateDatabaseURL(cfg.DatabaseURL); err != nil {
+			return Config{}, err
+		}
+	}
+	if strings.TrimSpace(cfg.TenantID) == "" {
+		return Config{}, errors.New("LIMEN_TENANT_ID must not be empty")
 	}
 	if err := validateBaseURL("OPENAI_BASE_URL", cfg.OpenAIBaseURL); err != nil {
 		return Config{}, err
@@ -321,6 +333,15 @@ func validateBaseURL(name, raw string) error {
 	}
 	if parsed.User != nil {
 		return fmt.Errorf("%s must not contain credentials", name)
+	}
+	return nil
+}
+
+// validateDatabaseURL 校验 PostgreSQL DSN 的协议和主机，不记录其中的凭据。
+func validateDatabaseURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		return errors.New("LIMEN_DATABASE_URL must be a PostgreSQL URL")
 	}
 	return nil
 }

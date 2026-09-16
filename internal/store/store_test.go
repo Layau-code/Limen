@@ -1,10 +1,20 @@
 package store
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestMigrationHelpersRequireDatabase(t *testing.T) {
+	if err := ApplyMigrations(context.Background(), nil); err != ErrDatabaseRequired {
+		t.Fatalf("migration error = %v", err)
+	}
+	if err := EnsureTenant(context.Background(), nil, "tenant"); err != ErrDatabaseRequired {
+		t.Fatalf("tenant error = %v", err)
+	}
+}
 
 // TestRunLedgerMigrationDefinesTenantIsolation 验证迁移中的高风险租户隔离约束。
 func TestRunLedgerMigrationDefinesTenantIsolation(t *testing.T) {

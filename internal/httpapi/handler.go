@@ -31,9 +31,10 @@ var settlementTrailerNames = []string{
 }
 
 type Handler struct {
-	apiKey string
-	router *gateway.Router
-	runs   run.Service
+	apiKey   string
+	router   *gateway.Router
+	runs     run.Service
+	tenantID string
 }
 
 const runTenantID = "local"
@@ -55,11 +56,19 @@ func NewWithRuns(apiKey string, router *gateway.Router, runs run.Service) http.H
 
 // NewWithHealthAndRuns 创建同时支持健康检查和 Run 控制面的 HTTP 处理器。
 func NewWithHealthAndRuns(apiKey string, router *gateway.Router, health *Health, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenant(apiKey, router, health, runTenantID, runs)
+}
+
+// NewWithHealthAndRunsForTenant 创建绑定到指定租户的健康和 Run 控制面。
+func NewWithHealthAndRunsForTenant(apiKey string, router *gateway.Router, health *Health, tenantID string, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
 	}
-	handler := &Handler{apiKey: apiKey, router: router, runs: runs}
+	if strings.TrimSpace(tenantID) == "" {
+		tenantID = runTenantID
+	}
+	handler := &Handler{apiKey: apiKey, router: router, runs: runs, tenantID: tenantID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
@@ -184,12 +193,12 @@ func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to create Run", "api_error", "run_id_error")
 		return
 	}
-	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, nil)
+	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
 	}
-	item, err := control.CreateRunWithMutation(r.Context(), runTenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
+	item, err := control.CreateRunWithMutation(r.Context(), h.tenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
 	if err != nil {
 		writeRunMutationError(w, err)
 		return
@@ -206,7 +215,7 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
 		return
 	}
-	item, err := h.runs.GetRun(r.Context(), runTenantID, r.PathValue("run_id"))
+	item, err := h.runs.GetRun(r.Context(), h.tenantID, r.PathValue("run_id"))
 	if err != nil {
 		writeRunLookupError(w, err)
 		return
@@ -246,7 +255,7 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 	if len(strings.TrimSpace(string(body))) == 0 {
 		body = []byte("{}")
 	}
-	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, nil)
+	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
@@ -254,9 +263,9 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 	mutation := run.Mutation{Key: key, Hash: hash}
 	var item run.Run
 	if cancel {
-		item, err = control.CancelRunWithMutation(r.Context(), runTenantID, r.PathValue("run_id"), mutation)
+		item, err = control.CancelRunWithMutation(r.Context(), h.tenantID, r.PathValue("run_id"), mutation)
 	} else {
-		item, err = control.CompleteRunWithMutation(r.Context(), runTenantID, r.PathValue("run_id"), mutation)
+		item, err = control.CompleteRunWithMutation(r.Context(), h.tenantID, r.PathValue("run_id"), mutation)
 	}
 	if err != nil {
 		writeRunMutationError(w, err)
@@ -274,7 +283,7 @@ func (h *Handler) getRunRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
 		return
 	}
-	item, err := h.runs.GetRequest(r.Context(), runTenantID, r.PathValue("request_id"))
+	item, err := h.runs.GetRequest(r.Context(), h.tenantID, r.PathValue("request_id"))
 	if err != nil {
 		writeRunLookupError(w, err)
 		return
@@ -399,7 +408,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		writeError(w, http.StatusBadRequest, "Idempotency-Key is required for a Run request", "invalid_request_error", "idempotency_key_required")
 		return "", false
 	}
-	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
+	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return "", false
@@ -409,7 +418,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		writeError(w, http.StatusInternalServerError, "unable to create request", "api_error", "request_id_error")
 		return "", false
 	}
-	item, err := h.runs.AdmitRequest(r.Context(), runTenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
+	item, err := h.runs.AdmitRequest(r.Context(), h.tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
 	if err != nil {
 		writeRunAdmissionError(w, err, item.ID)
 		return "", false
@@ -469,7 +478,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	attemptFinished := false
 	defer func() {
 		if attemptID != "" && !attemptFinished {
-			_ = h.runs.FinishAttempt(r.Context(), runTenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
+			_ = h.runs.FinishAttempt(r.Context(), h.tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
 		}
 		if runRequestID != "" && !settledRunRequest {
 			_ = h.settleRunRequest(r.Context(), runRequestID, nil)
@@ -488,7 +497,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 				writeError(w, http.StatusInternalServerError, "unable to create attempt", "api_error", "attempt_id_error")
 				return
 			}
-			if err := h.runs.RecordAttemptStarted(r.Context(), runTenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
+			if err := h.runs.RecordAttemptStarted(r.Context(), h.tenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
 				writeError(w, http.StatusServiceUnavailable, "run store unavailable", "api_error", "run_store_error")
 				return
 			}
@@ -553,7 +562,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		_, _ = io.Copy(w, response.Body)
 	}
 	if runRequestID != "" {
-		if err := h.runs.FinishAttempt(r.Context(), runTenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
+		if err := h.runs.FinishAttempt(r.Context(), h.tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
 			writePendingSettlementTrailers(w)
 			return
 		}
@@ -587,7 +596,7 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 	if h.runs == nil {
 		return errors.New("run service unavailable")
 	}
-	if _, err := h.runs.BeginSettlement(ctx, runTenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
+	if _, err := h.runs.BeginSettlement(ctx, h.tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
 		return err
 	}
 	var costNanoUSD *int64
@@ -598,7 +607,7 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 			costNanoUSD = &value
 		}
 	}
-	_, err := h.runs.SettleRequest(ctx, runTenantID, requestID, costNanoUSD, time.Now().UTC())
+	_, err := h.runs.SettleRequest(ctx, h.tenantID, requestID, costNanoUSD, time.Now().UTC())
 	return err
 }
 

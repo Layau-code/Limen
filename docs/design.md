@@ -68,7 +68,7 @@ HTTP 鉴权与解析
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
-当前 HTTP Run 控制面通过 `LIMEN_RUN_STORE=memory` 显式启用，仅用于单机开发和演示；默认不启用，避免把进程内状态误当成生产账本。PostgreSQL Repository 已实现统一 `run.Service` 边界，待数据库驱动、连接池和迁移启动装配完成后替换内存实现。
+当前 HTTP Run 控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，只有显式 `LIMEN_RUN_STORE=memory` 才启用单机开发实现，避免把进程内状态误当成生产账本。`LIMEN_TENANT_ID` 绑定当前进程的开发租户，后续多租户 API Key 体系会替换它。
 
 开发控制面已覆盖 Run 创建、查询、完成、取消和 Request 结算查询；控制变更使用 `Idempotency-Key` 与规范请求哈希。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。生产接入前仍需完成 PostgreSQL 驱动装配、租约恢复和跨实例取消。
 
