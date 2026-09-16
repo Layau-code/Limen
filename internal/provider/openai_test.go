@@ -2,12 +2,20 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +29,7 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewOpenAI(server.Client(), server.URL+"/v1", "openai-secret", time.Second)
+	provider := NewOpenAI(server.Client(), server.URL+"/v1", "openai-secret")
 	response, err := provider.Chat(context.Background(), ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +52,7 @@ func TestOpenAIChatCancellationReachesProvider(t *testing.T) {
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	provider := NewOpenAI(server.Client(), server.URL, "openai-secret", time.Second)
+	provider := NewOpenAI(server.Client(), server.URL, "openai-secret")
 	done := make(chan struct{})
 	go func() {
 		_, _ = provider.Chat(ctx, ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
@@ -62,4 +70,51 @@ func TestOpenAIChatCancellationReachesProvider(t *testing.T) {
 		t.Fatal("cancellation did not reach provider")
 	}
 	<-done
+}
+
+func TestOpenAIChatUsesOnlyCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"id":"chat-1"}`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	provider := NewOpenAI(server.Client(), server.URL, "openai-secret")
+	response, err := provider.Chat(ctx, ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
+func TestOpenAIChatClassifiesCallErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *OpenAIProvider
+		wantType string
+	}{
+		{
+			name:     "request error",
+			provider: NewOpenAI(http.DefaultClient, "://invalid", "openai-secret"),
+			wantType: "*provider.RequestError",
+		},
+		{
+			name: "transport error",
+			provider: NewOpenAI(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("network unavailable")
+			})}, "http://provider.example", "openai-secret"),
+			wantType: "*provider.TransportError",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := test.provider.Chat(context.Background(), ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+			if got := fmt.Sprintf("%T", err); got != test.wantType {
+				t.Fatalf("error type = %s, want %s", got, test.wantType)
+			}
+		})
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,13 +20,19 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
-		logger.Info("request completed",
+		attrs := []any{
 			"request_id", requestID,
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", recorder.status,
 			"duration_ms", time.Since(started).Milliseconds(),
-		)
+		}
+		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route"} {
+			if value := recorder.Header().Get(name); value != "" {
+				attrs = append(attrs, strings.ToLower(strings.TrimPrefix(name, "X-Limen-")), value)
+			}
+		}
+		logger.Info("request completed", attrs...)
 	})
 }
 

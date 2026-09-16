@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +39,7 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret", time.Second)
+	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
 	response, err := provider.Chat(context.Background(), ChatRequest{
 		Model: "claude-test",
 		Messages: []Message{
@@ -67,7 +69,7 @@ func TestAnthropicChatConvertsStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret", time.Second)
+	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
 	response, err := provider.Chat(context.Background(), ChatRequest{Model: "claude-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +96,7 @@ func TestAnthropicStreamCloseCancelsUpstream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret", time.Second)
+	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
 	response, err := provider.Chat(context.Background(), ChatRequest{Model: "claude-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +122,7 @@ func TestAnthropicChatPreservesProviderErrorStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret", time.Second)
+	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
 	response, err := provider.Chat(context.Background(), ChatRequest{Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +130,61 @@ func TestAnthropicChatPreservesProviderErrorStatus(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+func TestAnthropicChatUsesOnlyCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	provider := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
+	response, err := provider.Chat(ctx, ChatRequest{Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
+func TestAnthropicChatClassifiesCallErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *AnthropicProvider
+		wantType string
+	}{
+		{
+			name:     "request error",
+			provider: NewAnthropic(http.DefaultClient, "://invalid", "anthropic-secret"),
+			wantType: "*provider.RequestError",
+		},
+		{
+			name: "transport error",
+			provider: NewAnthropic(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("network unavailable")
+			})}, "http://provider.example", "anthropic-secret"),
+			wantType: "*provider.TransportError",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := test.provider.Chat(context.Background(), ChatRequest{Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+			if got := fmt.Sprintf("%T", err); got != test.wantType {
+				t.Fatalf("error type = %s, want %s", got, test.wantType)
+			}
+		})
+	}
+}
+
+func TestAnthropicChatClassifiesInvalidMessages(t *testing.T) {
+	provider := NewAnthropic(http.DefaultClient, "http://provider.example", "anthropic-secret")
+	_, err := provider.Chat(context.Background(), ChatRequest{Model: "claude-test", Messages: []Message{{Role: "system", Content: "only system"}}})
+	if got := fmt.Sprintf("%T", err); got != "*provider.RequestError" {
+		t.Fatalf("error type = %s, want *provider.RequestError", got)
 	}
 }
 

@@ -26,3 +26,21 @@ func TestLoggingOmitsSecretsAndBody(t *testing.T) {
 		t.Fatal("missing request ID")
 	}
 }
+
+func TestLoggingIncludesSafeRouteFields(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Limen-Provider", "anthropic")
+		w.Header().Set("X-Limen-Attempts", "2")
+		w.Header().Set("X-Limen-Route", "openai:503>anthropic:200")
+		w.WriteHeader(http.StatusOK)
+	})
+	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	logged := output.String()
+	for _, value := range []string{"anthropic", "2", "openai:503>anthropic:200"} {
+		if !strings.Contains(logged, value) {
+			t.Fatalf("missing route value %q in %s", value, logged)
+		}
+	}
+}

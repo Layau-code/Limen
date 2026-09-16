@@ -1,80 +1,67 @@
-# Limen 第三阶段设计
+# Limen 可靠性网关设计
 
-## 1. 目标
+## 目标
 
-在保持 OpenAI-Compatible API 的前提下，用启动时加载的模型注册表替代写死的业务路由。客户端只依赖稳定的逻辑模型名，Limen 负责选择 Provider 并替换为真实上游模型。
+Limen 面向 Agent 提供统一的 OpenAI 兼容入口。客户端使用稳定的逻辑模型名，Limen 在启动时加载只读注册表，选择 Provider 和真实模型，并在明确的瞬时故障下安全切换备用目标。
 
-成功标准：
-
-- 逻辑模型精确映射到 OpenAI 或 Anthropic 及其上游模型。
-- `GET /v1/models` 返回经过鉴权、顺序稳定的模型列表。
-- 未配置注册表时保留原有模型前缀行为。
-- 普通响应、SSE、超时、取消和安全日志行为不回退。
-
-## 2. 范围
-
-当前阶段包含模型配置加载与校验、只读注册表、配置化 Router、模型列表 API，以及原有 OpenAI 和 Anthropic 转发能力。
-
-本阶段不实现配置热加载、远程配置、第三个 Provider、模型权重、健康路由、Retry/Fallback、限流、Usage、成本统计、数据库或管理后台。
-
-## 3. 组件边界
+## 数据流与边界
 
 ```text
-HTTP API
-  -> Bearer Key Authentication
-  -> Request Normalize
-  -> Model Registry + Router
-  -> Provider Adapter
-  -> Response / SSE Relay
+HTTP 鉴权与解析
+  → ModelRegistry 解析逻辑模型
+  → Router 创建总预算并检查 Circuit Breaker
+  → Provider 执行一次协议转换和上游调用
+  → 路由摘要响应头
+  → 普通响应或 SSE 转发
 ```
 
-- **HTTP API**：提供 `/v1/chat/completions` 和 `/v1/models`，共用 Limen API Key 鉴权。
-- **请求标准化**：生成 `provider.ChatRequest`，拒绝暂不支持的 tools、tool calls、音频和多模态内容。
-- **模型注册表**：保存客户端模型 ID、Provider 和上游模型，只在启动时构建，运行期间只读。
-- **Router**：解析逻辑模型、替换上游模型并选择 Provider。
-- **Provider 适配器**：只负责上游鉴权和协议转换，不感知逻辑模型映射或 HTTP Handler。
-- **响应转发**：及时转发普通响应或 SSE，不聚合完整流。
+- `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
+- `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
+- `internal/gateway/registry.go`：保存逻辑模型及一至四个有序目标；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
+- `internal/gateway/router.go`：替换上游模型，管理共享总预算、单次超时、Fallback 和路由决策。
+- `internal/gateway/breaker.go`：按目标隔离的进程内并发安全熔断器。
+- `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
 
-## 4. 模型注册表
+## 模型与路由
 
-`LIMEN_MODELS_FILE` 指向 JSON 文件。每条模型必须包含 `id`、`provider` 和 `upstream_model`，`display_name` 可选；Provider 只能是 `openai` 或 `anthropic`，模型 ID 不能重复，模型列表不能为空。
+模型文件格式如下，目标顺序就是优先级：
 
-提供配置文件时，请求模型必须精确匹配 `id`。Router 在调用 Provider 前用 `upstream_model` 替换请求模型，未注册模型返回 `400 unsupported_model`。模型列表按 ID 排序，保证 API 输出稳定。
+```json
+{
+  "routing": {"attempt_timeout":"10s", "failure_threshold":3, "cooldown":"30s"},
+  "models": [{
+    "id":"smart-model",
+    "targets":[
+      {"provider":"openai", "upstream_model":"gpt-5-mini"},
+      {"provider":"anthropic", "upstream_model":"claude-sonnet-4-20250514"}
+    ]
+  }]
+}
+```
 
-未提供配置文件时使用兼容注册表：`gpt-*`、`o1-*`、`o3-*` 对应 OpenAI，`claude-*` 对应 Anthropic，模型名原样透传。
+`id`、`targets`、目标的 `provider` 和 `upstream_model` 必填；Provider 只能是 `openai` 或 `anthropic`；ID 和目标组合不能重复；文件使用严格未知字段校验。总请求预算由 `LIMEN_REQUEST_TIMEOUT` 控制，单次超时和熔断参数由文件中的 `routing` 控制。
 
-## 5. 请求数据流
+没有模型文件时使用兼容注册表，模型名原样透传，不执行跨 Provider Fallback。配置模式的 `/v1/models` 使用 `owned_by=limen`，兼容模式使用实际 Provider。
 
-1. 客户端携带 Limen API Key 调用聊天或模型列表接口。
-2. API 层完成共用鉴权；聊天接口继续执行请求解析和最小校验。
-3. Router 从只读注册表解析模型，选择 Provider 并替换真实模型名。
-4. Provider 使用自己的密钥构造上游请求并完成协议转换。
-5. 非流式响应直接转发；流式响应以 SSE 逐块刷新。
-6. 客户端取消、服务超时或传输失败时，上游请求被取消并释放资源。
+## 可靠性不变量
 
-## 6. 错误处理
+1. Router 为一次调用创建一个总 Context；每个目标的 Context 只能更早截止，切换不会重新获得预算。
+2. 每个目标最多发起一次调用；瞬时状态固定为 408、409、429、500、502、503、504、529，传输错误同样允许切换。
+3. 确定性状态、请求转换错误、客户端取消和总预算耗尽不触发下一个目标。
+4. 目标返回 `2xx` 后立即交给客户端；即使后续 SSE 读取失败，也不重放请求。
+5. 瞬时失败达到阈值后目标进入 Open；冷却后只放行一个 Half-Open 探测，成功或确定性响应关闭，瞬时失败重新计时。
+6. 被放弃的响应体立即关闭；最终响应关闭时释放上游连接和关联 Context。
 
-- Limen 鉴权失败返回 `401 invalid_api_key`。
-- 请求格式错误或模型未注册返回 `400`。
-- 配置文件不可读、JSON 无效、字段错误、模型为空或 ID 重复时启动失败。
-- 注册表实际引用的 Provider 缺少 API Key 时启动失败。
-- 上游超时映射为网关超时；已开始的流发生错误时结束连接，不执行重试。
+## 错误与可解释性
 
-API 错误继续使用 OpenAI 兼容结构：`{"error":{"message":"...","type":"...","code":"..."}}`。
+Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错误标记为 `TransportError`。Router 使用 `UnsupportedModelError`、`NoAvailableTargetError` 和 `RouteError`，HTTP 层统一映射为 OpenAI 风格错误；已有的最终上游状态和正文继续透传。
 
-## 7. 配置与安全
+响应头仅包含安全摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`。日志读取相同字段，不记录 API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
-配置包含 `LIMEN_ADDR`、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL` 和 `LIMEN_REQUEST_TIMEOUT`。
+## 健康与交付
 
-配置模式只要求注册表实际使用的 Provider Key；兼容模式同时使用两个 Provider，因此要求两个 Key。密钥只通过运行环境注入，不写入响应、日志或仓库。日志不得默认记录鉴权头、完整 Prompt 或 Response。
+`/livez` 只表示进程可响应；`/readyz` 表示启动依赖已完成，关闭时先变为未就绪再执行 `Server.Shutdown`。`limen version` 和 `limen healthcheck` 不读取业务密钥；Docker 使用静态非 root 运行时。完整运维说明见 [`docs/operations.md`](operations.md)。
 
-## 8. 测试策略
+## 明确不包含
 
-- 配置测试覆盖合法文件、无效 JSON、空列表、缺失字段、未知 Provider、重复 ID 和按需密钥校验。
-- 注册表与 Router 测试覆盖精确映射、未知模型和四种兼容前缀。
-- HTTP API 测试覆盖模型列表鉴权、排序及两种运行模式。
-- 本地假 Provider 回归验证普通响应、SSE、错误、超时和取消传播，不依赖真实网络或密钥。
-
-## 9. 文档一致性
-
-API、配置、组件边界、运行方式或范围变化时，必须在同一次改动中同步更新 `README.md`、`AGENTS.md` 或本文档中受影响的内容。
+本版本不实现热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、数据库、管理后台或完整 Prometheus/OpenTelemetry 平台。

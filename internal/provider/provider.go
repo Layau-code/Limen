@@ -2,8 +2,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"io"
-	"time"
 )
 
 // Message 表示 Limen 内部统一使用的文本消息。
@@ -33,10 +33,34 @@ type Provider interface {
 	Chat(context.Context, ChatRequest) (Response, error)
 }
 
-// requestContext 为上游请求创建可取消的超时上下文。
-func requestContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return context.WithCancel(parent)
-	}
-	return context.WithTimeout(parent, timeout)
+// RequestError 表示调用上游前发生的确定性本地请求错误。
+type RequestError struct {
+	Operation string
+	Err       error
+}
+
+// Error 返回包含失败操作的请求错误描述。
+func (e *RequestError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Operation, e.Err)
+}
+
+// Unwrap 返回底层错误，便于调用方使用 errors.Is 和 errors.As。
+func (e *RequestError) Unwrap() error {
+	return e.Err
+}
+
+// TransportError 表示请求上游时发生的网络或 Context 错误。
+type TransportError struct {
+	Operation string
+	Err       error
+}
+
+// Error 返回包含失败操作的传输错误描述。
+func (e *TransportError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Operation, e.Err)
+}
+
+// Unwrap 返回底层错误，便于调用方识别取消或超时。
+func (e *TransportError) Unwrap() error {
+	return e.Err
 }

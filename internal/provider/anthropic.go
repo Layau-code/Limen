@@ -17,19 +17,20 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicProvider 将统一聊天请求转换为 Anthropic Messages API 请求。
 type AnthropicProvider struct {
-	client  *http.Client
-	url     string
-	apiKey  string
-	timeout time.Duration
+	client *http.Client
+	url    string
+	apiKey string
 }
 
 // NewAnthropic 创建 Anthropic Provider。
-func NewAnthropic(client *http.Client, baseURL, apiKey string, timeout time.Duration) *AnthropicProvider {
+func NewAnthropic(client *http.Client, baseURL, apiKey string) *AnthropicProvider {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	return &AnthropicProvider{
-		client:  client,
-		url:     strings.TrimRight(baseURL, "/") + "/v1/messages",
-		apiKey:  apiKey,
-		timeout: timeout,
+		client: client,
+		url:    strings.TrimRight(baseURL, "/") + "/v1/messages",
+		apiKey: apiKey,
 	}
 }
 
@@ -37,30 +38,30 @@ func NewAnthropic(client *http.Client, baseURL, apiKey string, timeout time.Dura
 func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (Response, error) {
 	body, err := marshalAnthropicRequest(request)
 	if err != nil {
-		return Response{}, err
+		return Response{}, &RequestError{Operation: "encode Anthropic request", Err: err}
 	}
-	ctx, cancel := requestContext(parent, p.timeout)
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(body))
+	httpRequest, err := http.NewRequestWithContext(parent, http.MethodPost, p.url, bytes.NewReader(body))
 	if err != nil {
-		cancel()
-		return Response{}, fmt.Errorf("build Anthropic request: %w", err)
+		return Response{}, &RequestError{Operation: "build Anthropic request", Err: err}
 	}
 	httpRequest.Header.Set("x-api-key", p.apiKey)
 	httpRequest.Header.Set("anthropic-version", anthropicVersion)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := p.client.Do(httpRequest)
 	if err != nil {
-		cancel()
-		return Response{}, fmt.Errorf("send Anthropic request: %w", err)
+		return Response{}, &TransportError{Operation: "send Anthropic request", Err: err}
 	}
-	bodyReader := &cancelOnClose{body: response.Body, cancel: cancel}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: bodyReader}, nil
+		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: response.Body}, nil
 	}
 	if request.Stream {
-		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(bodyReader)}, nil
+		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(response.Body)}, nil
 	}
-	return translateAnthropicResponse(response.StatusCode, bodyReader)
+	translated, err := translateAnthropicResponse(response.StatusCode, response.Body)
+	if err != nil {
+		return Response{}, &RequestError{Operation: "decode Anthropic response", Err: err}
+	}
+	return translated, nil
 }
 
 type anthropicRequest struct {

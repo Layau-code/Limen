@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/huz/limen/internal/gateway"
@@ -23,10 +24,21 @@ type Handler struct {
 
 // New 创建 Limen 的 HTTP 路由和请求处理器。
 func New(apiKey string, router *gateway.Router) http.Handler {
+	return NewWithHealth(apiKey, router, nil)
+}
+
+// NewWithHealth 创建带健康检查端点的 Limen HTTP 处理器。
+func NewWithHealth(apiKey string, router *gateway.Router, health *Health) http.Handler {
+	if health == nil {
+		health = NewHealth()
+		health.SetReady(true)
+	}
 	handler := &Handler{apiKey: apiKey, router: router}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("GET /v1/models", handler.models)
+	mux.HandleFunc("GET /livez", health.Live)
+	mux.HandleFunc("GET /readyz", health.Ready)
 	return mux
 }
 
@@ -63,11 +75,15 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 	}
 	response := modelsResponse{Object: "list"}
 	for _, model := range h.router.Models() {
+		ownedBy := "limen"
+		if model.Compatibility && len(model.Targets) > 0 {
+			ownedBy = model.Targets[0].Provider
+		}
 		response.Data = append(response.Data, modelResponse{
 			ID:      model.ID,
 			Object:  "model",
 			Created: 0,
-			OwnedBy: model.Provider,
+			OwnedBy: ownedBy,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -91,7 +107,7 @@ func validBearerToken(header, expected string) bool {
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest) {
-	response, err := h.router.Chat(r.Context(), request)
+	result, err := h.router.Chat(r.Context(), request)
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
@@ -100,7 +116,14 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 		var unavailable *gateway.ProviderUnavailableError
 		if errors.As(err, &unavailable) {
+			writeRouteHeaders(w, unavailable.Decision)
 			writeError(w, http.StatusBadGateway, err.Error(), "api_error", "provider_unavailable")
+			return
+		}
+		var noTarget *gateway.NoAvailableTargetError
+		if errors.As(err, &noTarget) {
+			writeRouteHeaders(w, noTarget.Decision)
+			writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_available_target")
 			return
 		}
 		status := http.StatusBadGateway
@@ -108,10 +131,19 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 			code = "provider_timeout"
+		} else if errors.Is(err, context.Canceled) {
+			status = 499
+			code = "client_canceled"
+		}
+		var routeError *gateway.RouteError
+		if errors.As(err, &routeError) {
+			writeRouteHeaders(w, routeError.Decision)
 		}
 		writeError(w, status, "provider request failed", "api_error", code)
 		return
 	}
+	response := result.Response
+	writeRouteHeaders(w, result.Decision)
 	defer response.Body.Close()
 	if response.ContentType != "" {
 		w.Header().Set("Content-Type", response.ContentType)
@@ -122,6 +154,19 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
+}
+
+// writeRouteHeaders 暴露不含模型、密钥和正文的路由摘要。
+func writeRouteHeaders(w http.ResponseWriter, decision gateway.Decision) {
+	if decision.Provider != "" {
+		w.Header().Set("X-Limen-Provider", decision.Provider)
+	}
+	if decision.Attempts > 0 {
+		w.Header().Set("X-Limen-Attempts", strconv.Itoa(decision.Attempts))
+	}
+	if route := decision.String(); route != "" {
+		w.Header().Set("X-Limen-Route", route)
+	}
 }
 
 type incomingChatRequest struct {

@@ -1,0 +1,23 @@
+{
+  "routing": {
+    "attempt_timeout": "10s",
+    "failure_threshold": 3,
+    "cooldown": "30s"
+  },
+  "models": [
+    {
+      "id": "smart-model",
+      "display_name": "Smart Model",
+      "targets": [
+        {
+          "provider": "openai",
+          "upstream_model": "gpt-5-mini"
+        },
+        {
+          "provider": "anthropic",
+          "upstream_model": "claude-sonnet-4-20250514"
+        }
+      ]
+    }
+  ]
+}
