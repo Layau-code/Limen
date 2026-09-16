@@ -10,9 +10,10 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - OpenAI 与 Anthropic 协议适配，普通响应和 SSE 流式响应。
 - 启动时严格加载的只读模型注册表；未配置时保留四种前缀兼容模式。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
+- Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
-明确不包含：配置热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、数据库、管理后台和完整遥测平台。
+明确不包含：每日额度和超额拦截、配置热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、数据库、管理后台和完整遥测平台。
 
 ## 工程原则
 
@@ -22,18 +23,21 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 4. 只有固定瞬时状态（408、409、429、500、502、503、504、529）和传输错误触发 Fallback；确定性错误直接返回。
 5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥。
 6. 优先整理和复用旧实现，保持文件职责单一，删除已失效代码。
+7. 金额使用十进制定点整数；缺失用量或价格时省略费用，不把未知值写成零。
 
 ## Provider 与路由
 
 - Provider 只接收 `internal/provider.ChatRequest` 和 Context，负责一次协议调用及转换，不依赖 HTTP Handler，也不负责模型映射。
 - `ModelRegistry` 保存逻辑模型、有序目标和兼容模式；Router 替换上游模型、管理预算、熔断和 Fallback。
 - Provider 映射使用名称到实例的只读映射。新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误、超时和取消测试。
+- Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 
 ## 测试与验证
 
 - 新行为先写能复现边界的失败测试，再写最小实现；测试聚焦可观察行为，辅助函数保持少而清楚。
 - Provider 使用 `httptest.Server`，不访问真实网络或密钥；Router 使用固定 Provider 验证预算、熔断、Fallback 和 SSE 边界。
+- 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 
 ## 文档同步

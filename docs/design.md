@@ -13,6 +13,7 @@ HTTP 鉴权与解析
   → Provider 执行一次协议转换和上游调用
   → 路由摘要响应头
   → 普通响应或 SSE 转发
+  → 响应结束后汇总成本并写入 Trailer / 结构化日志
 ```
 
 - `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
@@ -21,6 +22,7 @@ HTTP 鉴权与解析
 - `internal/gateway/router.go`：替换上游模型，管理共享总预算、单次超时、Fallback 和路由决策。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
+- `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
 
 ## 模型与路由
 
@@ -41,6 +43,8 @@ HTTP 鉴权与解析
 
 `id`、`targets`、目标的 `provider` 和 `upstream_model` 必填；Provider 只能是 `openai` 或 `anthropic`；ID 和目标组合不能重复；文件使用严格未知字段校验。总请求预算由 `LIMEN_REQUEST_TIMEOUT` 控制，单次超时和熔断参数由文件中的 `routing` 控制。
 
+目标可以增加可选的 `pricing` 对象，包含 `input_per_million_usd` 和 `output_per_million_usd` 两个十进制字符串。Limen 在响应完成后汇总 Provider 报告的用量；SSE 继续实时转发，未知费用不写成零。完整边界见 [`docs/specs/2026-09-16-usage-cost-settlement-design.md`](specs/2026-09-16-usage-cost-settlement-design.md)。
+
 没有模型文件时使用兼容注册表，模型名原样透传，不执行跨 Provider Fallback。配置模式的 `/v1/models` 使用 `owned_by=limen`，兼容模式使用实际 Provider。
 
 ## 可靠性不变量
@@ -56,7 +60,7 @@ HTTP 鉴权与解析
 
 Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错误标记为 `TransportError`。Router 使用 `UnsupportedModelError`、`NoAvailableTargetError` 和 `RouteError`，HTTP 层统一映射为 OpenAI 风格错误；已有的最终上游状态和正文继续透传。
 
-响应头仅包含安全摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`。日志读取相同字段，不记录 API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
+响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`；响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志读取这些字段，不记录 API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
 ## 健康与交付
 
@@ -64,8 +68,4 @@ Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错�
 
 ## 明确不包含
 
-本版本不实现热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、数据库、管理后台或完整 Prometheus/OpenTelemetry 平台。
-
-## 后续演进
-
-下一阶段计划在不改变实时 SSE 和可靠性路由语义的前提下，增加请求结束后的 Token 用量与成本结算。该能力尚未实现，已确认的设计边界见 [`docs/specs/2026-09-16-usage-cost-settlement-design.md`](specs/2026-09-16-usage-cost-settlement-design.md)。
+本版本不实现每日额度和超额拦截、热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、数据库、管理后台或完整 Prometheus/OpenTelemetry 平台。

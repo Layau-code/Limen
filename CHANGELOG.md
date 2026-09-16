@@ -1,5 +1,17 @@
 # 变更记录
 
+## v0.2.0
+
+### 新增
+
+- Provider 普通响应和 SSE 的 Token 用量采集。
+- 每个上游目标可选输入/输出价格，使用定点整数计算请求成本。
+- Fallback attempt 结算汇总、`complete`/`partial`/`unavailable` 状态、HTTP Trailer 和安全结构化日志字段。
+
+### 限制
+
+- 不实现每日额度、超额拦截、账本持久化、账单查询或成本路由。
+
 ## v0.1.0
 
 ### 新增

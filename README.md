@@ -12,6 +12,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
+- Provider 用量采集与按目标价格的定点成本结算；普通响应和 SSE 都保持实时转发。
 - 只使用 Go 标准库，包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
 
 ## 快速开始
@@ -25,8 +26,16 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
     "id": "smart-model",
     "display_name": "Smart Model",
     "targets": [
-      {"provider": "openai", "upstream_model": "gpt-5-mini"},
-      {"provider": "anthropic", "upstream_model": "claude-sonnet-4-20250514"}
+      {
+        "provider": "openai",
+        "upstream_model": "gpt-5-mini",
+        "pricing": {"input_per_million_usd": "0.250000", "output_per_million_usd": "2.000000"}
+      },
+      {
+        "provider": "anthropic",
+        "upstream_model": "claude-sonnet-4-20250514",
+        "pricing": {"input_per_million_usd": "3.000000", "output_per_million_usd": "15.000000"}
+      }
     ]
   }]
 }
@@ -73,6 +82,10 @@ X-Limen-Provider: anthropic
 X-Limen-Attempts: 2
 X-Limen-Route: openai:503>anthropic:200
 ```
+
+如果目标配置了 `pricing`，响应结束后还会通过 HTTP Trailer 和结构化日志提供 `input_tokens`、`output_tokens`、`total_tokens`、`cost_usd` 和 `settlement_status`。SSE 内容仍然逐块推送，不会等待完整响应；如果上游没有返回用量或客户端提前断开，费用字段会留空。
+
+价格字段使用每百万 Token 的美元字符串，输入价和输出价必须同时填写。当前版本只负责请求结束后的结算，不实现每日额度或超额拦截。
 
 ## 配置与运维
 

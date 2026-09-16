@@ -35,7 +35,7 @@ func main() {
 		for _, model := range cfg.Models {
 			targets := make([]gateway.Target, 0, len(model.Targets))
 			for _, target := range model.Targets {
-				targets = append(targets, gateway.Target{Provider: target.Provider, UpstreamModel: target.UpstreamModel})
+				targets = append(targets, gatewayTarget(target))
 			}
 			models = append(models, gateway.Model{
 				ID:          model.ID,
@@ -86,4 +86,9 @@ func main() {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// gatewayTarget 将配置目标转换为 Router 使用的不可变目标。
+func gatewayTarget(target config.Target) gateway.Target {
+	return gateway.Target{Provider: target.Provider, UpstreamModel: target.UpstreamModel, Pricing: target.Pricing}
 }
