@@ -1,0 +1,12 @@
+[
+  {"name":"quality-1","minimum_quality_tier":1,"target":"premium"},
+  {"name":"quality-2","minimum_quality_tier":2,"target":"premium"},
+  {"name":"quality-3","minimum_quality_tier":3,"target":"premium"},
+  {"name":"quality-4","minimum_quality_tier":4,"target":"premium"},
+  {"name":"public-data","data_class":"public","target":"premium"},
+  {"name":"internal-data","data_class":"internal","target":"premium"},
+  {"name":"streaming","stream":true,"target":"premium"},
+  {"name":"economy","strategy":"economy","target":"basic"},
+  {"name":"zero-contract","target":"premium"},
+  {"name":"stable-tie-break","minimum_quality_tier":1,"target":"premium"}
+]
