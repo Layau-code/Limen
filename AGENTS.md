@@ -11,6 +11,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 启动时严格加载的只读模型注册表；未配置时保留四种前缀兼容模式。
 - 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动时生成稳定 `config_version`，后续 Run 固定引用该版本。
+- 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
@@ -29,6 +30,8 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 7. 金额使用十进制定点整数；缺失用量或价格时省略费用，不把未知值写成零。
 8. Decision Engine 只消费带版本的输入快照，不读取时间、网络或数据库；Router 负责执行计划和并发熔断探测，Provider 只负责协议转换。
 9. 生产出站请求必须经安全 Client：HTTPS allowlist、无环境代理、无自动重定向，并拒绝 loopback、私网、链路本地和元数据地址。
+10. Run 的 soft budget 只在结算后影响后续准入；不得在 Provider 调用中途按预计费用截断当前响应，也不得把未知费用写成零。
+11. 所有受治理 Store 方法必须显式接收 tenant_id；跨租户资源不能只依赖单列 ID，账本以 `(tenant_id, request_id)` 幂等。
 
 ## Provider 与路由
 
@@ -39,6 +42,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 映射使用名称到实例的只读映射。新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误、超时和取消测试。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
+- PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 
 ## 测试与验证
