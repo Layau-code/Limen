@@ -65,3 +65,7 @@ Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错�
 ## 明确不包含
 
 本版本不实现热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、数据库、管理后台或完整 Prometheus/OpenTelemetry 平台。
+
+## 后续演进
+
+下一阶段计划在不改变实时 SSE 和可靠性路由语义的前提下，增加请求结束后的 Token 用量与成本结算。该能力尚未实现，已确认的设计边界见 [`docs/specs/2026-09-16-usage-cost-settlement-design.md`](specs/2026-09-16-usage-cost-settlement-design.md)。
