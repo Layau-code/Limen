@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -19,5 +20,17 @@ func TestRegistryWritesBoundedMetrics(t *testing.T) {
 	}
 	if strings.Contains(output.String(), strings.Repeat("m", 65)) {
 		t.Fatal("label was not bounded")
+	}
+}
+
+func TestRegistryCapsSeriesCount(t *testing.T) {
+	registry := NewRegistry()
+	for i := 0; i < maxSeriesPerMetric+1; i++ {
+		registry.Inc(RequestsTotal, Labels{Model: fmt.Sprintf("model-%d", i)})
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if got := len(registry.samples[RequestsTotal]); got != maxSeriesPerMetric {
+		t.Fatalf("series = %d, want %d", got, maxSeriesPerMetric)
 	}
 }
