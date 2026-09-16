@@ -58,16 +58,12 @@ func (settlement *Settlement) Summary() SettlementSummary {
 	priced := true
 	for _, attempt := range settlement.attempts {
 		if attempt.Usage == nil {
-			if isSuccessfulStatus(attempt.StatusCode) {
-				incomplete = true
-			}
+			incomplete = true
 			continue
 		}
 		usage := attempt.Usage.Snapshot()
 		if !usage.Complete {
-			if isSuccessfulStatus(attempt.StatusCode) {
-				incomplete = true
-			}
+			incomplete = true
 			continue
 		}
 		hasUsage = true
@@ -98,10 +94,6 @@ func (settlement *Settlement) Summary() SettlementSummary {
 	summary.Status = SettlementComplete
 	summary.CostAvailable = true
 	return summary
-}
-
-func isSuccessfulStatus(status int) bool {
-	return status >= 200 && status < 300
 }
 
 func addTokens(target *int64, values ...int64) bool {

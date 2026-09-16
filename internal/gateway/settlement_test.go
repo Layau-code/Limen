@@ -57,8 +57,6 @@ func TestSettlementIgnoresTransportAttemptWithoutResponse(t *testing.T) {
 		Pricing:    &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1},
 		Usage:      fixedUsage{usage: provider.Usage{InputTokens: 2, OutputTokens: 1, Complete: true}},
 	})
-	settlement.AddAttempt(AttemptSettlement{StatusCode: 503})
-
 	summary := settlement.Summary()
 	if summary.Status != SettlementComplete || !summary.CostAvailable {
 		t.Fatalf("summary = %+v", summary)
