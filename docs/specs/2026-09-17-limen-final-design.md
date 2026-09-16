@@ -622,7 +622,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复、跨实例取消、Provider 凭据加密与端点绑定和多实例事务测试。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger 和三十秒租约恢复；当前实现已完成前述租约获取、续租、释放和未知费用恢复，跨实例取消、Provider 凭据加密与端点绑定和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 

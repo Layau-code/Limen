@@ -186,7 +186,19 @@ func (store *PostgresStore) AdmitRequest(ctx context.Context, tenantID, runID st
 	request := input.Request
 	request.TenantID, request.RunID, request.State = tenantID, runID, run.RequestAdmitted
 	request.CreatedAt, request.UpdatedAt = input.Now, input.Now
-	_, err = tx.ExecContext(ctx, `INSERT INTO run_requests (tenant_id,id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, tenantID, request.ID, runID, request.Endpoint, request.IdempotencyKey, request.RequestHash, request.State, "pending", request.CreatedAt, request.UpdatedAt)
+	leaseOwner := any(nil)
+	leaseExpiresAt := any(nil)
+	if input.LeaseOwner != "" {
+		ttl := input.LeaseTTL
+		if ttl <= 0 {
+			ttl = run.RequestLeaseDuration
+		}
+		leaseOwner = input.LeaseOwner
+		leaseExpiresAt = input.Now.Add(ttl)
+		request.LeaseOwner = input.LeaseOwner
+		request.LeaseExpiresAt = input.Now.Add(ttl)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO run_requests (tenant_id,id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,lease_owner,lease_expires_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, tenantID, request.ID, runID, request.Endpoint, request.IdempotencyKey, request.RequestHash, request.State, "pending", leaseOwner, leaseExpiresAt, request.CreatedAt, request.UpdatedAt)
 	if err != nil {
 		return run.Request{}, err
 	}
@@ -197,6 +209,191 @@ func (store *PostgresStore) AdmitRequest(ctx context.Context, tenantID, runID st
 		return run.Request{}, err
 	}
 	return request, nil
+}
+
+// AcquireRequestLease 为 PostgreSQL 请求分配一个可续租的执行实例租约。
+func (store *PostgresStore) AcquireRequestLease(ctx context.Context, tenantID, requestID, owner string, now time.Time, ttl time.Duration) (run.Request, error) {
+	if store.db == nil {
+		return run.Request{}, errors.New("postgres database is required")
+	}
+	if owner == "" {
+		return run.Request{}, run.ErrLeaseUnavailable
+	}
+	if ttl <= 0 {
+		ttl = run.RequestLeaseDuration
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	expiresAt := now.Add(ttl)
+	var id string
+	err = tx.QueryRowContext(ctx, `UPDATE run_requests SET lease_owner=$3, lease_expires_at=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2 AND state NOT IN ('settled','failed','cancelled','abandoned') AND (lease_owner IS NULL OR lease_expires_at <= $5 OR lease_owner=$3) RETURNING id`, tenantID, requestID, owner, expiresAt, now).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.leaseConflict(ctx, tx, tenantID, requestID)
+	}
+	if err != nil {
+		return run.Request{}, err
+	}
+	request, err := getRequestTx(ctx, tx, tenantID, id)
+	if err != nil {
+		return run.Request{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Request{}, err
+	}
+	return request, nil
+}
+
+// RenewRequestLease 延长 PostgreSQL 请求的执行实例租约。
+func (store *PostgresStore) RenewRequestLease(ctx context.Context, tenantID, requestID, owner string, now time.Time, ttl time.Duration) (run.Request, error) {
+	if store.db == nil {
+		return run.Request{}, errors.New("postgres database is required")
+	}
+	if ttl <= 0 {
+		ttl = run.RequestLeaseDuration
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	var id string
+	err = tx.QueryRowContext(ctx, `UPDATE run_requests SET lease_expires_at=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2 AND lease_owner=$3 AND lease_expires_at > $5 RETURNING id`, tenantID, requestID, owner, now.Add(ttl), now).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.leaseLost(ctx, tx, tenantID, requestID)
+	}
+	if err != nil {
+		return run.Request{}, err
+	}
+	request, err := getRequestTx(ctx, tx, tenantID, id)
+	if err != nil {
+		return run.Request{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Request{}, err
+	}
+	return request, nil
+}
+
+// ReleaseRequestLease 释放 PostgreSQL 请求的执行实例租约。
+func (store *PostgresStore) ReleaseRequestLease(ctx context.Context, tenantID, requestID, owner string, now time.Time) error {
+	if store.db == nil {
+		return errors.New("postgres database is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE run_requests SET lease_owner=NULL, lease_expires_at=NULL, updated_at=$4 WHERE tenant_id=$1 AND id=$2 AND lease_owner=$3`, tenantID, requestID, owner, now)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return run.ErrLeaseLost
+	}
+	return tx.Commit()
+}
+
+// RecoverExpiredRequests 将过期在途请求标记为未知费用并暂停 Run。
+func (store *PostgresStore) RecoverExpiredRequests(ctx context.Context, tenantID string, now time.Time, limit int) ([]run.Request, error) {
+	if store.db == nil {
+		return nil, errors.New("postgres database is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,run_id FROM run_requests WHERE tenant_id=$1 AND lease_expires_at IS NOT NULL AND lease_expires_at <= $2 AND state NOT IN ('settled','failed','cancelled','abandoned') ORDER BY lease_expires_at LIMIT $3 FOR UPDATE SKIP LOCKED`, tenantID, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	var requestIDs []struct {
+		id    string
+		runID string
+	}
+	for rows.Next() {
+		var item struct {
+			id    string
+			runID string
+		}
+		if err := rows.Scan(&item.id, &item.runID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		requestIDs = append(requestIDs, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var recovered []run.Request
+	for _, item := range requestIDs {
+		requestID, runID := item.id, item.runID
+		if _, err := tx.ExecContext(ctx, `UPDATE run_requests SET state='abandoned', settlement_status='pending', lease_owner=NULL, lease_expires_at=NULL, updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, now); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=CASE WHEN state IN ('completed','cancelled','deadline_exceeded','soft_budget_exhausted') THEN state ELSE 'suspended_accounting' END, in_flight=GREATEST(in_flight-1,0), updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, runID, now); err != nil {
+			return nil, err
+		}
+		item, err := getRequestTx(ctx, tx, tenantID, requestID)
+		if err != nil {
+			return nil, err
+		}
+		recovered = append(recovered, item)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return recovered, nil
+}
+
+// leaseConflict 将租约更新失败区分为资源不存在或被其他实例持有。
+func (store *PostgresStore) leaseConflict(ctx context.Context, tx *sql.Tx, tenantID, requestID string) (run.Request, error) {
+	var state run.RequestState
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.Request{}, run.ErrResourceNotFound
+		}
+		return run.Request{}, err
+	}
+	if !isRequestInProgress(state) {
+		return run.Request{}, run.ErrRequestAlreadyProcessed
+	}
+	return run.Request{}, run.ErrLeaseUnavailable
+}
+
+// leaseLost 将续租失败区分为资源不存在或租约已被回收。
+func (store *PostgresStore) leaseLost(ctx context.Context, tx *sql.Tx, tenantID, requestID string) (run.Request, error) {
+	var state run.RequestState
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.Request{}, run.ErrResourceNotFound
+		}
+		return run.Request{}, err
+	}
+	return run.Request{}, run.ErrLeaseLost
 }
 
 // RecordAttemptStarted 在访问 Provider 前记录一次本地 Attempt。
@@ -414,9 +611,17 @@ func getRunTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run,
 // getRequestTx 在已有事务内读取不含正文的 Request。
 func getRequestTx(ctx context.Context, tx *sql.Tx, tenantID, requestID string) (run.Request, error) {
 	var item run.Request
-	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &item.DecisionID, &item.LedgerRecorded, &item.LeaseOwner, &item.LeaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	var leaseOwner sql.NullString
+	var leaseExpiresAt sql.NullTime
+	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &item.DecisionID, &item.LedgerRecorded, &leaseOwner, &leaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run.Request{}, run.ErrResourceNotFound
+	}
+	if leaseOwner.Valid {
+		item.LeaseOwner = leaseOwner.String
+	}
+	if leaseExpiresAt.Valid {
+		item.LeaseExpiresAt = leaseExpiresAt.Time
 	}
 	return item, err
 }
@@ -434,3 +639,4 @@ func isRequestInProgress(state run.RequestState) bool {
 var _ Store = (*PostgresStore)(nil)
 var _ run.Service = (*PostgresStore)(nil)
 var _ run.ControlService = (*PostgresStore)(nil)
+var _ run.LeaseService = (*PostgresStore)(nil)

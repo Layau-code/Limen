@@ -152,6 +152,16 @@ func (store *MemoryStore) mutateRun(tenantID, runID, operation string, mutation 
 
 // AdmitRequest 在同一事务临界区内执行幂等检查和 Run 准入。
 func (store *MemoryStore) AdmitRequest(tenantID, runID string, request Request, now time.Time) (Request, error) {
+	return store.admitRequest(tenantID, runID, request, now, "", 0)
+}
+
+// AdmitRequestWithLease 在准入事务内同时写入执行实例租约。
+func (store *MemoryStore) AdmitRequestWithLease(tenantID, runID string, input AdmissionInput) (Request, error) {
+	return store.admitRequest(tenantID, runID, input.Request, input.Now, input.LeaseOwner, input.LeaseTTL)
+}
+
+// admitRequest 是内存 Store 的统一准入实现。
+func (store *MemoryStore) admitRequest(tenantID, runID string, request Request, now time.Time, leaseOwner string, leaseTTL time.Duration) (Request, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if request.IdempotencyKey == "" {
@@ -189,6 +199,14 @@ func (store *MemoryStore) AdmitRequest(tenantID, runID string, request Request, 
 	request.State = RequestAdmitted
 	request.CreatedAt = now
 	request.UpdatedAt = now
+	if request.LeaseOwner == "" && leaseOwner != "" {
+		ttl := leaseTTL
+		if ttl <= 0 {
+			ttl = RequestLeaseDuration
+		}
+		request.LeaseOwner = leaseOwner
+		request.LeaseExpiresAt = now.Add(ttl)
+	}
 	store.runs[runKey] = run
 	store.requests[resourceKey(tenantID, request.ID)] = request
 	store.idem[idemKey] = request.ID
@@ -280,14 +298,96 @@ func (store *MemoryStore) LedgerCount() int {
 	return len(store.ledger)
 }
 
-// RecoverExpired 清除过期租约并返回仍需后台恢复的请求。
-func (store *MemoryStore) RecoverExpired(now time.Time) []Request {
+// AcquireRequestLease 为请求分配一个可续租的执行实例租约。
+func (store *MemoryStore) AcquireRequestLease(tenantID, requestID, owner string, now time.Time, ttl time.Duration) (Request, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if owner == "" {
+		return Request{}, ErrLeaseUnavailable
+	}
+	key := resourceKey(tenantID, requestID)
+	request, ok := store.requests[key]
+	if !ok {
+		return Request{}, ErrResourceNotFound
+	}
+	if !isRequestInProgress(request.State) {
+		return request, ErrRequestAlreadyProcessed
+	}
+	if request.LeaseOwner != "" && request.LeaseOwner != owner && now.Before(request.LeaseExpiresAt) {
+		return request, ErrLeaseUnavailable
+	}
+	if ttl <= 0 {
+		ttl = RequestLeaseDuration
+	}
+	request.LeaseOwner = owner
+	request.LeaseExpiresAt = now.Add(ttl)
+	request.UpdatedAt = now
+	store.requests[key] = request
+	return request, nil
+}
+
+// RenewRequestLease 延长当前执行实例持有的请求租约。
+func (store *MemoryStore) RenewRequestLease(tenantID, requestID, owner string, now time.Time, ttl time.Duration) (Request, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, requestID)
+	request, ok := store.requests[key]
+	if !ok {
+		return Request{}, ErrResourceNotFound
+	}
+	if request.LeaseOwner != owner || request.LeaseExpiresAt.IsZero() || !now.Before(request.LeaseExpiresAt) {
+		return request, ErrLeaseLost
+	}
+	if ttl <= 0 {
+		ttl = RequestLeaseDuration
+	}
+	request.LeaseExpiresAt = now.Add(ttl)
+	request.UpdatedAt = now
+	store.requests[key] = request
+	return request, nil
+}
+
+// ReleaseRequestLease 释放当前执行实例持有的请求租约。
+func (store *MemoryStore) ReleaseRequestLease(tenantID, requestID, owner string, now time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, requestID)
+	request, ok := store.requests[key]
+	if !ok {
+		return ErrResourceNotFound
+	}
+	if request.LeaseOwner != owner {
+		return ErrLeaseLost
+	}
+	request.LeaseOwner = ""
+	request.LeaseExpiresAt = time.Time{}
+	request.UpdatedAt = now
+	store.requests[key] = request
+	return nil
+}
+
+// RecoverExpiredRequests 将过期在途请求标记为未知费用并暂停 Run。
+func (store *MemoryStore) RecoverExpiredRequests(tenantID string, now time.Time, limit int) []Request {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	var recovered []Request
 	for key, request := range store.requests {
+		if tenantID != "" && request.TenantID != tenantID {
+			continue
+		}
+		if limit > 0 && len(recovered) >= limit {
+			break
+		}
 		if request.LeaseExpiresAt.IsZero() || now.Before(request.LeaseExpiresAt) {
 			continue
+		}
+		if isRequestInProgress(request.State) {
+			if item, ok := store.runs[resourceKey(request.TenantID, request.RunID)]; ok {
+				_ = item.Settle(nil)
+				store.runs[resourceKey(request.TenantID, request.RunID)] = item
+			}
+			request.State = RequestAbandoned
+			request.SettlementStatus = "pending"
 		}
 		request.LeaseOwner = ""
 		request.LeaseExpiresAt = time.Time{}
@@ -296,6 +396,11 @@ func (store *MemoryStore) RecoverExpired(now time.Time) []Request {
 		recovered = append(recovered, request)
 	}
 	return recovered
+}
+
+// RecoverExpired 保留内存 Store 的全租户测试辅助入口。
+func (store *MemoryStore) RecoverExpired(now time.Time) []Request {
+	return store.RecoverExpiredRequests("", now, 0)
 }
 
 func resourceKey(tenantID, resourceID string) string {

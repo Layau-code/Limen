@@ -86,3 +86,34 @@ func TestMemoryStoreRejectsConflictingIdempotency(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestMemoryRequestLeaseRenewsAndRecovers(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateRun(testRun()); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := HashRequest("tenant-1", "/v1/chat/completions", "lease-key", []byte(`{"model":"auto"}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "lease-key", RequestHash: hash}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireRequestLease("tenant-1", request.ID, "worker-a", time.Unix(100, 0), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireRequestLease("tenant-1", request.ID, "worker-b", time.Unix(110, 0), 30*time.Second); !errors.Is(err, ErrLeaseUnavailable) {
+		t.Fatalf("second worker error = %v", err)
+	}
+	if _, err := store.RenewRequestLease("tenant-1", request.ID, "worker-a", time.Unix(120, 0), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if recovered := store.RecoverExpiredRequests("tenant-1", time.Unix(151, 0), 10); len(recovered) != 1 || recovered[0].State != RequestAbandoned {
+		t.Fatalf("recovered = %+v", recovered)
+	}
+	run, ok := store.GetRun("tenant-1", "run-1")
+	if !ok || run.State != StateSuspendedAccounting || run.InFlight != 0 {
+		t.Fatalf("run after recovery = %+v found=%v", run, ok)
+	}
+}
