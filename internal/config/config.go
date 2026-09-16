@@ -212,7 +212,7 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 // validateBaseURL 校验 Provider 地址能够安全地作为 HTTP API 根地址使用。
 func validateBaseURL(name, raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("%s must be an absolute HTTP(S) URL", name)
 	}
 	if parsed.User != nil {

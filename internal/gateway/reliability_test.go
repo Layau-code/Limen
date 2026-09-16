@@ -219,6 +219,28 @@ func TestRouterPropagatesCallerCancellation(t *testing.T) {
 	}
 }
 
+func TestRouterDoesNotReturnPendingResponseAfterCallerCancellation(t *testing.T) {
+	var cancel context.CancelFunc
+	primaryBody := &closeSpy{Reader: strings.NewReader(`{"error":"busy"}`)}
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			cancel()
+			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: primaryBody}, nil
+		}),
+		"anthropic": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			t.Fatal("canceled request called fallback")
+			return provider.Response{}, nil
+		}),
+	}
+	router := newReliabilityRouter(t, providers)
+	ctx, cancelContext := context.WithCancel(context.Background())
+	cancel = cancelContext
+	_, err := router.Chat(ctx, provider.ChatRequest{Model: "smart-model"})
+	if !errors.Is(err, context.Canceled) || !primaryBody.closed {
+		t.Fatalf("error=%v body_closed=%t", err, primaryBody.closed)
+	}
+}
+
 func TestRouterResponseCloseCancelsAttempt(t *testing.T) {
 	attemptContext := make(chan context.Context, 1)
 	providers := map[string]provider.Provider{
@@ -318,6 +340,40 @@ func TestCompatibilityRouteHasStableCircuitBreaker(t *testing.T) {
 	}
 	if router.breakers[targetKey(model, model.Targets[0])] == nil {
 		t.Fatal("resolved compatibility target has no circuit breaker")
+	}
+}
+
+func TestCircuitBreakerIsolatedByLogicalModel(t *testing.T) {
+	openAICalls := 0
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			openAICalls++
+			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		}),
+	}
+	registry, err := NewModelRegistry([]Model{
+		{ID: "smart-model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-shared"}}},
+		{ID: "fast-model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-shared"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(providers, registry, Policy{
+		RequestTimeout: time.Second, AttemptTimeout: time.Second,
+		FailureThreshold: 1, Cooldown: time.Hour,
+	})
+	first, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Response.Body.Close()
+	second, err := router.Chat(context.Background(), provider.ChatRequest{Model: "fast-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = second.Response.Body.Close()
+	if openAICalls != 2 || second.Decision.String() != "openai:503" {
+		t.Fatalf("calls=%d decision=%s", openAICalls, second.Decision.String())
 	}
 }
 

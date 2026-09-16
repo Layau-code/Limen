@@ -101,6 +101,9 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) bool {
 
 // validBearerToken 使用常量时间比较校验 Limen API Key。
 func validBearerToken(header, expected string) bool {
+	if expected == "" {
+		return false
+	}
 	token, found := strings.CutPrefix(header, "Bearer ")
 	return found && len(token) == len(expected) && subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }

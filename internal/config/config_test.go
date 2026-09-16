@@ -154,6 +154,7 @@ func TestLoadRejectsInvalidProviderBaseURL(t *testing.T) {
 		{"relative URL", "OPENAI_BASE_URL", "/v1"},
 		{"unsupported scheme", "OPENAI_BASE_URL", "ftp://provider.example/v1"},
 		{"embedded credentials", "OPENAI_BASE_URL", "https://user:pass@provider.example/v1"},
+		{"query in URL", "OPENAI_BASE_URL", "https://provider.example/v1?token=unsafe"},
 		{"invalid Anthropic URL", "ANTHROPIC_BASE_URL", "/v1"},
 	}
 

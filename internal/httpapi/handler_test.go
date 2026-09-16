@@ -41,6 +41,12 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestValidBearerTokenRejectsEmptyExpectedKey(t *testing.T) {
+	if validBearerToken("Bearer ", "") {
+		t.Fatal("empty expected key was accepted")
+	}
+}
+
 func TestModelsReturnsConfiguredModelsSortedByID(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{
 		{ID: "smart-model", Targets: []gateway.Target{{Provider: "anthropic", UpstreamModel: "claude-real"}}},

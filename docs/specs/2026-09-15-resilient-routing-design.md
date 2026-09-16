@@ -118,7 +118,7 @@ Router 额外提供：
 
 ## 7. 熔断状态机
 
-熔断器按 `provider + upstream_model` 隔离，并在启动时随注册表创建。
+熔断器按 `logical_model + provider + upstream_model` 隔离，并在启动时随注册表创建。
 
 ```text
 Closed

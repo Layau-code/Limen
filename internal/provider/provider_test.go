@@ -188,4 +188,18 @@ func TestAnthropicChatClassifiesInvalidMessages(t *testing.T) {
 	}
 }
 
+func TestAnthropicChatClassifiesInvalidResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "{")
+	}))
+	defer server.Close()
+
+	client := NewAnthropic(server.Client(), server.URL, "anthropic-secret")
+	_, err := client.Chat(context.Background(), ChatRequest{Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	var requestError *RequestError
+	if !errors.As(err, &requestError) {
+		t.Fatalf("error = %T %v, want RequestError", err, err)
+	}
+}
+
 func float64Pointer(value float64) *float64 { return &value }

@@ -107,6 +107,11 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 	}
 
 	for _, target := range model.Targets {
+		if err := parent.Err(); err != nil {
+			closePending()
+			cancelBudget()
+			return Result{}, &RouteError{Decision: decision, Err: err}
+		}
 		breaker := router.breakers[targetKey(model, target)]
 		if !breaker.allow() {
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "circuit_open"})
@@ -207,6 +212,11 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 	}
 
 	if hasPendingResponse {
+		if err := parent.Err(); err != nil {
+			closePending()
+			cancelBudget()
+			return Result{}, &RouteError{Decision: decision, Err: err}
+		}
 		return resultWithCancel(pendingResponse, decision, pendingCancel, cancelBudget), nil
 	}
 	cancelBudget()
@@ -227,7 +237,7 @@ func targetKey(model Model, target Target) string {
 	if model.Compatibility {
 		upstreamModel = model.ID
 	}
-	return target.Provider + "\x00" + upstreamModel
+	return model.ID + "\x00" + target.Provider + "\x00" + upstreamModel
 }
 
 // isTransientStatus 判断上游状态是否允许切换到下一个目标。
