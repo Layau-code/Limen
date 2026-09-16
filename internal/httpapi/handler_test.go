@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
@@ -53,6 +54,27 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestScopesRejectOperationWithoutPermission(t *testing.T) {
+	handler := NewWithHealthAndRunsForTenantScopes("limen-secret", nil, nil, "tenant-1", []auth.Scope{auth.ScopeInference}, run.NewMemoryService(nil))
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	request.Header.Set("Idempotency-Key", "run-create")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "insufficient_scope") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[]}`))
+	chat.Header.Set("Authorization", "Bearer limen-secret")
+	chat.Header.Set("X-Limen-Run-ID", "run-1")
+	chat.Header.Set("Idempotency-Key", "request-1")
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chat)
+	if chatResponse.Code != http.StatusForbidden || !strings.Contains(chatResponse.Body.String(), "insufficient_scope") {
+		t.Fatalf("chat status=%d body=%s", chatResponse.Code, chatResponse.Body.String())
 	}
 }
 

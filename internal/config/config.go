@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/huz/limen/internal/auth"
 )
 
 const maxTargetsPerModel = 4
@@ -59,6 +61,7 @@ type Config struct {
 	ConfigVersion    string
 	DatabaseURL      string
 	TenantID         string
+	Scopes           []auth.Scope
 }
 
 type modelsDocument struct {
@@ -90,6 +93,7 @@ func Load() (Config, error) {
 		ConfigVersion:  "compatibility-v1",
 		DatabaseURL:    os.Getenv("LIMEN_DATABASE_URL"),
 		TenantID:       valueOrDefault("LIMEN_TENANT_ID", "local"),
+		Scopes:         auth.AllScopes(),
 	}
 	if cfg.LimenAPIKey == "" {
 		return Config{}, errors.New("LIMEN_API_KEY is required")
@@ -101,6 +105,13 @@ func Load() (Config, error) {
 	}
 	if strings.TrimSpace(cfg.TenantID) == "" {
 		return Config{}, errors.New("LIMEN_TENANT_ID must not be empty")
+	}
+	if raw := os.Getenv("LIMEN_API_SCOPES"); raw != "" {
+		scopes, err := parseScopes(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Scopes = scopes
 	}
 	if err := validateBaseURL("OPENAI_BASE_URL", cfg.OpenAIBaseURL); err != nil {
 		return Config{}, err
@@ -129,6 +140,35 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// parseScopes 解析并校验静态 API Key 的 Scope 列表。
+func parseScopes(raw string) ([]auth.Scope, error) {
+	allowed := make(map[auth.Scope]struct{})
+	for _, scope := range auth.AllScopes() {
+		allowed[scope] = struct{}{}
+	}
+	seen := make(map[auth.Scope]struct{})
+	parts := strings.Split(raw, ",")
+	if len(parts) == 0 {
+		return nil, errors.New("LIMEN_API_SCOPES must not be empty")
+	}
+	result := make([]auth.Scope, 0, len(parts))
+	for _, part := range parts {
+		scope := auth.Scope(strings.TrimSpace(part))
+		if scope == "" {
+			return nil, errors.New("LIMEN_API_SCOPES contains an empty scope")
+		}
+		if _, ok := allowed[scope]; !ok {
+			return nil, fmt.Errorf("LIMEN_API_SCOPES contains unsupported scope %q", scope)
+		}
+		if _, ok := seen[scope]; ok {
+			return nil, fmt.Errorf("LIMEN_API_SCOPES contains duplicate scope %q", scope)
+		}
+		seen[scope] = struct{}{}
+		result = append(result, scope)
+	}
+	return result, nil
 }
 
 // loadModels 读取并校验模型注册表与路由策略。

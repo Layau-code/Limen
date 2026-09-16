@@ -27,6 +27,32 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadParsesAPIScopes(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_API_SCOPES", "inference, runs:read")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Scopes) != 2 || cfg.Scopes[0] != "inference" || cfg.Scopes[1] != "runs:read" {
+		t.Fatalf("scopes = %v", cfg.Scopes)
+	}
+}
+
+func TestLoadRejectsUnknownAPIScope(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_API_SCOPES", "inference,unknown")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected unsupported scope error")
+	}
+}
+
 func TestLoadDatabaseConfiguration(t *testing.T) {
 	t.Setenv("LIMEN_API_KEY", "limen-secret")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")

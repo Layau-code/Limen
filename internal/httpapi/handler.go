@@ -3,7 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
@@ -31,13 +31,15 @@ var settlementTrailerNames = []string{
 }
 
 type Handler struct {
-	apiKey   string
-	router   *gateway.Router
-	runs     run.Service
-	tenantID string
+	authenticator auth.StaticAuthenticator
+	router        *gateway.Router
+	runs          run.Service
+	tenantID      string
 }
 
 const runTenantID = "local"
+
+type principalContextKey struct{}
 
 // New 创建 Limen 的 HTTP 路由和请求处理器。
 func New(apiKey string, router *gateway.Router) http.Handler {
@@ -61,6 +63,11 @@ func NewWithHealthAndRuns(apiKey string, router *gateway.Router, health *Health,
 
 // NewWithHealthAndRunsForTenant 创建绑定到指定租户的健康和 Run 控制面。
 func NewWithHealthAndRunsForTenant(apiKey string, router *gateway.Router, health *Health, tenantID string, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenantScopes(apiKey, router, health, tenantID, nil, runs)
+}
+
+// NewWithHealthAndRunsForTenantScopes 创建带租户和 Scope 限制的 HTTP 处理器。
+func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, health *Health, tenantID string, scopes []auth.Scope, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -68,7 +75,12 @@ func NewWithHealthAndRunsForTenant(apiKey string, router *gateway.Router, health
 	if strings.TrimSpace(tenantID) == "" {
 		tenantID = runTenantID
 	}
-	handler := &Handler{apiKey: apiKey, router: router, runs: runs, tenantID: tenantID}
+	handler := &Handler{
+		authenticator: auth.NewStaticAuthenticator(apiKey, tenantID, scopes),
+		router:        router,
+		runs:          runs,
+		tenantID:      tenantID,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
@@ -85,7 +97,7 @@ func NewWithHealthAndRunsForTenant(apiKey string, router *gateway.Router, health
 
 // dryRun 鉴权并返回不访问 Provider 的确定性决策计划。
 func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeInference, auth.ScopeDecisions) {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
@@ -140,7 +152,7 @@ type createRunRequest struct {
 
 // createRun 创建一个带软预算和截止时间的受治理 Run。
 func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeRunsWrite) {
 		return
 	}
 	control, ok := h.runs.(run.ControlService)
@@ -193,12 +205,13 @@ func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to create Run", "api_error", "run_id_error")
 		return
 	}
-	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, nil)
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
 	}
-	item, err := control.CreateRunWithMutation(r.Context(), h.tenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
+	item, err := control.CreateRunWithMutation(r.Context(), tenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
 	if err != nil {
 		writeRunMutationError(w, err)
 		return
@@ -208,14 +221,14 @@ func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 
 // getRun 返回不含正文的 Run 当前状态。
 func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeRunsRead) {
 		return
 	}
 	if h.runs == nil {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
 		return
 	}
-	item, err := h.runs.GetRun(r.Context(), h.tenantID, r.PathValue("run_id"))
+	item, err := h.runs.GetRun(r.Context(), h.requestTenantID(r), r.PathValue("run_id"))
 	if err != nil {
 		writeRunLookupError(w, err)
 		return
@@ -235,7 +248,7 @@ func (h *Handler) cancelRun(w http.ResponseWriter, r *http.Request) {
 
 // mutateRun 执行带幂等键的 Run 完成或取消操作。
 func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeRunsWrite) {
 		return
 	}
 	control, ok := h.runs.(run.ControlService)
@@ -255,7 +268,8 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 	if len(strings.TrimSpace(string(body))) == 0 {
 		body = []byte("{}")
 	}
-	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, nil)
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
@@ -263,9 +277,9 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 	mutation := run.Mutation{Key: key, Hash: hash}
 	var item run.Run
 	if cancel {
-		item, err = control.CancelRunWithMutation(r.Context(), h.tenantID, r.PathValue("run_id"), mutation)
+		item, err = control.CancelRunWithMutation(r.Context(), tenantID, r.PathValue("run_id"), mutation)
 	} else {
-		item, err = control.CompleteRunWithMutation(r.Context(), h.tenantID, r.PathValue("run_id"), mutation)
+		item, err = control.CompleteRunWithMutation(r.Context(), tenantID, r.PathValue("run_id"), mutation)
 	}
 	if err != nil {
 		writeRunMutationError(w, err)
@@ -276,14 +290,14 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 
 // getRunRequest 返回请求状态和结算状态，不返回 Prompt 或 Response。
 func (h *Handler) getRunRequest(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeRunsRead) {
 		return
 	}
 	if h.runs == nil {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
 		return
 	}
-	item, err := h.runs.GetRequest(r.Context(), h.tenantID, r.PathValue("request_id"))
+	item, err := h.runs.GetRequest(r.Context(), h.requestTenantID(r), r.PathValue("request_id"))
 	if err != nil {
 		writeRunLookupError(w, err)
 		return
@@ -364,7 +378,11 @@ func writeRunMutationError(w http.ResponseWriter, err error) {
 
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	scopes := []auth.Scope{auth.ScopeInference}
+	if strings.TrimSpace(r.Header.Get("X-Limen-Run-ID")) != "" {
+		scopes = append(scopes, auth.ScopeRunsWrite)
+	}
+	if !h.authenticateScopes(w, r, scopes...) {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
@@ -408,7 +426,8 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		writeError(w, http.StatusBadRequest, "Idempotency-Key is required for a Run request", "invalid_request_error", "idempotency_key_required")
 		return "", false
 	}
-	hash, err := run.HashRequest(h.tenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return "", false
@@ -418,7 +437,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		writeError(w, http.StatusInternalServerError, "unable to create request", "api_error", "request_id_error")
 		return "", false
 	}
-	item, err := h.runs.AdmitRequest(r.Context(), h.tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
+	item, err := h.runs.AdmitRequest(r.Context(), tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
 	if err != nil {
 		writeRunAdmissionError(w, err, item.ID)
 		return "", false
@@ -429,7 +448,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 
 // models 鉴权并返回当前可用的 OpenAI 兼容模型列表。
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
-	if !h.authenticate(w, r) {
+	if !h.authenticateScopes(w, r, auth.ScopeInference) {
 		return
 	}
 	if h.router == nil {
@@ -455,30 +474,57 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 
 // authenticate 校验请求中的 Limen Bearer Key，并在失败时写入统一错误。
 func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) bool {
-	if validBearerToken(r.Header.Get("Authorization"), h.apiKey) {
-		return true
-	}
-	writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
-	return false
+	return h.authenticateScopes(w, r)
 }
 
-// validBearerToken 使用常量时间比较校验 Limen API Key。
-func validBearerToken(header, expected string) bool {
-	if expected == "" {
+// authenticateScopes 校验身份并确认请求拥有全部指定 Scope。
+func (h *Handler) authenticateScopes(w http.ResponseWriter, r *http.Request, scopes ...auth.Scope) bool {
+	principal, ok := h.authenticator.Authenticate(r.Header.Get("Authorization"))
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
 		return false
 	}
-	token, found := strings.CutPrefix(header, "Bearer ")
-	return found && len(token) == len(expected) && subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
+	for _, scope := range scopes {
+		if !principal.HasScope(scope) {
+			writeError(w, http.StatusForbidden, "insufficient scope", "permission_error", "insufficient_scope")
+			return false
+		}
+	}
+	*r = *r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
+	return true
+}
+
+// requestTenantID 返回鉴权 Principal 绑定的租户，兼容未注入身份的内部调用。
+func (h *Handler) requestTenantID(r *http.Request) string {
+	if principal, ok := r.Context().Value(principalContextKey{}).(auth.Principal); ok && principal.TenantID != "" {
+		return principal.TenantID
+	}
+	return h.tenantID
+}
+
+// contextTenantID 返回结算上下文中的租户，缺少身份时回退到进程租户。
+func (h *Handler) contextTenantID(ctx context.Context) string {
+	if principal, ok := ctx.Value(principalContextKey{}).(auth.Principal); ok && principal.TenantID != "" {
+		return principal.TenantID
+	}
+	return h.tenantID
+}
+
+// validBearerToken 使用统一鉴权实现校验 Limen API Key。
+func validBearerToken(header, expected string) bool {
+	_, ok := auth.NewStaticAuthenticator(expected, "", nil).Authenticate(header)
+	return ok
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runRequestID string) {
+	tenantID := h.requestTenantID(r)
 	settledRunRequest := false
 	attemptID := ""
 	attemptFinished := false
 	defer func() {
 		if attemptID != "" && !attemptFinished {
-			_ = h.runs.FinishAttempt(r.Context(), h.tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
+			_ = h.runs.FinishAttempt(r.Context(), tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
 		}
 		if runRequestID != "" && !settledRunRequest {
 			_ = h.settleRunRequest(r.Context(), runRequestID, nil)
@@ -497,7 +543,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 				writeError(w, http.StatusInternalServerError, "unable to create attempt", "api_error", "attempt_id_error")
 				return
 			}
-			if err := h.runs.RecordAttemptStarted(r.Context(), h.tenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
+			if err := h.runs.RecordAttemptStarted(r.Context(), tenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
 				writeError(w, http.StatusServiceUnavailable, "run store unavailable", "api_error", "run_store_error")
 				return
 			}
@@ -562,7 +608,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		_, _ = io.Copy(w, response.Body)
 	}
 	if runRequestID != "" {
-		if err := h.runs.FinishAttempt(r.Context(), h.tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
+		if err := h.runs.FinishAttempt(r.Context(), tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
 			writePendingSettlementTrailers(w)
 			return
 		}
@@ -596,7 +642,8 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 	if h.runs == nil {
 		return errors.New("run service unavailable")
 	}
-	if _, err := h.runs.BeginSettlement(ctx, h.tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
+	tenantID := h.contextTenantID(ctx)
+	if _, err := h.runs.BeginSettlement(ctx, tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
 		return err
 	}
 	var costNanoUSD *int64
@@ -607,7 +654,7 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 			costNanoUSD = &value
 		}
 	}
-	_, err := h.runs.SettleRequest(ctx, h.tenantID, requestID, costNanoUSD, time.Now().UTC())
+	_, err := h.runs.SettleRequest(ctx, tenantID, requestID, costNanoUSD, time.Now().UTC())
 	return err
 }
 

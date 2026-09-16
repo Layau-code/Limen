@@ -14,12 +14,13 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
 - 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
+- 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。当前静态 Key 由 `LIMEN_API_SCOPES` 限制，默认 Scope 只为兼容单机开发，生产 Key Store 后续替换。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
-明确不包含：每日额度和超额拦截、配置热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、数据库、管理后台和完整遥测平台。
+明确不包含：每日额度和超额拦截、配置热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、数据库 Key Store、管理后台和完整遥测平台。
 
 ## 工程原则
 
@@ -42,6 +43,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤、稳定排序、原因码及 `InputHash`/`PlanHash`。
 - `Router.ChatWithContract` 先生成 ExecutionPlan，再按计划执行；Half-Open 探测权在执行前再次原子获取，竞争失败记录 `skipped_due_to_race`。
 - Provider 映射使用名称到实例的只读映射。新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误、超时和取消测试。
+- `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
@@ -55,6 +57,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、Attempt 边界、已知成本结算和未知成本 `pending`。
+- 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
