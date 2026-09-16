@@ -27,8 +27,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	openAI := provider.NewOpenAI(http.DefaultClient, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey)
-	anthropic := provider.NewAnthropic(http.DefaultClient, cfg.AnthropicBaseURL, cfg.AnthropicAPIKey)
+	openAIEndpoint, err := provider.EndpointForBaseURL(cfg.OpenAIBaseURL)
+	if err != nil {
+		logger.Error("invalid OpenAI endpoint", "error", err)
+		os.Exit(1)
+	}
+	anthropicEndpoint, err := provider.EndpointForBaseURL(cfg.AnthropicBaseURL)
+	if err != nil {
+		logger.Error("invalid Anthropic endpoint", "error", err)
+		os.Exit(1)
+	}
+	client := provider.NewSecureHTTPClient(provider.HTTPClientOptions{AllowedEndpoints: []string{openAIEndpoint, anthropicEndpoint}})
+	openAI := provider.NewOpenAI(client, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey)
+	anthropic := provider.NewAnthropic(client, cfg.AnthropicBaseURL, cfg.AnthropicAPIKey)
 	registry := gateway.NewCompatibilityRegistry()
 	if len(cfg.Models) > 0 {
 		models := make([]gateway.Model, 0, len(cfg.Models))
@@ -90,5 +101,20 @@ func main() {
 
 // gatewayTarget 将配置目标转换为 Router 使用的不可变目标。
 func gatewayTarget(target config.Target) gateway.Target {
-	return gateway.Target{Provider: target.Provider, UpstreamModel: target.UpstreamModel, Pricing: target.Pricing}
+	streaming := true
+	if target.SupportsStreaming != nil {
+		streaming = *target.SupportsStreaming
+	}
+	return gateway.Target{
+		ID:                target.ID,
+		Provider:          target.Provider,
+		UpstreamModel:     target.UpstreamModel,
+		Capabilities:      append([]string(nil), target.Capabilities...),
+		SupportsStreaming: streaming,
+		QualityTier:       target.QualityTier,
+		CostTier:          target.CostTier,
+		ContextWindow:     target.ContextWindow,
+		DataClasses:       append([]string(nil), target.DataClasses...),
+		Pricing:           target.Pricing,
+	}
 }

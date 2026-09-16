@@ -374,3 +374,40 @@ func TestChatRejectsUnsupportedContent(t *testing.T) {
 		t.Fatalf("unsupported content status = %d", response.Code)
 	}
 }
+
+func TestParseChatRequestRejectsUnsupportedFields(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[]}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"unknown":true}`,
+	} {
+		if _, err := parseChatRequestEnvelope([]byte(body)); err == nil {
+			t.Fatalf("request was accepted: %s", body)
+		}
+	}
+}
+
+func TestParseChatRequestExtractsLimenContract(t *testing.T) {
+	envelope, err := parseChatRequestEnvelope([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}],"limen":{"required_capabilities":["text"],"minimum_quality_tier":3,"required_context_tokens":1000,"data_class":"internal","strategy":"economy"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Request.Model != "auto" || !envelope.Contract.Active || envelope.Contract.MinimumQualityTier != 3 || envelope.Contract.DataClass != "internal" || envelope.Contract.Strategy != "economy" {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+}
+
+func TestChatRejectsInvalidLimenContract(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(nil, nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}],"limen":{"strategy":"random"}}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "strategy_conflict") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}

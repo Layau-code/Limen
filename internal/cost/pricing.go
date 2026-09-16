@@ -17,8 +17,8 @@ const (
 
 // Pricing 保存每百万 Token 的定点价格，单位是十亿分之一美元。
 type Pricing struct {
-	InputPerMillionNanoUSD  int64
-	OutputPerMillionNanoUSD int64
+	InputPerMillionNanoUSD  int64 `json:"input_per_million_nano_usd"`
+	OutputPerMillionNanoUSD int64 `json:"output_per_million_nano_usd"`
 }
 
 type pricingDocument struct {

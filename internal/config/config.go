@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -16,9 +17,16 @@ const maxTargetsPerModel = 4
 
 // Target 定义一个逻辑模型可以调用的上游目标。
 type Target struct {
-	Provider      string   `json:"provider"`
-	UpstreamModel string   `json:"upstream_model"`
-	Pricing       *Pricing `json:"pricing,omitempty"`
+	ID                string   `json:"id"`
+	Provider          string   `json:"provider"`
+	UpstreamModel     string   `json:"upstream_model"`
+	Capabilities      []string `json:"capabilities"`
+	SupportsStreaming *bool    `json:"supports_streaming"`
+	QualityTier       int      `json:"quality_tier"`
+	CostTier          int      `json:"cost_tier"`
+	ContextWindow     int64    `json:"context_window"`
+	DataClasses       []string `json:"data_classes"`
+	Pricing           *Pricing `json:"pricing,omitempty"`
 }
 
 // Model 定义一个对外逻辑模型及其有序上游目标。
@@ -120,6 +128,11 @@ func loadModels(path string, defaults Routing) ([]Model, Routing, error) {
 	if err != nil {
 		return nil, Routing{}, err
 	}
+	for modelIndex := range document.Models {
+		for targetIndex := range document.Models[modelIndex].Targets {
+			applyTargetDefaults(&document.Models[modelIndex].Targets[targetIndex])
+		}
+	}
 	if err := validateModels(document.Models); err != nil {
 		return nil, Routing{}, err
 	}
@@ -180,18 +193,38 @@ func validateModels(models []Model) error {
 			return fmt.Errorf("model %q supports at most %d targets", model.ID, maxTargetsPerModel)
 		}
 		targets := make(map[string]struct{}, len(model.Targets))
+		upstreamTargets := make(map[string]struct{}, len(model.Targets))
 		for targetIndex, target := range model.Targets {
 			if strings.TrimSpace(target.Provider) == "" || strings.TrimSpace(target.UpstreamModel) == "" {
 				return fmt.Errorf("target at index %d for model %q requires provider and upstream_model", targetIndex, model.ID)
 			}
+			if strings.TrimSpace(target.ID) == "" {
+				return fmt.Errorf("target at index %d for model %q requires id", targetIndex, model.ID)
+			}
 			if target.Provider != "openai" && target.Provider != "anthropic" {
 				return fmt.Errorf("model %q uses unsupported provider %q", model.ID, target.Provider)
 			}
-			key := target.Provider + "\x00" + target.UpstreamModel
-			if _, exists := targets[key]; exists {
+			if target.QualityTier < 0 || target.QualityTier > 5 {
+				return fmt.Errorf("target %q for model %q has invalid quality_tier", target.ID, model.ID)
+			}
+			if target.CostTier < 0 {
+				return fmt.Errorf("target %q for model %q has invalid cost_tier", target.ID, model.ID)
+			}
+			if target.ContextWindow < 0 {
+				return fmt.Errorf("target %q for model %q has invalid context_window", target.ID, model.ID)
+			}
+			if _, exists := targets[target.ID]; exists {
+				return fmt.Errorf("model %q contains duplicate target id %q", model.ID, target.ID)
+			}
+			targets[target.ID] = struct{}{}
+			providerKey := target.Provider + "\x00" + target.UpstreamModel
+			if _, exists := upstreamTargets[providerKey]; exists {
 				return fmt.Errorf("model %q contains duplicate target %q", model.ID, target.UpstreamModel)
 			}
-			targets[key] = struct{}{}
+			upstreamTargets[providerKey] = struct{}{}
+			if err := validateTargetCapabilities(target); err != nil {
+				return fmt.Errorf("target %q for model %q: %w", target.ID, model.ID, err)
+			}
 		}
 		if _, exists := seen[model.ID]; exists {
 			return fmt.Errorf("duplicate model id %q", model.ID)
@@ -199,6 +232,57 @@ func validateModels(models []Model) error {
 		seen[model.ID] = struct{}{}
 	}
 	return nil
+}
+
+// validateTargetCapabilities 校验目标能力和允许处理的数据等级。
+func validateTargetCapabilities(target Target) error {
+	for _, capability := range target.Capabilities {
+		if capability != "text" {
+			return fmt.Errorf("unsupported capability %q", capability)
+		}
+	}
+	for _, dataClass := range target.DataClasses {
+		if !validDataClass(dataClass) {
+			return fmt.Errorf("unsupported data class %q", dataClass)
+		}
+	}
+	return nil
+}
+
+// validDataClass 判断数据等级是否属于当前版本的受控集合。
+func validDataClass(dataClass string) bool {
+	switch dataClass {
+	case "public", "internal", "confidential", "restricted":
+		return true
+	default:
+		return false
+	}
+}
+
+// applyTargetDefaults 补全旧模型配置缺失的基础文本能力字段。
+func applyTargetDefaults(target *Target) {
+	if strings.TrimSpace(target.ID) == "" {
+		target.ID = target.Provider + ":" + target.UpstreamModel
+	}
+	if len(target.Capabilities) == 0 {
+		target.Capabilities = []string{"text"}
+	}
+	if target.SupportsStreaming == nil {
+		streaming := true
+		target.SupportsStreaming = &streaming
+	}
+	if target.QualityTier == 0 {
+		target.QualityTier = 1
+	}
+	if target.CostTier == 0 {
+		target.CostTier = 1
+	}
+	if target.ContextWindow == 0 {
+		target.ContextWindow = math.MaxInt64
+	}
+	if len(target.DataClasses) == 0 {
+		target.DataClasses = []string{"public", "internal", "confidential", "restricted"}
+	}
 }
 
 // parsePositiveDuration 将配置中的持续时间解析为正数。

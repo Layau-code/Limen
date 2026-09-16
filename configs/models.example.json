@@ -10,16 +10,30 @@
       "display_name": "Smart Model",
       "targets": [
         {
+          "id": "openai-primary",
           "provider": "openai",
           "upstream_model": "gpt-5-mini",
+          "capabilities": ["text"],
+          "supports_streaming": true,
+          "quality_tier": 4,
+          "cost_tier": 1,
+          "context_window": 128000,
+          "data_classes": ["public", "internal", "confidential"],
           "pricing": {
             "input_per_million_usd": "0.250000",
             "output_per_million_usd": "2.000000"
           }
         },
         {
+          "id": "anthropic-primary",
           "provider": "anthropic",
           "upstream_model": "claude-sonnet-4-20250514",
+          "capabilities": ["text"],
+          "supports_streaming": true,
+          "quality_tier": 5,
+          "cost_tier": 2,
+          "context_window": 200000,
+          "data_classes": ["public", "internal", "confidential"],
           "pricing": {
             "input_per_million_usd": "3.000000",
             "output_per_million_usd": "15.000000"

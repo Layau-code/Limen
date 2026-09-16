@@ -88,6 +88,49 @@ func TestLoadParsesTargetPricing(t *testing.T) {
 	}
 }
 
+func TestLoadParsesTargetCapabilities(t *testing.T) {
+	modelsFile := filepath.Join(t.TempDir(), "models.json")
+	contents := `{"models":[{"id":"smart-model","targets":[{"id":"primary","provider":"openai","upstream_model":"gpt-test","capabilities":["text"],"supports_streaming":false,"quality_tier":4,"cost_tier":2,"context_window":8192,"data_classes":["public","internal"]}]}]}`
+	if err := os.WriteFile(modelsFile, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("LIMEN_MODELS_FILE", modelsFile)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := cfg.Models[0].Targets[0]
+	if target.ID != "primary" || target.SupportsStreaming == nil || *target.SupportsStreaming || target.QualityTier != 4 || target.CostTier != 2 || target.ContextWindow != 8192 {
+		t.Fatalf("target = %+v", target)
+	}
+}
+
+func TestLoadRejectsUnknownCapabilityAndDataClass(t *testing.T) {
+	tests := []string{
+		`{"models":[{"id":"m","targets":[{"provider":"openai","upstream_model":"gpt","capabilities":["magic"]}]}]}`,
+		`{"models":[{"id":"m","targets":[{"provider":"openai","upstream_model":"gpt","data_classes":["secret"]}]}]}`,
+	}
+	for _, contents := range tests {
+		t.Run(contents, func(t *testing.T) {
+			modelsFile := filepath.Join(t.TempDir(), "models.json")
+			if err := os.WriteFile(modelsFile, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("LIMEN_API_KEY", "limen-secret")
+			t.Setenv("OPENAI_API_KEY", "openai-secret")
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			t.Setenv("LIMEN_MODELS_FILE", modelsFile)
+			if _, err := Load(); err == nil {
+				t.Fatal("expected capability validation error")
+			}
+		})
+	}
+}
+
 func TestLoadModelsFileRequiresReferencedProviderKey(t *testing.T) {
 	modelsFile := filepath.Join(t.TempDir(), "models.json")
 	contents := `{"models":[{"id":"smart-model","targets":[{"provider":"anthropic","upstream_model":"claude-test"}]}]}`
