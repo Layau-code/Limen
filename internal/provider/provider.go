@@ -21,11 +21,24 @@ type ChatRequest struct {
 	Stream      bool
 }
 
+// Usage 表示 Provider 已经确认的输入和输出 Token。
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	Complete     bool
+}
+
+// UsageRecorder 提供线程安全的请求用量快照。
+type UsageRecorder interface {
+	Snapshot() Usage
+}
+
 // Response 表示 Provider 返回的、与 HTTP 框架无关的响应。
 type Response struct {
 	StatusCode  int
 	ContentType string
 	Body        io.ReadCloser
+	Usage       UsageRecorder
 }
 
 // Provider 定义统一的聊天调用入口。
