@@ -35,7 +35,7 @@ var settlementTrailerNames = []string{
 }
 
 type Handler struct {
-	authenticator auth.StaticAuthenticator
+	authenticator auth.Authenticator
 	router        *gateway.Router
 	runs          run.Service
 	tenantID      string
@@ -79,6 +79,11 @@ func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, 
 
 // NewWithHealthAndRunsForTenantScopesAndJournal 创建带决策日志的完整 HTTP 处理器。
 func NewWithHealthAndRunsForTenantScopesAndJournal(apiKey string, router *gateway.Router, health *Health, tenantID string, scopes []auth.Scope, decisions journal.Store, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorAndJournal(auth.NewStaticAuthenticator(apiKey, tenantID, scopes), router, health, tenantID, decisions, runs)
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorAndJournal 创建使用可替换鉴权器的 HTTP 处理器。
+func NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -90,7 +95,7 @@ func NewWithHealthAndRunsForTenantScopesAndJournal(apiKey string, router *gatewa
 		decisions = journal.NewMemoryStore()
 	}
 	handler := &Handler{
-		authenticator: auth.NewStaticAuthenticator(apiKey, tenantID, scopes),
+		authenticator: authenticator,
 		router:        router,
 		runs:          runs,
 		tenantID:      tenantID,
@@ -707,7 +712,15 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) bool {
 
 // authenticateScopes 校验身份并确认请求拥有全部指定 Scope。
 func (h *Handler) authenticateScopes(w http.ResponseWriter, r *http.Request, scopes ...auth.Scope) bool {
-	principal, ok := h.authenticator.Authenticate(r.Header.Get("Authorization"))
+	if h.authenticator == nil {
+		writeError(w, http.StatusServiceUnavailable, "authentication unavailable", "api_error", "authentication_unavailable")
+		return false
+	}
+	principal, ok, err := h.authenticator.AuthenticateContext(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "authentication unavailable", "api_error", "authentication_unavailable")
+		return false
+	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
 		return false

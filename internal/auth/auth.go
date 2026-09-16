@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"strings"
 )
@@ -23,6 +24,11 @@ const (
 type Principal struct {
 	TenantID string
 	Scopes   map[Scope]struct{}
+}
+
+// Authenticator 将外部凭据解析为租户 Principal，下游不接触原始 Key。
+type Authenticator interface {
+	AuthenticateContext(context.Context, string) (Principal, bool, error)
 }
 
 // HasScope 判断 Principal 是否拥有指定 Scope 或管理员权限。
@@ -63,6 +69,12 @@ func (authenticator StaticAuthenticator) Authenticate(header string) (Principal,
 		scopes[scope] = struct{}{}
 	}
 	return Principal{TenantID: authenticator.principal.TenantID, Scopes: scopes}, true
+}
+
+// AuthenticateContext 适配统一鉴权接口，静态 Key 不访问外部 Store。
+func (authenticator StaticAuthenticator) AuthenticateContext(_ context.Context, header string) (Principal, bool, error) {
+	principal, ok := authenticator.Authenticate(header)
+	return principal, ok, nil
 }
 
 // AllScopes 返回单机开发模式的完整 Scope 集合副本。

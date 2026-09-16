@@ -69,6 +69,36 @@ func TestLoadDatabaseConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadPostgresAPIKeyMode(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "")
+	t.Setenv("LIMEN_API_KEY_STORE", "postgres")
+	t.Setenv("LIMEN_API_KEY_HMAC_SECRET", "hmac-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_DATABASE_URL", "postgresql://limen:secret@db.example/limen?sslmode=require")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIKeyStore != "postgres" || cfg.APIKeyHMACSecret != "hmac-secret" || cfg.LimenAPIKey != "" {
+		t.Fatalf("key config = %+v", cfg)
+	}
+}
+
+func TestLoadRejectsPostgresAPIKeyModeWithoutDatabase(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "")
+	t.Setenv("LIMEN_API_KEY_STORE", "postgres")
+	t.Setenv("LIMEN_API_KEY_HMAC_SECRET", "hmac-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_DATABASE_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected database requirement")
+	}
+}
+
 func TestLoadRejectsInvalidDatabaseURL(t *testing.T) {
 	t.Setenv("LIMEN_API_KEY", "limen-secret")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")

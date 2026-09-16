@@ -14,7 +14,8 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
 - 受治理 Chat 的 Request 在准入后持有 30 秒租约并每 10 秒续租；实例崩溃后不重放 Provider 调用，而是标记未知费用并暂停 Run，避免重复计费。
 - Run 取消会写入租户隔离的取消事件；在途 Chat 每秒轮询事件并取消 Provider Context，跨实例取消不依赖单进程内存。
-- 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；当前使用环境变量静态 Key，便于后续替换为数据库 Key Store。
+- 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。
+- 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库，默认仍使用静态 Key 便于单机开发。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
@@ -119,7 +120,7 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 
 ## 配置与运维
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_SCOPES`（可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）和 `LIMEN_TENANT_ID`（默认 `local`）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt 和 Ledger；启动日志不会输出 DSN。未配置数据库时，设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）和 `LIMEN_TENANT_ID`（默认 `local`）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、Decision Journal 和 API Key 摘要；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 记录需要由受控管理流程预置。
 
 静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；Dry Run 需要 `inference,decisions:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
 

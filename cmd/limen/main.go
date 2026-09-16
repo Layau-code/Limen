@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
@@ -77,6 +78,7 @@ func main() {
 	health := httpapi.NewHealth()
 	var runService run.Service
 	var decisionStore journal.Store = journal.NewMemoryStore()
+	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
 		database, err = sql.Open("postgres", cfg.DatabaseURL)
@@ -106,13 +108,16 @@ func main() {
 		cancelMigration()
 		runService = store.NewPostgresStore(database)
 		decisionStore = store.NewDecisionJournal(database)
+		if cfg.APIKeyStore == "postgres" {
+			authenticator = store.NewAPIKeyAuthenticator(database, cfg.APIKeyHMACSecret)
+		}
 	}
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantScopesAndJournal(cfg.LimenAPIKey, router, health, cfg.TenantID, cfg.Scopes, decisionStore, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator, router, health, cfg.TenantID, decisionStore, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
