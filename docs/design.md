@@ -8,7 +8,7 @@ Limen 面向 Agent 提供统一的 OpenAI 兼容入口。客户端使用稳定�
 
 ```text
 HTTP Principal/Scope 鉴权与解析
-  → ModelRegistry 提供只读能力目录
+  → ModelRegistry 提供当前配置版本的只读能力目录
   → Decision Engine 生成带哈希的 ExecutionPlan
   → Decision Journal 保存输入与计划
   → Router Executor 创建总预算并检查 Circuit Breaker
@@ -21,11 +21,14 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
 - `internal/auth`：常量时间校验静态 Bearer Key，生成不携带原始 Key 的租户 Principal，并集中定义 Scope；`internal/store` 提供 PostgreSQL HMAC Key Store 实现。
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
+- `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复。
+- `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码。
 - `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：将请求快照交给 Decision Engine，替换上游模型，管理共享总预算、单次超时、Fallback 和计划执行。
+- `internal/gateway/router.go`：配置发布通过带读写锁的目录快照原子切换；配置版本和路由策略进入后续决策输入。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
@@ -73,11 +76,11 @@ HTTP Principal/Scope 鉴权与解析
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
-当前 HTTP Run 控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，只有显式 `LIMEN_RUN_STORE=memory` 才启用单机开发实现，避免把进程内状态误当成生产账本。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户和 Scope 从数据库 Key 记录生成。
+当前 HTTP Run 和配置控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，控制面使用内存实现，仅适合单机开发，不能作为生产账本或配置发布记录。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户和 Scope 从数据库 Key 记录生成。
 
 受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。主进程同时扫描当前租户的过期租约；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本，不重放 Provider 请求。取消 Run 时在同一事务写入租户隔离取消事件，在途 Chat 每秒轮询事件并取消自己的 Provider Context，取消传播不依赖进程内状态。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
-开发控制面已覆盖 Run 创建、查询、完成、取消和 Request 结算查询；控制变更使用 `Idempotency-Key` 与规范请求哈希。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。生产接入前仍需完成跨实例取消和数据库集成测试。
+开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。
 
 ## 可靠性不变量
 
@@ -106,4 +109,4 @@ Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`
 
 ## 明确不包含
 
-本版本不实现每日额度和超额拦截、热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、数据库 Key Store、管理后台或完整 Prometheus/OpenTelemetry 平台。
+本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Provider 凭据管理 API、大型管理后台或完整 OpenTelemetry 导出平台；PostgreSQL API Key Store、配置版本存储和基础 Prometheus 文本指标已实现。

@@ -1,5 +1,17 @@
 # 变更记录
 
+## v0.3.0
+
+### 新增
+
+- 租户隔离的不可变配置版本、配置发布 API、Router 原子快照切换和配置版本恢复。
+- AES-GCM Provider 凭据存储边界、endpoint 绑定和并发安全密钥轮换。
+- 需要 `admin` Scope 的基础 Prometheus 文本指标和有界标签。
+
+### 限制
+
+- 配置文件不热加载；Provider 凭据管理 API、完整 OpenTelemetry 导出和每日额度仍未实现。
+
 ## v0.2.0
 
 ### 新增
