@@ -67,6 +67,27 @@ func TestLoadModelsFileRequiresOnlyUsedProviderKey(t *testing.T) {
 	}
 }
 
+func TestLoadParsesTargetPricing(t *testing.T) {
+	modelsFile := filepath.Join(t.TempDir(), "models.json")
+	contents := `{"models":[{"id":"fast-model","targets":[{"provider":"openai","upstream_model":"gpt-test","pricing":{"input_per_million_usd":"0.250000","output_per_million_usd":"2"}}]}]}`
+	if err := os.WriteFile(modelsFile, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("LIMEN_MODELS_FILE", modelsFile)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pricing := cfg.Models[0].Targets[0].Pricing
+	if pricing == nil || pricing.InputPerMillionNanoUSD != 250_000_000 || pricing.OutputPerMillionNanoUSD != 2_000_000_000 {
+		t.Fatalf("pricing = %+v", pricing)
+	}
+}
+
 func TestLoadModelsFileRequiresReferencedProviderKey(t *testing.T) {
 	modelsFile := filepath.Join(t.TempDir(), "models.json")
 	contents := `{"models":[{"id":"smart-model","targets":[{"provider":"anthropic","upstream_model":"claude-test"}]}]}`
@@ -113,6 +134,11 @@ func TestLoadRejectsInvalidModelsFile(t *testing.T) {
 		{"missing target field", `{"models":[{"id":"model","targets":[{"provider":"openai"}]}]}`},
 		{"too many targets", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"one"},{"provider":"openai","upstream_model":"two"},{"provider":"openai","upstream_model":"three"},{"provider":"openai","upstream_model":"four"},{"provider":"openai","upstream_model":"five"}]}]}`},
 		{"duplicate target", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"same"},{"provider":"openai","upstream_model":"same"}]}]}`},
+		{"missing input price", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","pricing":{"output_per_million_usd":"1"}}]}]}`},
+		{"missing output price", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","pricing":{"input_per_million_usd":"1"}}]}]}`},
+		{"negative price", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","pricing":{"input_per_million_usd":"-1","output_per_million_usd":"1"}}]}]}`},
+		{"exponent price", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","pricing":{"input_per_million_usd":"1e-3","output_per_million_usd":"1"}}]}]}`},
+		{"too precise price", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","pricing":{"input_per_million_usd":"0.0000000001","output_per_million_usd":"1"}}]}]}`},
 		{"invalid attempt timeout", `{"routing":{"attempt_timeout":"invalid"},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
 		{"zero attempt timeout", `{"routing":{"attempt_timeout":"0s"},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
 		{"zero failure threshold", `{"routing":{"failure_threshold":0},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},

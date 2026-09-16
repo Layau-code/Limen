@@ -16,8 +16,9 @@ const maxTargetsPerModel = 4
 
 // Target 定义一个逻辑模型可以调用的上游目标。
 type Target struct {
-	Provider      string `json:"provider"`
-	UpstreamModel string `json:"upstream_model"`
+	Provider      string   `json:"provider"`
+	UpstreamModel string   `json:"upstream_model"`
+	Pricing       *Pricing `json:"pricing,omitempty"`
 }
 
 // Model 定义一个对外逻辑模型及其有序上游目标。
