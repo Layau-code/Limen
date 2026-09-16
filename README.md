@@ -10,6 +10,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 
 - 逻辑模型名与真实上游模型解耦，配置只在启动时加载并保持只读。
 - `model=auto` 可根据能力契约、数据等级、质量和成本策略生成可解释的执行计划。
+- 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
@@ -105,6 +106,8 @@ X-Limen-Route: openai:503>anthropic:200
 如果目标配置了 `pricing`，响应结束后还会通过 HTTP Trailer 和结构化日志提供 `input_tokens`、`output_tokens`、`total_tokens`、`cost_usd` 和 `settlement_status`。SSE 内容仍然逐块推送，不会等待完整响应；如果上游没有返回用量或客户端提前断开，费用字段会留空。
 
 价格字段使用每百万 Token 的美元字符串，输入价和输出价必须同时填写。当前版本只负责请求结束后的结算，不实现每日额度或超额拦截。
+
+Run 预算采用事后软阈值：已开始请求允许完成，结算后达到阈值才阻止后续请求；不设置单请求金额上限。阶段 B 的持久化边界使用租户组合键、RLS 和 `ledger_entries(tenant_id, request_id)` 唯一约束，结算未知时保留 `pending` 并暂停 Run 记账。
 
 ## 配置与运维
 

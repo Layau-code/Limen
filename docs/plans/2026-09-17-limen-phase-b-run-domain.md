@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go 标准库、`database/sql` 接口、PostgreSQL SQL 迁移；不在本阶段引入 Web 框架或 ORM。
 
+> 状态：Task 1-3 已完成；MemoryStore 并发/结算测试和 PostgreSQL 迁移边界测试已通过。Task 4 进行中。
+
 ---
 
 ### Task 1：定义 Run、Request、Attempt 状态机
