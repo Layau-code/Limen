@@ -68,7 +68,7 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 		Targets:           make([]PlanTarget, 0, len(accepted)),
 	}
 	for _, candidate := range accepted {
-		plan.Targets = append(plan.Targets, PlanTarget{ModelID: candidate.ModelID, Target: cloneTarget(candidate.Target)})
+		plan.Targets = append(plan.Targets, PlanTarget{ModelID: candidate.ModelID, Compatibility: candidate.Compatibility, Target: cloneTarget(candidate.Target)})
 	}
 	inputHash, err := HashInput(input)
 	if err != nil {

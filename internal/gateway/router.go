@@ -233,6 +233,7 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 			}
 			candidates = append(candidates, decision.Candidate{
 				ModelID:         model.ID,
+				Compatibility:   model.Compatibility,
 				Target:          target,
 				Enabled:         true,
 				SecurityAllowed: true,
@@ -283,8 +284,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 
 	for _, planned := range plan.Targets {
 		target := planned.Target
-		registry, _ := router.registrySnapshot()
-		model := Model{ID: planned.ModelID, Compatibility: registry.IsCompatibility()}
+		model := Model{ID: planned.ModelID, Compatibility: planned.Compatibility}
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()

@@ -57,6 +57,29 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestMetricsRequiresAdminScope(t *testing.T) {
+	handler := NewWithHealthAndRunsForTenantScopes("secret", nil, nil, "tenant-a", []auth.Scope{auth.ScopeInference}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	handler = New("secret", nil)
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"missing","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(httptest.NewRecorder(), chat)
+	metrics := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metrics.Header.Set("Authorization", "Bearer secret")
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, metrics)
+	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "limen_chat_requests_total") {
+		t.Fatalf("metrics = %d %s", metricsResponse.Code, metricsResponse.Body.String())
+	}
+}
+
 func TestScopesRejectOperationWithoutPermission(t *testing.T) {
 	handler := NewWithHealthAndRunsForTenantScopes("limen-secret", nil, nil, "tenant-1", []auth.Scope{auth.ScopeInference}, run.NewMemoryService(nil))
 	request := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
