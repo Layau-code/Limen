@@ -16,6 +16,9 @@ var decisionJournalMigration string
 //go:embed migrations/003_api_keys.sql
 var apiKeysMigration string
 
+//go:embed migrations/004_config_versions.sql
+var configVersionsMigration string
+
 // ApplyMigrations 以版本表和单事务方式执行内置 PostgreSQL 迁移。
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	if db == nil {
@@ -36,6 +39,7 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 		{version: "001_run_ledger", source: runLedgerMigration},
 		{version: "002_decision_journal", source: decisionJournalMigration},
 		{version: "003_api_keys", source: apiKeysMigration},
+		{version: "004_config_versions", source: configVersionsMigration},
 	} {
 		var applied bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM limen_schema_migrations WHERE version=$1)`, migration.version).Scan(&applied); err != nil {

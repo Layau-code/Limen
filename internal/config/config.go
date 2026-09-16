@@ -47,6 +47,11 @@ type Routing struct {
 	Cooldown         time.Duration
 }
 
+// DefaultRouting 返回未指定模型文件参数时使用的路由默认值。
+func DefaultRouting() Routing {
+	return Routing{AttemptTimeout: 15 * time.Second, FailureThreshold: 3, Cooldown: 30 * time.Second}
+}
+
 // Config 保存 Limen 启动后使用的不可变配置。
 type Config struct {
 	Addr             string
@@ -88,16 +93,12 @@ func Load() (Config, error) {
 		OpenAIBaseURL:    valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicBaseURL: valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-		Routing: Routing{
-			AttemptTimeout:   15 * time.Second,
-			FailureThreshold: 3,
-			Cooldown:         30 * time.Second,
-		},
-		RequestTimeout: 60 * time.Second,
-		ConfigVersion:  "compatibility-v1",
-		DatabaseURL:    os.Getenv("LIMEN_DATABASE_URL"),
-		TenantID:       valueOrDefault("LIMEN_TENANT_ID", "local"),
-		Scopes:         auth.AllScopes(),
+		Routing:          DefaultRouting(),
+		RequestTimeout:   60 * time.Second,
+		ConfigVersion:    "compatibility-v1",
+		DatabaseURL:      os.Getenv("LIMEN_DATABASE_URL"),
+		TenantID:         valueOrDefault("LIMEN_TENANT_ID", "local"),
+		Scopes:           auth.AllScopes(),
 	}
 	if cfg.APIKeyStore != "static" && cfg.APIKeyStore != "postgres" {
 		return Config{}, errors.New("LIMEN_API_KEY_STORE must be static or postgres")
@@ -190,6 +191,11 @@ func loadModels(path string, defaults Routing) ([]Model, Routing, string, error)
 	if err != nil {
 		return nil, Routing{}, "", fmt.Errorf("read models file: %w", err)
 	}
+	return ParseModels(contents, defaults)
+}
+
+// ParseModels 严格解析模型配置并返回规范版本、路由参数和模型目录。
+func ParseModels(contents []byte, defaults Routing) ([]Model, Routing, string, error) {
 	document, err := decodeModelsDocument(contents)
 	if err != nil {
 		return nil, Routing{}, "", err

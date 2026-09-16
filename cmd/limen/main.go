@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/config"
+	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
 	"github.com/huz/limen/internal/journal"
@@ -75,9 +77,11 @@ func main() {
 		FailureThreshold: cfg.Routing.FailureThreshold,
 		Cooldown:         cfg.Routing.Cooldown,
 	})
+	router.SetConfigVersion(cfg.ConfigVersion)
 	health := httpapi.NewHealth()
 	var runService run.Service
 	var decisionStore journal.Store = journal.NewMemoryStore()
+	var configStore configstore.Store = configstore.NewMemoryStore()
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
@@ -108,6 +112,27 @@ func main() {
 		cancelMigration()
 		runService = store.NewPostgresStore(database)
 		decisionStore = store.NewDecisionJournal(database)
+		configStore = store.NewPostgresConfigStore(database)
+		published, publishErr := configStore.GetPublished(context.Background(), cfg.TenantID)
+		if publishErr == nil {
+			publishedRegistry, registryErr := registryFromConfig(published.Models)
+			if registryErr != nil {
+				logger.Error("published model registry is invalid", "error", registryErr)
+				os.Exit(1)
+			}
+			policy := router.Policy()
+			policy.AttemptTimeout = published.Routing.AttemptTimeout
+			policy.FailureThreshold = published.Routing.FailureThreshold
+			policy.Cooldown = published.Routing.Cooldown
+			if err := router.ReplaceRegistryWithPolicy(publishedRegistry, published.Version, policy); err != nil {
+				logger.Error("published model registry activation failed", "error", err)
+				os.Exit(1)
+			}
+			cfg.ConfigVersion = published.Version
+		} else if !errors.Is(publishErr, configstore.ErrNotFound) {
+			logger.Error("published model registry load failed", "error", publishErr)
+			os.Exit(1)
+		}
 		if cfg.APIKeyStore == "postgres" {
 			authenticator = store.NewAPIKeyAuthenticator(database, cfg.APIKeyHMACSecret)
 		}
@@ -117,7 +142,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator, router, health, cfg.TenantID, decisionStore, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator, router, health, cfg.TenantID, decisionStore, configStore, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -188,4 +213,17 @@ func gatewayTarget(target config.Target) gateway.Target {
 		DataClasses:       append([]string(nil), target.DataClasses...),
 		Pricing:           target.Pricing,
 	}
+}
+
+// registryFromConfig 将数据库配置转换为可替换的只读模型目录。
+func registryFromConfig(models []config.Model) (*gateway.ModelRegistry, error) {
+	converted := make([]gateway.Model, 0, len(models))
+	for _, model := range models {
+		targets := make([]gateway.Target, 0, len(model.Targets))
+		for _, target := range model.Targets {
+			targets = append(targets, gatewayTarget(target))
+		}
+		converted = append(converted, gateway.Model{ID: model.ID, DisplayName: model.DisplayName, Targets: targets})
+	}
+	return gateway.NewModelRegistry(converted)
 }

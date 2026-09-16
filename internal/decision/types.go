@@ -62,6 +62,7 @@ type Candidate struct {
 type Input struct {
 	SchemaVersion     string      `json:"schema_version"`
 	AlgorithmVersion  string      `json:"algorithm_version"`
+	ConfigVersion     string      `json:"config_version,omitempty"`
 	EvaluatedAtUnixMS int64       `json:"evaluated_at_unix_ms"`
 	Request           Request     `json:"request"`
 	Run               RunSnapshot `json:"run"`
@@ -86,6 +87,7 @@ type PlanTarget struct {
 type ExecutionPlan struct {
 	SchemaVersion     string            `json:"schema_version"`
 	AlgorithmVersion  string            `json:"algorithm_version"`
+	ConfigVersion     string            `json:"config_version,omitempty"`
 	InputHash         string            `json:"input_hash"`
 	EffectiveStrategy string            `json:"effective_strategy"`
 	Reasons           []string          `json:"reasons"`

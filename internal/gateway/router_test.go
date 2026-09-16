@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -146,6 +147,63 @@ func TestRouterMapsLogicalModelToAnthropic(t *testing.T) {
 	if upstreamModel != "claude-real" {
 		t.Fatalf("upstream model = %q", upstreamModel)
 	}
+}
+
+func TestRouterReplacesRegistryAndRecordsConfigVersion(t *testing.T) {
+	initial, err := NewModelRegistry([]Model{{ID: "old", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, initial)
+	router.SetConfigVersion("sha256:old")
+	next, err := NewModelRegistry([]Model{{ID: "new", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-new"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := router.Policy()
+	policy.AttemptTimeout = 2 * time.Second
+	if err := router.ReplaceRegistryWithPolicy(next, "sha256:new", policy); err != nil {
+		t.Fatal(err)
+	}
+	if router.ConfigVersion() != "sha256:new" || len(router.Models()) != 1 || router.Models()[0].ID != "new" {
+		t.Fatalf("version=%q models=%+v", router.ConfigVersion(), router.Models())
+	}
+	if router.Policy().AttemptTimeout != 2*time.Second {
+		t.Fatalf("policy = %+v", router.Policy())
+	}
+}
+
+func TestRouterRegistryReplacementIsConcurrentSafe(t *testing.T) {
+	first, err := NewModelRegistry([]Model{{ID: "first", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-first"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewModelRegistry([]Model{{ID: "second", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-second"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, first)
+	var wait sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for j := 0; j < 20; j++ {
+				_, _, _ = router.Explain(provider.ChatRequest{Model: "first"}, decision.Contract{})
+				_ = router.Models()
+			}
+		}()
+	}
+	for i := 0; i < 20; i++ {
+		registry := first
+		if i%2 == 1 {
+			registry = second
+		}
+		if err := router.ReplaceRegistry(registry, "version"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wait.Wait()
 }
 
 func TestRouterAutoUsesCapabilityPlan(t *testing.T) {

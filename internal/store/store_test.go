@@ -65,3 +65,16 @@ func TestAPIKeyMigrationStoresOnlyDigestAndScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigVersionMigrationDefinesTenantIsolation(t *testing.T) {
+	contents, err := os.ReadFile("migrations/004_config_versions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE config_versions", "document JSONB NOT NULL", "PRIMARY KEY (tenant_id, version)", "CREATE UNIQUE INDEX config_versions_one_published", "ENABLE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
