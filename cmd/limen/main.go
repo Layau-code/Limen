@@ -13,6 +13,7 @@ import (
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
 	"github.com/huz/limen/internal/provider"
+	"github.com/huz/limen/internal/run"
 )
 
 // main 组装 Limen 依赖并管理 HTTP 服务生命周期。
@@ -70,9 +71,13 @@ func main() {
 		Cooldown:         cfg.Routing.Cooldown,
 	})
 	health := httpapi.NewHealth()
+	var runService run.Service
+	if os.Getenv("LIMEN_RUN_STORE") == "memory" {
+		runService = run.NewMemoryService(nil)
+	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealth(cfg.LimenAPIKey, router, health)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRuns(cfg.LimenAPIKey, router, health, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,

@@ -11,6 +11,7 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	runs      map[string]Run
 	requests  map[string]Request
+	attempts  map[string]Attempt
 	idem      map[string]string
 	ledger    map[string]int64
 	mutations map[string]mutationResult
@@ -27,10 +28,43 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		runs:      make(map[string]Run),
 		requests:  make(map[string]Request),
+		attempts:  make(map[string]Attempt),
 		idem:      make(map[string]string),
 		ledger:    make(map[string]int64),
 		mutations: make(map[string]mutationResult),
 	}
+}
+
+// RecordAttemptStarted 保存访问 Provider 前的本地 Attempt 记录。
+func (store *MemoryStore) RecordAttemptStarted(tenantID string, attempt Attempt) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if tenantID == "" || attempt.ID == "" || attempt.RequestID == "" {
+		return errors.New("attempt requires tenant and request")
+	}
+	key := resourceKey(tenantID, attempt.ID)
+	if _, exists := store.attempts[key]; exists {
+		return errors.New("attempt already exists")
+	}
+	attempt.TenantID = tenantID
+	attempt.State = AttemptStarted
+	store.attempts[key] = attempt
+	return nil
+}
+
+// FinishAttempt 更新本地 Attempt 终态并记录完成时间。
+func (store *MemoryStore) FinishAttempt(tenantID, attemptID string, state AttemptState, finishedAt time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, attemptID)
+	attempt, exists := store.attempts[key]
+	if !exists {
+		return ErrResourceNotFound
+	}
+	attempt.State = state
+	attempt.FinishedAt = finishedAt
+	store.attempts[key] = attempt
+	return nil
 }
 
 // CreateRun 保存一个尚未开始请求的 Run，并拒绝跨租户 ID 冲突。

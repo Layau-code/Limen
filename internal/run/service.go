@@ -44,9 +44,14 @@ func (service *MemoryService) AdmitRequest(_ context.Context, tenantID, runID st
 	return service.store.AdmitRequest(tenantID, runID, input.Request, input.Now)
 }
 
-// RecordAttemptStarted 在内存适配器中保留调用边界，当前不额外写入 Attempt。
-func (service *MemoryService) RecordAttemptStarted(_ context.Context, _ string, _ Attempt) error {
-	return nil
+// RecordAttemptStarted 将内存 Attempt 写入本地 Store。
+func (service *MemoryService) RecordAttemptStarted(_ context.Context, tenantID string, attempt Attempt) error {
+	return service.store.RecordAttemptStarted(tenantID, attempt)
+}
+
+// FinishAttempt 将内存 Attempt 更新为执行终态。
+func (service *MemoryService) FinishAttempt(_ context.Context, tenantID, attemptID string, state AttemptState, finishedAt time.Time) error {
+	return service.store.FinishAttempt(tenantID, attemptID, state, finishedAt)
 }
 
 // BeginSettlement 将内存 Request 标记为待结算。

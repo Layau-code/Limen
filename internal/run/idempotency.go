@@ -40,12 +40,19 @@ func HashRequest(tenantID, endpoint, key string, body []byte, limenHeaders map[s
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(endpoint) == "" || strings.TrimSpace(key) == "" {
 		return "", ErrIdempotencyKeyRequired
 	}
-	headerNames := make([]string, 0, len(limenHeaders))
+	headerSet := make(map[string]struct{}, len(limenHeaders))
 	for name := range limenHeaders {
 		if strings.EqualFold(name, "authorization") {
 			continue
 		}
-		headerNames = append(headerNames, strings.ToLower(strings.TrimSpace(name)))
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		if normalized != "" {
+			headerSet[normalized] = struct{}{}
+		}
+	}
+	headerNames := make([]string, 0, len(headerSet))
+	for name := range headerSet {
+		headerNames = append(headerNames, name)
 	}
 	sort.Strings(headerNames)
 	headers := make([]canonicalHeader, 0, len(headerNames))
@@ -57,11 +64,18 @@ func HashRequest(tenantID, endpoint, key string, body []byte, limenHeaders map[s
 			}
 		}
 	}
+	normalizedBody := body
+	var bodyValue any
+	if err := json.Unmarshal(body, &bodyValue); err == nil {
+		if canonical, marshalErr := json.Marshal(bodyValue); marshalErr == nil {
+			normalizedBody = canonical
+		}
+	}
 	encoded, err := json.Marshal(canonicalRequest{
 		TenantID: tenantID,
 		Endpoint: endpoint,
 		Key:      key,
-		Body:     base64.StdEncoding.EncodeToString(body),
+		Body:     base64.StdEncoding.EncodeToString(normalizedBody),
 		Headers:  headers,
 	})
 	if err != nil {

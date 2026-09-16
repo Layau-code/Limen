@@ -24,15 +24,124 @@ func (store *PostgresStore) CreateRun(ctx context.Context, tenantID string, item
 	if store.db == nil || tenantID == "" || item.ID == "" {
 		return errors.New("postgres store requires database, tenant and run")
 	}
-	_, err := store.db.ExecContext(ctx, `
-		INSERT INTO runs (tenant_id, id, state, soft_budget_nano_usd, settled_cost_nano_usd,
-			deadline, max_parallelism, in_flight, strategy, config_version, complete_requested,
-			created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		tenantID, item.ID, item.State, item.SoftBudgetNanoUSD, item.SettledCostNanoUSD,
-		item.Deadline, item.MaxParallelism, item.InFlight, item.Strategy, item.ConfigVersion,
-		item.CompleteRequested, item.CreatedAt, item.UpdatedAt)
-	return err
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	if err := insertRunTx(ctx, tx, tenantID, item); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CreateRunWithMutation 幂等地创建控制面 Run，并保存原始操作哈希。
+func (store *PostgresStore) CreateRunWithMutation(ctx context.Context, tenantID string, item run.Run, mutation run.Mutation) (run.Run, error) {
+	if store.db == nil {
+		return run.Run{}, errors.New("postgres database is required")
+	}
+	if mutation.Key == "" || mutation.Hash == "" {
+		return run.Run{}, run.ErrIdempotencyKeyRequired
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Run{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Run{}, err
+	}
+	resourceID, existingHash, err := findOperationTx(ctx, tx, tenantID, "POST /v1/limen/runs", mutation.Key)
+	if err == nil {
+		if existingHash != mutation.Hash {
+			return run.Run{}, run.ErrIdempotencyConflict
+		}
+		return getRunTx(ctx, tx, tenantID, resourceID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return run.Run{}, err
+	}
+	if err := insertRunTx(ctx, tx, tenantID, item); err != nil {
+		return run.Run{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_operations (tenant_id,endpoint,idempotency_key,request_hash,resource_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, tenantID, "POST /v1/limen/runs", mutation.Key, mutation.Hash, item.ID, item.CreatedAt); err != nil {
+		return run.Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Run{}, err
+	}
+	return item, nil
+}
+
+// CompleteRunWithMutation 幂等地请求结束 PostgreSQL Run。
+func (store *PostgresStore) CompleteRunWithMutation(ctx context.Context, tenantID, runID string, mutation run.Mutation) (run.Run, error) {
+	return store.mutateRunWithMutation(ctx, tenantID, runID, mutation, "complete", "POST /v1/limen/runs/"+runID+"/complete")
+}
+
+// CancelRunWithMutation 幂等地请求取消 PostgreSQL Run。
+func (store *PostgresStore) CancelRunWithMutation(ctx context.Context, tenantID, runID string, mutation run.Mutation) (run.Run, error) {
+	return store.mutateRunWithMutation(ctx, tenantID, runID, mutation, "cancel", "POST /v1/limen/runs/"+runID+"/cancel")
+}
+
+func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID, runID string, mutation run.Mutation, operation, endpoint string) (run.Run, error) {
+	if mutation.Key == "" || mutation.Hash == "" {
+		return run.Run{}, run.ErrIdempotencyKeyRequired
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Run{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Run{}, err
+	}
+	resourceID, existingHash, err := findOperationTx(ctx, tx, tenantID, endpoint, mutation.Key)
+	if err == nil {
+		if existingHash != mutation.Hash {
+			return run.Run{}, run.ErrIdempotencyConflict
+		}
+		return getRunTx(ctx, tx, tenantID, resourceID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return run.Run{}, err
+	}
+	var currentState run.RunState
+	var inFlight int
+	if err := tx.QueryRowContext(ctx, `SELECT state,in_flight FROM runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, runID).Scan(&currentState, &inFlight); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.Run{}, run.ErrResourceNotFound
+		}
+		return run.Run{}, err
+	}
+	state := run.StateCancelled
+	completeRequested := false
+	if operation == "complete" {
+		if currentState != run.StateActive {
+			return run.Run{}, run.ErrInvalidRunTransition
+		}
+		state = run.StateCompleting
+		completeRequested = true
+		if inFlight == 0 {
+			state = run.StateCompleted
+		}
+	}
+	if operation == "cancel" && (currentState == run.StateCompleted || currentState == run.StateCancelled || currentState == run.StateDeadlineExceeded || currentState == run.StateSoftBudgetExhausted) {
+		return run.Run{}, run.ErrInvalidRunTransition
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=$3, complete_requested=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2`, tenantID, runID, state, completeRequested, now); err != nil {
+		return run.Run{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO control_operations (tenant_id,endpoint,idempotency_key,request_hash,resource_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, tenantID, endpoint, mutation.Key, mutation.Hash, runID, now); err != nil {
+		return run.Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Run{}, err
+	}
+	return store.GetRun(ctx, tenantID, runID)
 }
 
 // AdmitRequest 在 Run 行锁内完成状态检查、幂等判断和并发计数。
@@ -45,6 +154,9 @@ func (store *PostgresStore) AdmitRequest(ctx context.Context, tenantID, runID st
 		return run.Request{}, err
 	}
 	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
 	var item run.Run
 	if err := tx.QueryRowContext(ctx, `SELECT state, soft_budget_nano_usd, settled_cost_nano_usd, deadline, max_parallelism, in_flight FROM runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, runID).
 		Scan(&item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight); err != nil {
@@ -92,8 +204,41 @@ func (store *PostgresStore) RecordAttemptStarted(ctx context.Context, tenantID s
 	if store.db == nil {
 		return errors.New("postgres database is required")
 	}
-	_, err := store.db.ExecContext(ctx, `INSERT INTO attempts (tenant_id,id,request_id,target_id,provider,upstream_model,state,started_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, tenantID, attempt.ID, attempt.RequestID, attempt.TargetID, attempt.Provider, attempt.UpstreamModel, run.AttemptStarted, attempt.StartedAt)
-	return err
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO attempts (tenant_id,id,request_id,target_id,provider,upstream_model,state,started_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, tenantID, attempt.ID, attempt.RequestID, attempt.TargetID, attempt.Provider, attempt.UpstreamModel, run.AttemptStarted, attempt.StartedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// FinishAttempt 更新 PostgreSQL 中 Attempt 的终态和完成时间。
+func (store *PostgresStore) FinishAttempt(ctx context.Context, tenantID, attemptID string, state run.AttemptState, finishedAt time.Time) error {
+	if store.db == nil {
+		return errors.New("postgres database is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE attempts SET state=$3, finished_at=$4 WHERE tenant_id=$1 AND id=$2`, tenantID, attemptID, state, finishedAt)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return run.ErrResourceNotFound
+	}
+	return tx.Commit()
 }
 
 // BeginSettlement 将执行结束的 Request 标记为待结算。
@@ -101,14 +246,29 @@ func (store *PostgresStore) BeginSettlement(ctx context.Context, tenantID, reque
 	if store.db == nil {
 		return run.Request{}, errors.New("postgres database is required")
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE run_requests SET state=$3, settlement_status=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2 AND state NOT IN ('settled','failed','cancelled','abandoned')`, tenantID, requestID, run.RequestSettlementPending, "pending", now)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE run_requests SET state=$3, settlement_status=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2 AND state NOT IN ('settled','failed','cancelled','abandoned')`, tenantID, requestID, run.RequestSettlementPending, "pending", now)
 	if err != nil {
 		return run.Request{}, err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return run.Request{}, run.ErrRequestNotSettleable
 	}
-	return store.GetRequest(ctx, tenantID, requestID)
+	request, err := getRequestTx(ctx, tx, tenantID, requestID)
+	if err != nil {
+		return run.Request{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Request{}, err
+	}
+	return request, nil
 }
 
 // SettleRequest 以唯一账本约束写入费用并释放 Run 并发名额。
@@ -121,6 +281,9 @@ func (store *PostgresStore) SettleRequest(ctx context.Context, tenantID, request
 		return run.Request{}, err
 	}
 	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
 	var request run.Request
 	if err := tx.QueryRowContext(ctx, `SELECT id, run_id, state FROM run_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, requestID).Scan(&request.ID, &request.RunID, &request.State); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -172,12 +335,25 @@ func (store *PostgresStore) GetRun(ctx context.Context, tenantID, runID string) 
 	if store.db == nil {
 		return run.Run{}, errors.New("postgres database is required")
 	}
-	var item run.Run
-	err := store.db.QueryRowContext(ctx, `SELECT id,tenant_id,state,soft_budget_nano_usd,settled_cost_nano_usd,deadline,max_parallelism,in_flight,strategy,config_version,complete_requested,created_at,updated_at FROM runs WHERE tenant_id=$1 AND id=$2`, tenantID, runID).Scan(&item.ID, &item.TenantID, &item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight, &item.Strategy, &item.ConfigVersion, &item.CompleteRequested, &item.CreatedAt, &item.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return run.Run{}, ErrNotFound
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Run{}, err
 	}
-	return item, err
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Run{}, err
+	}
+	item, err := getRunTx(ctx, tx, tenantID, runID)
+	if err != nil {
+		if errors.Is(err, run.ErrResourceNotFound) {
+			return run.Run{}, ErrNotFound
+		}
+		return run.Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Run{}, err
+	}
+	return item, nil
 }
 
 // GetRequest 读取不包含正文的 Request 状态。
@@ -185,14 +361,67 @@ func (store *PostgresStore) GetRequest(ctx context.Context, tenantID, requestID 
 	if store.db == nil {
 		return run.Request{}, errors.New("postgres database is required")
 	}
-	var item run.Request
-	err := store.db.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &item.DecisionID, &item.LedgerRecorded, &item.LeaseOwner, &item.LeaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	item, err := getRequestTx(ctx, tx, tenantID, requestID)
+	if err != nil {
+		if errors.Is(err, run.ErrResourceNotFound) {
+			return run.Request{}, ErrNotFound
+		}
+		return run.Request{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Request{}, err
+	}
+	return item, nil
+}
+
+// insertRunTx 在已有租户事务中插入 Run 行。
+func insertRunTx(ctx context.Context, tx *sql.Tx, tenantID string, item run.Run) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO runs (tenant_id, id, state, soft_budget_nano_usd, settled_cost_nano_usd, deadline, max_parallelism, in_flight, strategy, config_version, complete_requested, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, tenantID, item.ID, item.State, item.SoftBudgetNanoUSD, item.SettledCostNanoUSD, item.Deadline, item.MaxParallelism, item.InFlight, item.Strategy, item.ConfigVersion, item.CompleteRequested, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+// setTenantTx 将租户上下文限制在当前数据库事务内。
+func setTenantTx(ctx context.Context, tx *sql.Tx, tenantID string) error {
+	_, err := tx.ExecContext(ctx, `SELECT set_config('limen.tenant_id',$1,true)`, tenantID)
+	return err
+}
+
+// findOperationTx 查找控制面幂等操作的原始资源和请求哈希。
+func findOperationTx(ctx context.Context, tx *sql.Tx, tenantID, endpoint, key string) (string, string, error) {
+	var resourceID, requestHash string
+	err := tx.QueryRowContext(ctx, `SELECT resource_id,request_hash FROM control_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, endpoint, key).Scan(&resourceID, &requestHash)
+	return resourceID, requestHash, err
+}
+
+// getRunTx 在已有事务内读取 Run 快照。
+func getRunTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run, error) {
+	var item run.Run
+	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,state,soft_budget_nano_usd,settled_cost_nano_usd,deadline,max_parallelism,in_flight,strategy,config_version,complete_requested,created_at,updated_at FROM runs WHERE tenant_id=$1 AND id=$2`, tenantID, runID).Scan(&item.ID, &item.TenantID, &item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight, &item.Strategy, &item.ConfigVersion, &item.CompleteRequested, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return run.Request{}, ErrNotFound
+		return run.Run{}, run.ErrResourceNotFound
 	}
 	return item, err
 }
 
+// getRequestTx 在已有事务内读取不含正文的 Request。
+func getRequestTx(ctx context.Context, tx *sql.Tx, tenantID, requestID string) (run.Request, error) {
+	var item run.Request
+	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &item.DecisionID, &item.LedgerRecorded, &item.LeaseOwner, &item.LeaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return run.Request{}, run.ErrResourceNotFound
+	}
+	return item, err
+}
+
+// isRequestInProgress 判断 PostgreSQL Request 是否仍占用幂等执行窗口。
 func isRequestInProgress(state run.RequestState) bool {
 	switch state {
 	case run.RequestAdmitted, run.RequestDecisionReady, run.RequestExecuting, run.RequestSettlementPending:
@@ -204,3 +433,4 @@ func isRequestInProgress(state run.RequestState) bool {
 
 var _ Store = (*PostgresStore)(nil)
 var _ run.Service = (*PostgresStore)(nil)
+var _ run.ControlService = (*PostgresStore)(nil)
