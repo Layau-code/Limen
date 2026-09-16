@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/auth"
+	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
@@ -41,6 +42,7 @@ type Handler struct {
 	tenantID      string
 	leaseOwner    string
 	decisions     journal.Store
+	configs       configstore.Store
 }
 
 const runTenantID = "local"
@@ -79,11 +81,16 @@ func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, 
 
 // NewWithHealthAndRunsForTenantScopesAndJournal 创建带决策日志的完整 HTTP 处理器。
 func NewWithHealthAndRunsForTenantScopesAndJournal(apiKey string, router *gateway.Router, health *Health, tenantID string, scopes []auth.Scope, decisions journal.Store, runs run.Service) http.Handler {
-	return NewWithHealthAndRunsForTenantAuthenticatorAndJournal(auth.NewStaticAuthenticator(apiKey, tenantID, scopes), router, health, tenantID, decisions, runs)
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(auth.NewStaticAuthenticator(apiKey, tenantID, scopes), router, health, tenantID, decisions, configstore.NewMemoryStore(), runs)
 }
 
 // NewWithHealthAndRunsForTenantAuthenticatorAndJournal 创建使用可替换鉴权器的 HTTP 处理器。
 func NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator, router, health, tenantID, decisions, configstore.NewMemoryStore(), runs)
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig 创建包含决策和配置控制面的完整处理器。
+func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -94,6 +101,9 @@ func NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator auth.Aut
 	if decisions == nil {
 		decisions = journal.NewMemoryStore()
 	}
+	if configs == nil {
+		configs = configstore.NewMemoryStore()
+	}
 	handler := &Handler{
 		authenticator: authenticator,
 		router:        router,
@@ -101,12 +111,16 @@ func NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator auth.Aut
 		tenantID:      tenantID,
 		leaseOwner:    newLeaseOwner(),
 		decisions:     decisions,
+		configs:       configs,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
 	mux.HandleFunc("GET /v1/limen/decisions/{decision_id}", handler.getDecision)
 	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
+	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
+	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
 	mux.HandleFunc("POST /v1/limen/runs", handler.createRun)
 	mux.HandleFunc("GET /v1/limen/runs/{run_id}", handler.getRun)
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/complete", handler.completeRun)
@@ -323,7 +337,11 @@ func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
 	}
-	item, err := control.CreateRunWithMutation(r.Context(), tenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
+	configVersion := "runtime"
+	if h.router != nil && h.router.ConfigVersion() != "" {
+		configVersion = h.router.ConfigVersion()
+	}
+	item, err := control.CreateRunWithMutation(r.Context(), tenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: configVersion, CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
 	if err != nil {
 		writeRunMutationError(w, err)
 		return

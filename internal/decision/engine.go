@@ -53,7 +53,7 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 		results = append(results, result)
 	}
 	if len(accepted) == 0 {
-		return ExecutionPlan{Candidates: results, EffectiveStrategy: strategy, Reasons: reasons}, &DecisionError{Code: "no_eligible_target"}
+		return ExecutionPlan{SchemaVersion: input.SchemaVersion, AlgorithmVersion: input.AlgorithmVersion, ConfigVersion: input.ConfigVersion, Candidates: results, EffectiveStrategy: strategy, Reasons: reasons}, &DecisionError{Code: "no_eligible_target"}
 	}
 	if active {
 		sortCandidates(accepted, input, strategy)
@@ -61,6 +61,7 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 	plan := ExecutionPlan{
 		SchemaVersion:     input.SchemaVersion,
 		AlgorithmVersion:  input.AlgorithmVersion,
+		ConfigVersion:     input.ConfigVersion,
 		EffectiveStrategy: strategy,
 		Reasons:           reasons,
 		Candidates:        results,

@@ -25,11 +25,14 @@ type Policy struct {
 
 // Router 按模型注册表执行预算感知的 Provider 路由。
 type Router struct {
-	providers map[string]provider.Provider
-	registry  *ModelRegistry
-	policy    Policy
-	breakers  map[string]*circuitBreaker
-	engine    decision.Engine
+	providers     map[string]provider.Provider
+	registryMu    sync.RWMutex
+	registry      *ModelRegistry
+	configVersion string
+	policy        Policy
+	breakers      map[string]*circuitBreaker
+	engine        decision.Engine
+	now           func() time.Time
 }
 
 // Result 同时返回上游响应和不含业务正文的路由决策。
@@ -75,6 +78,7 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 		registry:  registry,
 		policy:    policy,
 		breakers:  make(map[string]*circuitBreaker),
+		now:       now,
 	}
 	for name, upstream := range providers {
 		router.providers[name] = upstream
@@ -88,6 +92,57 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 		}
 	}
 	return router
+}
+
+// ReplaceRegistry 原子替换模型目录，并保留仍然存在目标的熔断状态。
+func (router *Router) ReplaceRegistry(registry *ModelRegistry, version string) error {
+	return router.ReplaceRegistryWithPolicy(registry, version, router.Policy())
+}
+
+// ReplaceRegistryWithPolicy 替换模型目录和路由策略，供配置版本发布使用。
+func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version string, policy Policy) error {
+	if registry == nil || len(registry.List()) == 0 {
+		return errors.New("model registry is required")
+	}
+	router.registryMu.Lock()
+	defer router.registryMu.Unlock()
+	nextBreakers := make(map[string]*circuitBreaker)
+	for _, model := range registry.List() {
+		for _, target := range model.Targets {
+			key := targetKey(model, target)
+			if breaker, ok := router.breakers[key]; ok {
+				nextBreakers[key] = breaker
+				continue
+			}
+			nextBreakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, router.now)
+		}
+	}
+	router.registry = registry
+	router.breakers = nextBreakers
+	router.policy = policy
+	router.configVersion = strings.TrimSpace(version)
+	return nil
+}
+
+// Policy 返回当前路由策略的副本，避免配置发布覆盖请求总预算。
+func (router *Router) Policy() Policy {
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.policy
+}
+
+// SetConfigVersion 设置当前 Router 使用的配置版本标识。
+func (router *Router) SetConfigVersion(version string) {
+	router.registryMu.Lock()
+	router.configVersion = strings.TrimSpace(version)
+	router.registryMu.Unlock()
+}
+
+// ConfigVersion 返回当前 Router 使用的配置版本标识。
+func (router *Router) ConfigVersion() string {
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.configVersion
 }
 
 // Chat 使用默认契约处理一次聊天请求，保留 OpenAI 兼容调用方式。
@@ -154,14 +209,15 @@ func (router *Router) plan(request provider.ChatRequest, contract decision.Contr
 
 // planWithInput 将注册表和熔断器快照组装为可持久化的 DecisionInput。
 func (router *Router) planWithInput(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
-	models := router.registry.List()
+	registry, configVersion := router.registrySnapshot()
+	models := registry.List()
 	if request.Model != "auto" {
-		model, found := router.registry.Resolve(request.Model)
+		model, found := registry.Resolve(request.Model)
 		if !found {
 			return decision.Input{}, decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
 		}
 		models = []Model{model}
-	} else if router.registry.IsCompatibility() {
+	} else if registry.IsCompatibility() {
 		return decision.Input{}, decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
 	}
 	if request.Model == "auto" {
@@ -170,7 +226,11 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 	candidates := make([]decision.Candidate, 0)
 	for _, model := range models {
 		for _, target := range model.Targets {
-			observation := router.breakers[targetKey(model, target)].observe()
+			breaker := router.breakerFor(targetKey(model, target))
+			observation := breakerObservation{}
+			if breaker != nil {
+				observation = breaker.observe()
+			}
 			candidates = append(candidates, decision.Candidate{
 				ModelID:         model.ID,
 				Target:          target,
@@ -186,6 +246,7 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 	input := decision.Input{
 		SchemaVersion:     decision.SchemaVersionV1,
 		AlgorithmVersion:  decision.AlgorithmVersionV1,
+		ConfigVersion:     configVersion,
 		EvaluatedAtUnixMS: time.Now().UnixMilli(),
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
 		Candidates:        candidates,
@@ -196,7 +257,8 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 
 // executePlan 按计划顺序执行 Provider，并保留 Fallback、超时和结算语义。
 func (router *Router) executePlan(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan) (Result, error) {
-	budget, cancelBudget := context.WithTimeout(parent, router.policy.RequestTimeout)
+	policy := router.Policy()
+	budget, cancelBudget := context.WithTimeout(parent, policy.RequestTimeout)
 	withPlan := func(result Result) Result {
 		result.Plan = plan
 		return result
@@ -221,13 +283,18 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 
 	for _, planned := range plan.Targets {
 		target := planned.Target
-		model := Model{ID: planned.ModelID, Compatibility: router.registry.IsCompatibility()}
+		registry, _ := router.registrySnapshot()
+		model := Model{ID: planned.ModelID, Compatibility: registry.IsCompatibility()}
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
 			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 		}
-		breaker := router.breakers[targetKey(model, target)]
+		breaker := router.breakerFor(targetKey(model, target))
+		if breaker == nil {
+			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "target_unavailable"})
+			continue
+		}
 		if !breaker.allow() {
 			outcome := "circuit_open"
 			if breaker.observe().state == "half_open" {
@@ -245,7 +312,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 		}
 
-		attempt, cancelAttempt := context.WithTimeout(budget, router.policy.AttemptTimeout)
+		attempt, cancelAttempt := context.WithTimeout(budget, policy.AttemptTimeout)
 		upstream := router.providers[target.Provider]
 		if upstream == nil {
 			cancelAttempt()
@@ -350,7 +417,22 @@ const maxSettlementDrainBytes = 64 << 10
 
 // Models 返回 Router 当前公开的模型列表。
 func (router *Router) Models() []Model {
-	return router.registry.List()
+	registry, _ := router.registrySnapshot()
+	return registry.List()
+}
+
+// registrySnapshot 获取目录和版本号的一致快照。
+func (router *Router) registrySnapshot() (*ModelRegistry, string) {
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.registry, router.configVersion
+}
+
+// breakerFor 在锁保护下读取目标熔断器。
+func (router *Router) breakerFor(key string) *circuitBreaker {
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.breakers[key]
 }
 
 // targetKey 返回显式目标或兼容模式前缀使用的稳定熔断标识。
