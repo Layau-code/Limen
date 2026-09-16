@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/huz/limen/internal/run"
@@ -204,11 +203,3 @@ func isRequestInProgress(state run.RequestState) bool {
 }
 
 var _ Store = (*PostgresStore)(nil)
-
-// ensurePostgresError 保留数据库错误的上下文，供调用方记录非敏感摘要。
-func ensurePostgresError(operation string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("%s: %w", operation, err)
-}
