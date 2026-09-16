@@ -24,11 +24,8 @@ var (
 	ErrNotFound = errors.New("store resource not found")
 )
 
-// AdmissionInput 描述一次已完成哈希的请求准入。
-type AdmissionInput struct {
-	Request run.Request
-	Now     time.Time
-}
+// AdmissionInput 是 Store 包对 Run 准入参数的兼容别名。
+type AdmissionInput = run.AdmissionInput
 
 // Store 定义 Run、Request、Attempt 和 Ledger 的租户显式操作。
 type Store interface {

@@ -203,3 +203,4 @@ func isRequestInProgress(state run.RequestState) bool {
 }
 
 var _ Store = (*PostgresStore)(nil)
+var _ run.Service = (*PostgresStore)(nil)

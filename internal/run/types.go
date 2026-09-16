@@ -2,6 +2,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -60,7 +61,26 @@ var (
 	ErrInvalidRunTransition = errors.New("invalid run state transition")
 	// ErrRequestNotSettleable 表示请求当前不能进入结算。
 	ErrRequestNotSettleable = errors.New("request is not settleable")
+	// ErrResourceNotFound 表示指定租户下资源不存在。
+	ErrResourceNotFound = errors.New("run resource not found")
 )
+
+// AdmissionInput 描述已完成规范哈希的请求准入参数。
+type AdmissionInput struct {
+	Request Request
+	Now     time.Time
+}
+
+// Service 定义 Run Coordinator 对 HTTP 和 Gateway 暴露的统一状态接口。
+type Service interface {
+	CreateRun(context.Context, string, Run) error
+	AdmitRequest(context.Context, string, string, AdmissionInput) (Request, error)
+	RecordAttemptStarted(context.Context, string, Attempt) error
+	BeginSettlement(context.Context, string, string, time.Time) (Request, error)
+	SettleRequest(context.Context, string, string, *int64, time.Time) (Request, error)
+	GetRun(context.Context, string, string) (Run, error)
+	GetRequest(context.Context, string, string) (Request, error)
+}
 
 // Run 保存一次 Agent 工作流的预算、截止时间和并发快照。
 type Run struct {
