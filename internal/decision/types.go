@@ -52,6 +52,7 @@ type HealthSnapshot struct {
 // Candidate 将目录目标和决策时的外部状态组合起来。
 type Candidate struct {
 	ModelID         string         `json:"model_id"`
+	Compatibility   bool           `json:"compatibility,omitempty"`
 	Target          catalog.Target `json:"target"`
 	Enabled         bool           `json:"enabled"`
 	SecurityAllowed bool           `json:"security_allowed"`
@@ -79,8 +80,9 @@ type CandidateResult struct {
 
 // PlanTarget 描述 ExecutionPlan 中一个可执行目标。
 type PlanTarget struct {
-	ModelID string         `json:"model_id"`
-	Target  catalog.Target `json:"target"`
+	ModelID       string         `json:"model_id"`
+	Compatibility bool           `json:"compatibility,omitempty"`
+	Target        catalog.Target `json:"target"`
 }
 
 // ExecutionPlan 是经过筛选和排序的不可变执行计划。

@@ -21,6 +21,7 @@ import (
 	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
+	"github.com/huz/limen/internal/telemetry"
 )
 
 const maxRequestBytes = 4 << 20
@@ -43,6 +44,7 @@ type Handler struct {
 	leaseOwner    string
 	decisions     journal.Store
 	configs       configstore.Store
+	metrics       *telemetry.Registry
 }
 
 const runTenantID = "local"
@@ -112,6 +114,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator au
 		leaseOwner:    newLeaseOwner(),
 		decisions:     decisions,
 		configs:       configs,
+		metrics:       telemetry.NewRegistry(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
@@ -127,6 +130,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator au
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/cancel", handler.cancelRun)
 	mux.HandleFunc("GET /v1/limen/runs/{run_id}/requests/{request_id}", handler.getRunRequest)
 	mux.HandleFunc("GET /v1/models", handler.models)
+	mux.HandleFunc("GET /metrics", handler.metricsEndpoint)
 	mux.HandleFunc("GET /livez", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
 	return mux
@@ -530,6 +534,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", code)
 		return
 	}
+	h.metrics.Inc(telemetry.RequestsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: envelope.Request.Model})
 	if h.router == nil {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
@@ -723,6 +728,14 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// metricsEndpoint 鉴权并返回低基数 Prometheus 指标。
+func (h *Handler) metricsEndpoint(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeAdmin) {
+		return
+	}
+	h.metrics.ServeHTTP(w, r)
+}
+
 // authenticate 校验请求中的 Limen Bearer Key，并在失败时写入统一错误。
 func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	return h.authenticateScopes(w, r)
@@ -816,6 +829,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		decisionID = id
 		return recordErr
 	})
+	for _, step := range result.Decision.Steps {
+		h.metrics.Inc(telemetry.AttemptsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: request.Model, Provider: step.Provider, Result: step.Outcome})
+	}
 	if result.Plan.ConfigVersion != "" {
 		w.Header().Set("X-Limen-Config-Version", result.Plan.ConfigVersion)
 	}
@@ -901,6 +917,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 	}
 	writeSettlementTrailers(w, result.Settlement)
+	settlementStatus := string(gateway.SettlementUnavailable)
+	if result.Settlement != nil {
+		settlementStatus = string(result.Settlement.Summary().Status)
+	}
+	h.metrics.Inc(telemetry.SettlementsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: request.Model, Provider: result.Decision.Provider, Result: settlementStatus})
 }
 
 // returnRunDecisionError 将计划生成失败映射为安全 API 错误。
