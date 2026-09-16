@@ -81,3 +81,13 @@ func (authenticator StaticAuthenticator) AuthenticateContext(_ context.Context, 
 func AllScopes() []Scope {
 	return []Scope{ScopeInference, ScopeRunsRead, ScopeRunsWrite, ScopeDecisions, ScopeConfigsRead, ScopeConfigsWrite, ScopeAdmin}
 }
+
+// IsKnownScope 判断 Scope 是否属于 Limen 固定权限集合。
+func IsKnownScope(candidate Scope) bool {
+	for _, scope := range AllScopes() {
+		if candidate == scope {
+			return true
+		}
+	}
+	return false
+}

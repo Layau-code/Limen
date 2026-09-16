@@ -56,6 +56,9 @@ func (authenticator *APIKeyAuthenticator) AuthenticateContext(ctx context.Contex
 	}
 	set := make(map[auth.Scope]struct{}, len(scopes))
 	for _, scope := range scopes {
+		if !auth.IsKnownScope(scope) {
+			return auth.Principal{}, false, errors.New("api key contains unknown scope")
+		}
 		set[scope] = struct{}{}
 	}
 	return auth.Principal{TenantID: tenantID, Scopes: set}, true, nil
