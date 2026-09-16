@@ -21,6 +21,11 @@ type Pricing struct {
 	OutputPerMillionNanoUSD int64 `json:"output_per_million_nano_usd"`
 }
 
+// ParseUSD 将非负十进制美元字符串解析为纳美元定点整数。
+func ParseUSD(raw string) (int64, error) {
+	return parseNanoUSD(raw)
+}
+
 type pricingDocument struct {
 	InputPerMillionUSD  string `json:"input_per_million_usd"`
 	OutputPerMillionUSD string `json:"output_per_million_usd"`

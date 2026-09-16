@@ -22,6 +22,20 @@ func TestHashRequestIgnoresAuthorizationAndSortsHeaders(t *testing.T) {
 	}
 }
 
+func TestHashRequestCanonicalizesJSONBody(t *testing.T) {
+	first, err := HashRequest("tenant", "/endpoint", "key", []byte(`{"model":"auto","stream":false}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := HashRequest("tenant", "/endpoint", "key", []byte("{\n  \"stream\": false, \"model\": \"auto\"\n}"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("canonical hashes differ: %q != %q", first, second)
+	}
+}
+
 func TestHashRequestRequiresIdentityFields(t *testing.T) {
 	for _, input := range [][3]string{{"", "/v1/chat/completions", "key"}, {"tenant", "", "key"}, {"tenant", "/v1/chat/completions", ""}} {
 		if _, err := HashRequest(input[0], input[1], input[2], nil, nil); err == nil {

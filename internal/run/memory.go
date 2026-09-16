@@ -8,22 +8,63 @@ import (
 )
 
 type MemoryStore struct {
-	mu       sync.Mutex
-	runs     map[string]Run
-	requests map[string]Request
-	idem     map[string]string
-	ledger   map[string]int64
-	sequence uint64
+	mu        sync.Mutex
+	runs      map[string]Run
+	requests  map[string]Request
+	attempts  map[string]Attempt
+	idem      map[string]string
+	ledger    map[string]int64
+	mutations map[string]mutationResult
+	sequence  uint64
+}
+
+type mutationResult struct {
+	hash string
+	run  Run
 }
 
 // NewMemoryStore 创建用于本地开发和并发测试的强一致内存 Store。
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		runs:     make(map[string]Run),
-		requests: make(map[string]Request),
-		idem:     make(map[string]string),
-		ledger:   make(map[string]int64),
+		runs:      make(map[string]Run),
+		requests:  make(map[string]Request),
+		attempts:  make(map[string]Attempt),
+		idem:      make(map[string]string),
+		ledger:    make(map[string]int64),
+		mutations: make(map[string]mutationResult),
 	}
+}
+
+// RecordAttemptStarted 保存访问 Provider 前的本地 Attempt 记录。
+func (store *MemoryStore) RecordAttemptStarted(tenantID string, attempt Attempt) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if tenantID == "" || attempt.ID == "" || attempt.RequestID == "" {
+		return errors.New("attempt requires tenant and request")
+	}
+	key := resourceKey(tenantID, attempt.ID)
+	if _, exists := store.attempts[key]; exists {
+		return errors.New("attempt already exists")
+	}
+	attempt.TenantID = tenantID
+	attempt.State = AttemptStarted
+	store.attempts[key] = attempt
+	return nil
+}
+
+// FinishAttempt 更新本地 Attempt 终态并记录完成时间。
+func (store *MemoryStore) FinishAttempt(tenantID, attemptID string, state AttemptState, finishedAt time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, attemptID)
+	attempt, exists := store.attempts[key]
+	if !exists {
+		return ErrResourceNotFound
+	}
+	attempt.State = state
+	attempt.FinishedAt = finishedAt
+	store.attempts[key] = attempt
+	return nil
 }
 
 // CreateRun 保存一个尚未开始请求的 Run，并拒绝跨租户 ID 冲突。
@@ -33,6 +74,10 @@ func (store *MemoryStore) CreateRun(run Run) error {
 	if run.TenantID == "" || run.ID == "" {
 		return errors.New("run requires tenant_id and id")
 	}
+	return store.createRunLocked(run)
+}
+
+func (store *MemoryStore) createRunLocked(run Run) error {
 	if run.State == "" {
 		run.State = StateActive
 	}
@@ -45,6 +90,64 @@ func (store *MemoryStore) CreateRun(run Run) error {
 	}
 	store.runs[key] = run
 	return nil
+}
+
+// CreateRunWithMutation 以控制面幂等键创建 Run，并返回原始结果。
+func (store *MemoryStore) CreateRunWithMutation(tenantID string, item Run, mutation Mutation) (Run, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := validateMutation(mutation); err != nil {
+		return Run{}, err
+	}
+	key := mutationKey(tenantID, "create_run", mutation.Key)
+	if existing, ok := store.mutations[key]; ok {
+		if existing.hash != mutation.Hash {
+			return existing.run, ErrIdempotencyConflict
+		}
+		return existing.run, nil
+	}
+	item.TenantID = tenantID
+	if err := store.createRunLocked(item); err != nil {
+		return Run{}, err
+	}
+	store.mutations[key] = mutationResult{hash: mutation.Hash, run: item}
+	return item, nil
+}
+
+// CompleteRunWithMutation 幂等地请求结束 Run。
+func (store *MemoryStore) CompleteRunWithMutation(tenantID, runID string, mutation Mutation) (Run, error) {
+	return store.mutateRun(tenantID, runID, "complete_run", mutation, func(item *Run) error { return item.Complete() })
+}
+
+// CancelRunWithMutation 幂等地取消 Run。
+func (store *MemoryStore) CancelRunWithMutation(tenantID, runID string, mutation Mutation) (Run, error) {
+	return store.mutateRun(tenantID, runID, "cancel_run", mutation, func(item *Run) error { return item.Cancel() })
+}
+
+func (store *MemoryStore) mutateRun(tenantID, runID, operation string, mutation Mutation, change func(*Run) error) (Run, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := validateMutation(mutation); err != nil {
+		return Run{}, err
+	}
+	key := mutationKey(tenantID, operation+"\x00"+runID, mutation.Key)
+	if existing, ok := store.mutations[key]; ok {
+		if existing.hash != mutation.Hash {
+			return existing.run, ErrIdempotencyConflict
+		}
+		return existing.run, nil
+	}
+	runKey := resourceKey(tenantID, runID)
+	item, ok := store.runs[runKey]
+	if !ok {
+		return Run{}, ErrResourceNotFound
+	}
+	if err := change(&item); err != nil {
+		return item, err
+	}
+	store.runs[runKey] = item
+	store.mutations[key] = mutationResult{hash: mutation.Hash, run: item}
+	return item, nil
 }
 
 // AdmitRequest 在同一事务临界区内执行幂等检查和 Run 准入。
@@ -206,4 +309,15 @@ func isRequestInProgress(state RequestState) bool {
 	default:
 		return false
 	}
+}
+
+func validateMutation(mutation Mutation) error {
+	if mutation.Key == "" || mutation.Hash == "" {
+		return ErrIdempotencyKeyRequired
+	}
+	return nil
+}
+
+func mutationKey(tenantID, operation, key string) string {
+	return resourceKey(tenantID, operation+"\x00"+key)
 }

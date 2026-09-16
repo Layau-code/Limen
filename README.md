@@ -95,6 +95,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，适合在 Agent 调用前解释路由选择。
 
+启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。
+
 成功或最终上游响应会带有以下安全摘要：
 
 ```text
@@ -111,7 +113,7 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 
 ## 配置与运维
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）和可选的 `LIMEN_HEALTH_URL`。启动时会为规范化模型配置生成 `config_version`；生产出站 Client 默认只允许 HTTPS、禁用代理和重定向，并拒绝 loopback、私网、链路本地和云元数据地址。模型文件修改后需重启；只校验注册表实际引用的 Provider Key。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）和可选的 `LIMEN_HEALTH_URL`。启动时会为规范化模型配置生成 `config_version`；生产出站 Client 默认只允许 HTTPS、禁用代理和重定向，并拒绝 loopback、私网、链路本地和云元数据地址。模型文件修改后需重启；只校验注册表实际引用的 Provider Key。设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面，生产环境应等待 PostgreSQL Store 装配后再启用。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 

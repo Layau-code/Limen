@@ -66,7 +66,11 @@ HTTP 鉴权与解析
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
 
-阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问与重复记账。当前 HTTP 控制面尚未接入 Run，兼容 Chat 路径不读取该状态。
+阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
+
+当前 HTTP Run 控制面通过 `LIMEN_RUN_STORE=memory` 显式启用，仅用于单机开发和演示；默认不启用，避免把进程内状态误当成生产账本。PostgreSQL Repository 已实现统一 `run.Service` 边界，待数据库驱动、连接池和迁移启动装配完成后替换内存实现。
+
+开发控制面已覆盖 Run 创建、查询、完成、取消和 Request 结算查询；控制变更使用 `Idempotency-Key` 与规范请求哈希。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。生产接入前仍需完成 PostgreSQL 驱动装配、租约恢复和跨实例取消。
 
 ## 可靠性不变量
 

@@ -13,7 +13,7 @@ func TestRunLedgerMigrationDefinesTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(contents)
-	for _, table := range []string{"runs", "run_requests", "attempts", "ledger_entries", "cancellation_events"} {
+	for _, table := range []string{"runs", "run_requests", "attempts", "ledger_entries", "cancellation_events", "control_operations"} {
 		if !strings.Contains(source, "CREATE TABLE "+table) || !strings.Contains(source, "tenant_id TEXT NOT NULL") {
 			t.Fatalf("tenant key missing for %s", table)
 		}

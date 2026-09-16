@@ -76,14 +76,27 @@ CREATE TABLE cancellation_events (
     FOREIGN KEY (tenant_id, run_id) REFERENCES runs (tenant_id, id)
 );
 
+CREATE TABLE control_operations (
+    tenant_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (tenant_id, endpoint, idempotency_key),
+    FOREIGN KEY (tenant_id, resource_id) REFERENCES runs (tenant_id, id)
+);
+
 ALTER TABLE runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE run_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ledger_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cancellation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE control_operations ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY runs_tenant_isolation ON runs USING (tenant_id = current_setting('limen.tenant_id', TRUE));
 CREATE POLICY run_requests_tenant_isolation ON run_requests USING (tenant_id = current_setting('limen.tenant_id', TRUE));
 CREATE POLICY attempts_tenant_isolation ON attempts USING (tenant_id = current_setting('limen.tenant_id', TRUE));
 CREATE POLICY ledger_entries_tenant_isolation ON ledger_entries USING (tenant_id = current_setting('limen.tenant_id', TRUE));
 CREATE POLICY cancellation_events_tenant_isolation ON cancellation_events USING (tenant_id = current_setting('limen.tenant_id', TRUE));
+CREATE POLICY control_operations_tenant_isolation ON control_operations USING (tenant_id = current_setting('limen.tenant_id', TRUE));

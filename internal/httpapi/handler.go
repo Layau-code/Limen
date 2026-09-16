@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
+	"github.com/huz/limen/internal/run"
 )
 
 const maxRequestBytes = 4 << 20
@@ -31,7 +33,10 @@ var settlementTrailerNames = []string{
 type Handler struct {
 	apiKey string
 	router *gateway.Router
+	runs   run.Service
 }
+
+const runTenantID = "local"
 
 // New 创建 Limen 的 HTTP 路由和请求处理器。
 func New(apiKey string, router *gateway.Router) http.Handler {
@@ -40,14 +45,29 @@ func New(apiKey string, router *gateway.Router) http.Handler {
 
 // NewWithHealth 创建带健康检查端点的 Limen HTTP 处理器。
 func NewWithHealth(apiKey string, router *gateway.Router, health *Health) http.Handler {
+	return NewWithHealthAndRuns(apiKey, router, health, nil)
+}
+
+// NewWithRuns 创建带 Run 控制面的 HTTP 处理器。
+func NewWithRuns(apiKey string, router *gateway.Router, runs run.Service) http.Handler {
+	return NewWithHealthAndRuns(apiKey, router, nil, runs)
+}
+
+// NewWithHealthAndRuns 创建同时支持健康检查和 Run 控制面的 HTTP 处理器。
+func NewWithHealthAndRuns(apiKey string, router *gateway.Router, health *Health, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
 	}
-	handler := &Handler{apiKey: apiKey, router: router}
+	handler := &Handler{apiKey: apiKey, router: router, runs: runs}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
+	mux.HandleFunc("POST /v1/limen/runs", handler.createRun)
+	mux.HandleFunc("GET /v1/limen/runs/{run_id}", handler.getRun)
+	mux.HandleFunc("POST /v1/limen/runs/{run_id}/complete", handler.completeRun)
+	mux.HandleFunc("POST /v1/limen/runs/{run_id}/cancel", handler.cancelRun)
+	mux.HandleFunc("GET /v1/limen/runs/{run_id}/requests/{request_id}", handler.getRunRequest)
 	mux.HandleFunc("GET /v1/models", handler.models)
 	mux.HandleFunc("GET /livez", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
@@ -102,6 +122,237 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(plan)
 }
 
+type createRunRequest struct {
+	SoftBudgetUSD  string `json:"soft_budget_usd"`
+	Deadline       string `json:"deadline"`
+	MaxParallelism int    `json:"max_parallelism"`
+	Strategy       string `json:"strategy"`
+}
+
+// createRun 创建一个带软预算和截止时间的受治理 Run。
+func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	control, ok := h.runs.(run.ControlService)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
+		return
+	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required", "invalid_request_error", "idempotency_key_required")
+		return
+	}
+	body, err := readRequestBody(w, r)
+	if err != nil {
+		return
+	}
+	var incoming createRunRequest
+	if err := decodeStrictJSON(body, &incoming); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid Run request", "invalid_request_error", "invalid_run_request")
+		return
+	}
+	budget, err := cost.ParseUSD(incoming.SoftBudgetUSD)
+	if err != nil || budget < 0 {
+		writeError(w, http.StatusBadRequest, "soft_budget_usd must be a non-negative decimal", "invalid_request_error", "invalid_run_budget")
+		return
+	}
+	deadline := time.Time{}
+	if incoming.Deadline != "" {
+		deadline, err = time.Parse(time.RFC3339, incoming.Deadline)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "deadline must be RFC3339", "invalid_request_error", "invalid_run_deadline")
+			return
+		}
+	}
+	if incoming.MaxParallelism <= 0 {
+		writeError(w, http.StatusBadRequest, "max_parallelism must be positive", "invalid_request_error", "invalid_run_concurrency")
+		return
+	}
+	strategy := incoming.Strategy
+	if strategy == "" {
+		strategy = "balanced"
+	}
+	if strategy != "balanced" && strategy != "economy" {
+		writeError(w, http.StatusBadRequest, "unsupported Run strategy", "invalid_request_error", "strategy_conflict")
+		return
+	}
+	now := time.Now().UTC()
+	id, err := run.NewID("run")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to create Run", "api_error", "run_id_error")
+		return
+	}
+	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return
+	}
+	item, err := control.CreateRunWithMutation(r.Context(), runTenantID, run.Run{ID: id, State: run.StateActive, SoftBudgetNanoUSD: budget, Deadline: deadline, MaxParallelism: incoming.MaxParallelism, Strategy: strategy, ConfigVersion: "runtime", CreatedAt: now, UpdatedAt: now}, run.Mutation{Key: key, Hash: hash})
+	if err != nil {
+		writeRunMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+// getRun 返回不含正文的 Run 当前状态。
+func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	if h.runs == nil {
+		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
+		return
+	}
+	item, err := h.runs.GetRun(r.Context(), runTenantID, r.PathValue("run_id"))
+	if err != nil {
+		writeRunLookupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+// completeRun 请求停止新准入，并在在途请求结束后完成 Run。
+func (h *Handler) completeRun(w http.ResponseWriter, r *http.Request) {
+	h.mutateRun(w, r, false)
+}
+
+// cancelRun 立即标记 Run 为取消并阻止后续准入。
+func (h *Handler) cancelRun(w http.ResponseWriter, r *http.Request) {
+	h.mutateRun(w, r, true)
+}
+
+// mutateRun 执行带幂等键的 Run 完成或取消操作。
+func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	control, ok := h.runs.(run.ControlService)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
+		return
+	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required", "invalid_request_error", "idempotency_key_required")
+		return
+	}
+	body, err := readRequestBody(w, r)
+	if err != nil {
+		return
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte("{}")
+	}
+	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return
+	}
+	mutation := run.Mutation{Key: key, Hash: hash}
+	var item run.Run
+	if cancel {
+		item, err = control.CancelRunWithMutation(r.Context(), runTenantID, r.PathValue("run_id"), mutation)
+	} else {
+		item, err = control.CompleteRunWithMutation(r.Context(), runTenantID, r.PathValue("run_id"), mutation)
+	}
+	if err != nil {
+		writeRunMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+// getRunRequest 返回请求状态和结算状态，不返回 Prompt 或 Response。
+func (h *Handler) getRunRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	if h.runs == nil {
+		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
+		return
+	}
+	item, err := h.runs.GetRequest(r.Context(), runTenantID, r.PathValue("request_id"))
+	if err != nil {
+		writeRunLookupError(w, err)
+		return
+	}
+	if item.RunID != r.PathValue("run_id") {
+		writeError(w, http.StatusNotFound, "run request not found", "invalid_request_error", "run_request_not_found")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+// idempotencyKey 读取并规范化控制面幂等键。
+func idempotencyKey(r *http.Request) (string, bool) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	return key, key != ""
+}
+
+// readRequestBody 以有界缓冲读取控制面请求正文。
+func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "invalid_body")
+		return nil, err
+	}
+	return body, nil
+}
+
+// decodeStrictJSON 严格解析单个 JSON 值并拒绝未知字段。
+func decodeStrictJSON(body []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	return ensureJSONEOF(decoder)
+}
+
+// ensureJSONEOF 确认正文中不存在第二个 JSON 值。
+func ensureJSONEOF(decoder *json.Decoder) error {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+// writeJSON 编码不含敏感正文的 JSON 响应。
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+// writeRunLookupError 将 Store 查询错误映射为稳定 API 错误。
+func writeRunLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, run.ErrResourceNotFound) {
+		writeError(w, http.StatusNotFound, "run resource not found", "invalid_request_error", "run_resource_not_found")
+		return
+	}
+	writeError(w, http.StatusBadGateway, "run store unavailable", "api_error", "run_store_error")
+}
+
+// writeRunMutationError 将控制面状态变更错误映射为稳定 API 错误。
+func writeRunMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, run.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
+	case errors.Is(err, run.ErrInvalidRunTransition), errors.Is(err, run.ErrRunNotActive):
+		writeError(w, http.StatusConflict, "run is not active", "invalid_request_error", "run_not_active")
+	case errors.Is(err, run.ErrResourceNotFound):
+		writeError(w, http.StatusNotFound, "run resource not found", "invalid_request_error", "run_resource_not_found")
+	default:
+		writeError(w, http.StatusBadRequest, "invalid Run mutation", "invalid_request_error", "run_mutation_error")
+	}
+}
+
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticate(w, r) {
@@ -126,7 +377,45 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
-	h.forward(w, r, envelope.Request, envelope.Contract)
+	requestID, admitted := h.admitRunRequest(w, r, body)
+	if !admitted {
+		return
+	}
+	h.forward(w, r, envelope.Request, envelope.Contract, requestID)
+}
+
+// admitRunRequest 校验 Run Header、幂等键并占用一次并发准入。
+func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body []byte) (string, bool) {
+	runID := strings.TrimSpace(r.Header.Get("X-Limen-Run-ID"))
+	if runID == "" {
+		return "", true
+	}
+	if h.runs == nil {
+		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
+		return "", false
+	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required for a Run request", "invalid_request_error", "idempotency_key_required")
+		return "", false
+	}
+	hash, err := run.HashRequest(runTenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return "", false
+	}
+	requestID, err := run.NewID("request")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to create request", "api_error", "request_id_error")
+		return "", false
+	}
+	item, err := h.runs.AdmitRequest(r.Context(), runTenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
+	if err != nil {
+		writeRunAdmissionError(w, err, item.ID)
+		return "", false
+	}
+	w.Header().Set("X-Limen-Request-ID", item.ID)
+	return item.ID, true
 }
 
 // models 鉴权并返回当前可用的 OpenAI 兼容模型列表。
@@ -174,7 +463,37 @@ func validBearerToken(header, expected string) bool {
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract) {
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runRequestID string) {
+	settledRunRequest := false
+	attemptID := ""
+	attemptFinished := false
+	defer func() {
+		if attemptID != "" && !attemptFinished {
+			_ = h.runs.FinishAttempt(r.Context(), runTenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
+		}
+		if runRequestID != "" && !settledRunRequest {
+			_ = h.settleRunRequest(r.Context(), runRequestID, nil)
+		}
+	}()
+	if runRequestID != "" {
+		plan, err := h.router.DryRun(request, contract)
+		if err != nil {
+			returnRunDecisionError(w, err)
+			return
+		}
+		if len(plan.Targets) > 0 {
+			first := plan.Targets[0].Target
+			attemptID, err = run.NewID("attempt")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "unable to create attempt", "api_error", "attempt_id_error")
+				return
+			}
+			if err := h.runs.RecordAttemptStarted(r.Context(), runTenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "run store unavailable", "api_error", "run_store_error")
+				return
+			}
+		}
+	}
 	result, err := h.router.ChatWithContract(r.Context(), request, contract)
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
@@ -233,7 +552,88 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	} else {
 		_, _ = io.Copy(w, response.Body)
 	}
+	if runRequestID != "" {
+		if err := h.runs.FinishAttempt(r.Context(), runTenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
+			writePendingSettlementTrailers(w)
+			return
+		}
+		attemptFinished = true
+		settledRunRequest = true
+		if err := h.settleRunRequest(r.Context(), runRequestID, result.Settlement); err != nil {
+			writePendingSettlementTrailers(w)
+			return
+		}
+	}
 	writeSettlementTrailers(w, result.Settlement)
+}
+
+// returnRunDecisionError 将计划生成失败映射为安全 API 错误。
+func returnRunDecisionError(w http.ResponseWriter, err error) {
+	var noEligible *gateway.NoEligibleTargetError
+	if errors.As(err, &noEligible) {
+		writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_eligible_target")
+		return
+	}
+	var decisionErr *decision.DecisionError
+	if errors.As(err, &decisionErr) {
+		writeError(w, http.StatusBadRequest, "invalid capability contract", "invalid_request_error", decisionErr.Code)
+		return
+	}
+	writeError(w, http.StatusBadRequest, "unable to generate decision plan", "invalid_request_error", "decision_error")
+}
+
+// settleRunRequest 将响应结束后的成本提交到 Run Service。
+func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settlement *gateway.Settlement) error {
+	if h.runs == nil {
+		return errors.New("run service unavailable")
+	}
+	if _, err := h.runs.BeginSettlement(ctx, runTenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
+		return err
+	}
+	var costNanoUSD *int64
+	if settlement != nil {
+		summary := settlement.Summary()
+		if summary.CostAvailable {
+			value := summary.CostNanoUSD
+			costNanoUSD = &value
+		}
+	}
+	_, err := h.runs.SettleRequest(ctx, runTenantID, requestID, costNanoUSD, time.Now().UTC())
+	return err
+}
+
+// writePendingSettlementTrailers 标记数据库未完成的异步结算。
+func writePendingSettlementTrailers(w http.ResponseWriter) {
+	w.Header().Set("X-Limen-Settlement-Status", "pending")
+}
+
+// writeRunAdmissionError 将 Run 准入错误映射为稳定 API 错误。
+func writeRunAdmissionError(w http.ResponseWriter, err error, requestID string) {
+	if requestID != "" {
+		w.Header().Set("X-Limen-Request-ID", requestID)
+	}
+	switch {
+	case errors.Is(err, run.ErrRequestInProgress):
+		writeError(w, http.StatusConflict, "request is in progress", "invalid_request_error", "request_in_progress")
+	case errors.Is(err, run.ErrRequestAlreadyProcessed):
+		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
+	case errors.Is(err, run.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
+	case errors.Is(err, run.ErrRunDeadlineExceeded):
+		writeError(w, http.StatusRequestTimeout, "Run deadline exceeded", "invalid_request_error", "run_deadline_exceeded")
+	case errors.Is(err, run.ErrRunBudgetExhausted):
+		writeError(w, http.StatusTooManyRequests, "Run soft budget exhausted", "invalid_request_error", "run_soft_budget_exhausted")
+	case errors.Is(err, run.ErrRunConcurrencyExceeded):
+		writeError(w, http.StatusTooManyRequests, "Run concurrency exceeded", "invalid_request_error", "run_concurrency_exceeded")
+	case errors.Is(err, run.ErrAccountingSuspended):
+		writeError(w, http.StatusConflict, "Run accounting is suspended", "invalid_request_error", "run_accounting_suspended")
+	case errors.Is(err, run.ErrRunNotActive):
+		writeError(w, http.StatusConflict, "Run is not active", "invalid_request_error", "run_not_active")
+	case errors.Is(err, run.ErrResourceNotFound):
+		writeError(w, http.StatusNotFound, "Run resource not found", "invalid_request_error", "run_resource_not_found")
+	default:
+		writeError(w, http.StatusBadGateway, "Run store unavailable", "api_error", "run_store_error")
+	}
 }
 
 // declareSettlementTrailers 在响应开始前声明请求结束后可用的结算字段。
