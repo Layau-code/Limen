@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestObservedJSONResponseExtractsUsage(t *testing.T) {
@@ -49,4 +50,40 @@ func TestObservedSSEExtractsUsageWithoutChangingBody(t *testing.T) {
 	if !usage.Complete || usage.InputTokens != 4 || usage.OutputTokens != 6 {
 		t.Fatalf("usage = %+v", usage)
 	}
+}
+
+func TestObservedSSEReturnsFirstChunkBeforeStreamEnds(t *testing.T) {
+	source := &delayedReader{first: []byte("data: first\n\n"), closed: make(chan struct{})}
+	body := observeOpenAISSE(source, newUsageRecorder())
+	started := time.Now()
+	buffer := make([]byte, 32)
+	count, err := body.Read(buffer)
+	if err != nil || string(buffer[:count]) != "data: first\n\n" || time.Since(started) > 100*time.Millisecond {
+		t.Fatalf("first read count=%d err=%v data=%q", count, err, buffer[:count])
+	}
+	_ = body.Close()
+}
+
+type delayedReader struct {
+	first  []byte
+	closed chan struct{}
+}
+
+func (reader *delayedReader) Read(buffer []byte) (int, error) {
+	if len(reader.first) > 0 {
+		count := copy(buffer, reader.first)
+		reader.first = reader.first[count:]
+		return count, nil
+	}
+	<-reader.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (reader *delayedReader) Close() error {
+	select {
+	case <-reader.closed:
+	default:
+		close(reader.closed)
+	}
+	return nil
 }
