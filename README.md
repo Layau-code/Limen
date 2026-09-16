@@ -13,6 +13,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 每次 Dry Run 和真实 Chat 都生成不含 Prompt/Response 的 Decision Journal，返回 `decision_id`，可 Explain 查询并 Replay 校验 `plan_hash`。
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
 - 受治理 Chat 的 Request 在准入后持有 30 秒租约并每 10 秒续租；实例崩溃后不重放 Provider 调用，而是标记未知费用并暂停 Run，避免重复计费。
+- Run 取消会写入租户隔离的取消事件；在途 Chat 每秒轮询事件并取消 Provider Context，跨实例取消不依赖单进程内存。
 - 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；当前使用环境变量静态 Key，便于后续替换为数据库 Key Store。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
@@ -100,7 +101,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和差异码。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；决策记录只包含模型名、能力契约、候选目标和哈希，不保存 Prompt 或 Response。
 
-启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。
+启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。取消 Run 后，在途请求会收到 `409 run_cancelled`，并由租户取消事件传播到其他实例。
 
 成功或最终上游响应会带有以下安全摘要：
 

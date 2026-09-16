@@ -15,6 +15,8 @@ type MemoryStore struct {
 	idem      map[string]string
 	ledger    map[string]int64
 	mutations map[string]mutationResult
+	events    []CancellationEvent
+	eventID   int64
 	sequence  uint64
 }
 
@@ -146,6 +148,10 @@ func (store *MemoryStore) mutateRun(tenantID, runID, operation string, mutation 
 		return item, err
 	}
 	store.runs[runKey] = item
+	if operation == "cancel_run" {
+		store.eventID++
+		store.events = append(store.events, CancellationEvent{ID: store.eventID, TenantID: tenantID, RunID: runID, CreatedAt: time.Now().UTC()})
+	}
 	store.mutations[key] = mutationResult{hash: mutation.Hash, run: item}
 	return item, nil
 }
@@ -401,6 +407,26 @@ func (store *MemoryStore) RecoverExpiredRequests(tenantID string, now time.Time,
 // RecoverExpired 保留内存 Store 的全租户测试辅助入口。
 func (store *MemoryStore) RecoverExpired(now time.Time) []Request {
 	return store.RecoverExpiredRequests("", now, 0)
+}
+
+// PollCancellationEvents 返回指定租户在游标之后的取消事件。
+func (store *MemoryStore) PollCancellationEvents(tenantID string, afterID int64, limit int) ([]CancellationEvent, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	events := make([]CancellationEvent, 0, limit)
+	for _, event := range store.events {
+		if event.TenantID != tenantID || event.ID <= afterID {
+			continue
+		}
+		events = append(events, event)
+		if len(events) >= limit {
+			break
+		}
+	}
+	return events, nil
 }
 
 func resourceKey(tenantID, resourceID string) string {

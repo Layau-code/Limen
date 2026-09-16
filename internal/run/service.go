@@ -74,6 +74,11 @@ func (service *MemoryService) RecoverExpiredRequests(_ context.Context, tenantID
 	return service.store.RecoverExpiredRequests(tenantID, now, limit), nil
 }
 
+// PollCancellationEvents 读取内存 Store 中指定租户的新取消事件。
+func (service *MemoryService) PollCancellationEvents(_ context.Context, tenantID string, afterID int64, limit int) ([]CancellationEvent, error) {
+	return service.store.PollCancellationEvents(tenantID, afterID, limit)
+}
+
 // BeginSettlement 将内存 Request 标记为待结算。
 func (service *MemoryService) BeginSettlement(_ context.Context, tenantID, requestID string, now time.Time) (Request, error) {
 	return service.store.BeginSettlement(tenantID, requestID, now)
@@ -105,3 +110,4 @@ func (service *MemoryService) GetRequest(_ context.Context, tenantID, requestID 
 var _ Service = (*MemoryService)(nil)
 var _ ControlService = (*MemoryService)(nil)
 var _ LeaseService = (*MemoryService)(nil)
+var _ CancellationService = (*MemoryService)(nil)

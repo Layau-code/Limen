@@ -75,7 +75,7 @@ HTTP Principal/Scope 鉴权与解析
 
 当前 HTTP Run 控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，只有显式 `LIMEN_RUN_STORE=memory` 才启用单机开发实现，避免把进程内状态误当成生产账本。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；后续多租户 API Key Store 会替换这两个单租户环境变量。
 
-受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。主进程同时扫描当前租户的过期租约；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本，不重放 Provider 请求。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
+受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。主进程同时扫描当前租户的过期租约；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本，不重放 Provider 请求。取消 Run 时在同一事务写入租户隔离取消事件，在途 Chat 每秒轮询事件并取消自己的 Provider Context，取消传播不依赖进程内状态。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
 开发控制面已覆盖 Run 创建、查询、完成、取消和 Request 结算查询；控制变更使用 `Idempotency-Key` 与规范请求哈希。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。生产接入前仍需完成跨实例取消和数据库集成测试。
 

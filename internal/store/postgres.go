@@ -135,6 +135,11 @@ func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID,
 	if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=$3, complete_requested=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2`, tenantID, runID, state, completeRequested, now); err != nil {
 		return run.Run{}, err
 	}
+	if operation == "cancel" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cancellation_events (tenant_id,run_id,created_at) VALUES ($1,$2,$3)`, tenantID, runID, now); err != nil {
+			return run.Run{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO control_operations (tenant_id,endpoint,idempotency_key,request_hash,resource_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, tenantID, endpoint, mutation.Key, mutation.Hash, runID, now); err != nil {
 		return run.Run{}, err
 	}
@@ -142,6 +147,47 @@ func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID,
 		return run.Run{}, err
 	}
 	return store.GetRun(ctx, tenantID, runID)
+}
+
+// PollCancellationEvents 返回指定租户在游标之后的 PostgreSQL 取消事件。
+func (store *PostgresStore) PollCancellationEvents(ctx context.Context, tenantID string, afterID int64, limit int) ([]run.CancellationEvent, error) {
+	if store.db == nil {
+		return nil, errors.New("postgres database is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,tenant_id,run_id,created_at FROM cancellation_events WHERE tenant_id=$1 AND id>$2 ORDER BY id LIMIT $3`, tenantID, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []run.CancellationEvent
+	for rows.Next() {
+		var event run.CancellationEvent
+		if err := rows.Scan(&event.ID, &event.TenantID, &event.RunID, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 // AdmitRequest 在 Run 行锁内完成状态检查、幂等判断和并发计数。
@@ -640,3 +686,4 @@ var _ Store = (*PostgresStore)(nil)
 var _ run.Service = (*PostgresStore)(nil)
 var _ run.ControlService = (*PostgresStore)(nil)
 var _ run.LeaseService = (*PostgresStore)(nil)
+var _ run.CancellationService = (*PostgresStore)(nil)

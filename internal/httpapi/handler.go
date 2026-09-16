@@ -511,12 +511,62 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
+	stopCancellation := h.watchRunCancellation(r, h.requestTenantID(r), strings.TrimSpace(r.Header.Get("X-Limen-Run-ID")))
+	defer stopCancellation()
 	requestID, releaseLease, admitted := h.admitRunRequest(w, r, body)
 	if !admitted {
 		return
 	}
 	defer releaseLease()
 	h.forward(w, r, envelope.Request, envelope.Contract, requestID)
+}
+
+// watchRunCancellation 轮询租户取消事件，并取消当前请求的 Provider Context。
+func (h *Handler) watchRunCancellation(r *http.Request, tenantID, runID string) func() {
+	if runID == "" || h.runs == nil {
+		return func() {}
+	}
+	service, ok := h.runs.(run.CancellationService)
+	if !ok {
+		return func() {}
+	}
+	requestContext, cancel := context.WithCancelCause(r.Context())
+	*r = *r.WithContext(requestContext)
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		var afterID int64
+		for {
+			select {
+			case <-ticker.C:
+				events, err := service.PollCancellationEvents(requestContext, tenantID, afterID, 100)
+				if err != nil {
+					continue
+				}
+				for _, event := range events {
+					if event.ID > afterID {
+						afterID = event.ID
+					}
+					if event.RunID == runID {
+						cancel(run.ErrRunCancelled)
+						return
+					}
+				}
+			case <-stop:
+				return
+			case <-requestContext.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(stop)
+			cancel(nil)
+		})
+	}
 }
 
 // admitRunRequest 校验 Run Header、幂等键并占用一次并发准入。
@@ -701,11 +751,13 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	attemptID := ""
 	attemptFinished := false
 	defer func() {
+		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+		defer cancelSettlement()
 		if attemptID != "" && !attemptFinished {
-			_ = h.runs.FinishAttempt(r.Context(), tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
+			_ = h.runs.FinishAttempt(settlementContext, tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
 		}
 		if runRequestID != "" && !settledRunRequest {
-			_ = h.settleRunRequest(r.Context(), runRequestID, nil)
+			_ = h.settleRunRequest(settlementContext, runRequestID, nil)
 		}
 	}()
 	if runRequestID != "" {
@@ -770,7 +822,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 		status := http.StatusBadGateway
 		code := "provider_error"
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(context.Cause(r.Context()), run.ErrRunCancelled) {
+			status = http.StatusConflict
+			code = "run_cancelled"
+		} else if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 			code = "provider_timeout"
 		} else if errors.Is(err, context.Canceled) {
@@ -798,13 +853,15 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		_, _ = io.Copy(w, response.Body)
 	}
 	if runRequestID != "" {
-		if err := h.runs.FinishAttempt(r.Context(), tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
+		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+		defer cancelSettlement()
+		if err := h.runs.FinishAttempt(settlementContext, tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
 			writePendingSettlementTrailers(w)
 			return
 		}
 		attemptFinished = true
 		settledRunRequest = true
-		if err := h.settleRunRequest(r.Context(), runRequestID, result.Settlement); err != nil {
+		if err := h.settleRunRequest(settlementContext, runRequestID, result.Settlement); err != nil {
 			writePendingSettlementTrailers(w)
 			return
 		}

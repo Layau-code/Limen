@@ -67,6 +67,8 @@ var (
 	ErrLeaseUnavailable = errors.New("request lease unavailable")
 	// ErrLeaseLost 表示当前执行实例已失去请求租约。
 	ErrLeaseLost = errors.New("request lease lost")
+	// ErrRunCancelled 表示请求因 Run 取消而提前结束。
+	ErrRunCancelled = errors.New("run cancelled")
 )
 
 const (
@@ -109,6 +111,19 @@ type LeaseService interface {
 	RenewRequestLease(context.Context, string, string, string, time.Time, time.Duration) (Request, error)
 	ReleaseRequestLease(context.Context, string, string, string, time.Time) error
 	RecoverExpiredRequests(context.Context, string, time.Time, int) ([]Request, error)
+}
+
+// CancellationService 定义跨执行实例传播 Run 取消事件的边界。
+type CancellationService interface {
+	PollCancellationEvents(context.Context, string, int64, int) ([]CancellationEvent, error)
+}
+
+// CancellationEvent 是一次租户内 Run 取消通知。
+type CancellationEvent struct {
+	ID        int64     `json:"id"`
+	TenantID  string    `json:"tenant_id"`
+	RunID     string    `json:"run_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ControlService 在 Service 之上提供带幂等控制操作的 Run 生命周期管理。

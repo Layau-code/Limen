@@ -177,6 +177,62 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	}
 }
 
+func TestRunCancellationStopsInFlightChat(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	upstream := testProviderFunc(func(ctx context.Context, _ provider.ChatRequest) (provider.Response, error) {
+		close(started)
+		<-ctx.Done()
+		return provider.Response{}, ctx.Err()
+	})
+	runs := run.NewMemoryService(nil)
+	router := gateway.NewRouter(map[string]provider.Provider{"openai": upstream}, registry, gateway.Policy{RequestTimeout: 5 * time.Second, AttemptTimeout: 5 * time.Second, FailureThreshold: 3, Cooldown: time.Second})
+	handler := NewWithRuns("limen-secret", router, runs)
+	create := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
+	create.Header.Set("Authorization", "Bearer limen-secret")
+	create.Header.Set("Idempotency-Key", "cancel-run-create")
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, create)
+	var created run.Run
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer limen-secret")
+	chat.Header.Set("X-Limen-Run-ID", created.ID)
+	chat.Header.Set("Idempotency-Key", "cancel-request")
+	chatResponse := httptest.NewRecorder()
+	finished := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(chatResponse, chat)
+		close(finished)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider did not start")
+	}
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/v1/limen/runs/"+created.ID+"/cancel", strings.NewReader(`{}`))
+	cancelRequest.Header.Set("Authorization", "Bearer limen-secret")
+	cancelRequest.Header.Set("Idempotency-Key", "cancel-run")
+	cancelResponse := httptest.NewRecorder()
+	handler.ServeHTTP(cancelResponse, cancelRequest)
+	if cancelResponse.Code != http.StatusOK {
+		t.Fatalf("cancel = %d body=%s", cancelResponse.Code, cancelResponse.Body.String())
+	}
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("in-flight chat was not cancelled")
+	}
+	if chatResponse.Code != http.StatusConflict || !strings.Contains(chatResponse.Body.String(), "run_cancelled") {
+		t.Fatalf("chat = %d body=%s", chatResponse.Code, chatResponse.Body.String())
+	}
+}
+
 func TestDryRunReturnsPlanWithoutProviderCall(t *testing.T) {
 	called := false
 	registry, err := gateway.NewModelRegistry([]gateway.Model{
