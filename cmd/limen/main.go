@@ -13,6 +13,7 @@ import (
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
+	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 	"github.com/huz/limen/internal/store"
@@ -75,6 +76,7 @@ func main() {
 	})
 	health := httpapi.NewHealth()
 	var runService run.Service
+	var decisionStore journal.Store = journal.NewMemoryStore()
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
 		database, err = sql.Open("postgres", cfg.DatabaseURL)
@@ -103,13 +105,14 @@ func main() {
 		}
 		cancelMigration()
 		runService = store.NewPostgresStore(database)
+		decisionStore = store.NewDecisionJournal(database)
 	}
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantScopes(cfg.LimenAPIKey, router, health, cfg.TenantID, cfg.Scopes, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantScopesAndJournal(cfg.LimenAPIKey, router, health, cfg.TenantID, cfg.Scopes, decisionStore, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,

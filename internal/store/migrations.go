@@ -10,6 +10,9 @@ import (
 //go:embed migrations/001_run_ledger.sql
 var runLedgerMigration string
 
+//go:embed migrations/002_decision_journal.sql
+var decisionJournalMigration string
+
 // ApplyMigrations 以版本表和单事务方式执行内置 PostgreSQL 迁移。
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	if db == nil {
@@ -23,18 +26,26 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS limen_schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 		return err
 	}
-	var applied bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM limen_schema_migrations WHERE version=$1)`, "001_run_ledger").Scan(&applied); err != nil {
-		return err
-	}
-	if applied {
-		return tx.Commit()
-	}
-	if _, err := tx.ExecContext(ctx, runLedgerMigration); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO limen_schema_migrations (version, applied_at) VALUES ($1, CURRENT_TIMESTAMP)`, "001_run_ledger"); err != nil {
-		return err
+	for _, migration := range []struct {
+		version string
+		source  string
+	}{
+		{version: "001_run_ledger", source: runLedgerMigration},
+		{version: "002_decision_journal", source: decisionJournalMigration},
+	} {
+		var applied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM limen_schema_migrations WHERE version=$1)`, migration.version).Scan(&applied); err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, migration.source); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO limen_schema_migrations (version, applied_at) VALUES ($1, CURRENT_TIMESTAMP)`, migration.version); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
