@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,6 +59,9 @@ func TestLoadModelsFileRequiresOnlyUsedProviderKey(t *testing.T) {
 	}
 	if len(cfg.Models) != 1 || cfg.Models[0].ID != "fast-model" || len(cfg.Models[0].Targets) != 1 {
 		t.Fatalf("models = %+v", cfg.Models)
+	}
+	if !strings.HasPrefix(cfg.ConfigVersion, "sha256:") {
+		t.Fatalf("config version = %q", cfg.ConfigVersion)
 	}
 	if cfg.Models[0].Targets[0].UpstreamModel != "gpt-test" {
 		t.Fatalf("target = %+v", cfg.Models[0].Targets[0])

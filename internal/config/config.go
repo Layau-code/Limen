@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +56,7 @@ type Config struct {
 	Models           []Model
 	Routing          Routing
 	RequestTimeout   time.Duration
+	ConfigVersion    string
 }
 
 type modelsDocument struct {
@@ -82,6 +85,7 @@ func Load() (Config, error) {
 			Cooldown:         30 * time.Second,
 		},
 		RequestTimeout: 60 * time.Second,
+		ConfigVersion:  "compatibility-v1",
 	}
 	if cfg.LimenAPIKey == "" {
 		return Config{}, errors.New("LIMEN_API_KEY is required")
@@ -101,12 +105,13 @@ func Load() (Config, error) {
 	}
 	modelsFile := os.Getenv("LIMEN_MODELS_FILE")
 	if modelsFile != "" {
-		models, routing, err := loadModels(modelsFile, cfg.Routing)
+		models, routing, version, err := loadModels(modelsFile, cfg.Routing)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.Models = models
 		cfg.Routing = routing
+		cfg.ConfigVersion = version
 	}
 	if err := validateProviderKeys(cfg); err != nil {
 		return Config{}, err
@@ -115,18 +120,18 @@ func Load() (Config, error) {
 }
 
 // loadModels 读取并校验模型注册表与路由策略。
-func loadModels(path string, defaults Routing) ([]Model, Routing, error) {
+func loadModels(path string, defaults Routing) ([]Model, Routing, string, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		return nil, Routing{}, fmt.Errorf("read models file: %w", err)
+		return nil, Routing{}, "", fmt.Errorf("read models file: %w", err)
 	}
 	document, err := decodeModelsDocument(contents)
 	if err != nil {
-		return nil, Routing{}, err
+		return nil, Routing{}, "", err
 	}
 	routing, err := parseRouting(document.Routing, defaults)
 	if err != nil {
-		return nil, Routing{}, err
+		return nil, Routing{}, "", err
 	}
 	for modelIndex := range document.Models {
 		for targetIndex := range document.Models[modelIndex].Targets {
@@ -134,9 +139,23 @@ func loadModels(path string, defaults Routing) ([]Model, Routing, error) {
 		}
 	}
 	if err := validateModels(document.Models); err != nil {
-		return nil, Routing{}, err
+		return nil, Routing{}, "", err
 	}
-	return document.Models, routing, nil
+	version, err := hashModelsDocument(document)
+	if err != nil {
+		return nil, Routing{}, "", err
+	}
+	return document.Models, routing, version, nil
+}
+
+// hashModelsDocument 为规范化后的模型配置生成不可变版本标识。
+func hashModelsDocument(document modelsDocument) (string, error) {
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("encode models version: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // decodeModelsDocument 严格解析模型文件并拒绝未知字段和多个 JSON 值。

@@ -47,10 +47,59 @@ func NewWithHealth(apiKey string, router *gateway.Router, health *Health) http.H
 	handler := &Handler{apiKey: apiKey, router: router}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
+	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
 	mux.HandleFunc("GET /v1/models", handler.models)
 	mux.HandleFunc("GET /livez", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
 	return mux
+}
+
+// dryRun 鉴权并返回不访问 Provider 的确定性决策计划。
+func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(w, r) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "invalid_body")
+		return
+	}
+	envelope, err := parseChatRequestEnvelope(body)
+	if err != nil {
+		code := "invalid_chat_request"
+		var unsupported *unsupportedFieldError
+		if errors.As(err, &unsupported) {
+			code = "unsupported_field"
+		}
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", code)
+		return
+	}
+	if h.router == nil {
+		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
+		return
+	}
+	plan, err := h.router.DryRun(envelope.Request, envelope.Contract)
+	if err != nil {
+		var unsupported *gateway.UnsupportedModelError
+		if errors.As(err, &unsupported) {
+			writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "unsupported_model")
+			return
+		}
+		var noEligible *gateway.NoEligibleTargetError
+		if errors.As(err, &noEligible) {
+			writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_eligible_target")
+			return
+		}
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) {
+			writeError(w, http.StatusBadRequest, "invalid capability contract", "invalid_request_error", decisionErr.Code)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "unable to generate decision plan", "invalid_request_error", "decision_error")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(plan)
 }
 
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
