@@ -121,6 +121,11 @@ func isPrivateAddress(ip net.IP) bool {
 }
 
 func normalizeEndpoint(raw string) string {
+	if !strings.Contains(raw, "://") {
+		if host, port, err := net.SplitHostPort(raw); err == nil {
+			return strings.ToLower(host) + ":" + port
+		}
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return strings.ToLower(raw)
