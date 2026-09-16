@@ -816,6 +816,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		decisionID = id
 		return recordErr
 	})
+	if result.Plan.ConfigVersion != "" {
+		w.Header().Set("X-Limen-Config-Version", result.Plan.ConfigVersion)
+	}
 	if decisionID != "" {
 		w.Header().Set("X-Limen-Decision-ID", decisionID)
 	}

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,19 @@ func TestSafeDialerRejectsPrivateAddresses(t *testing.T) {
 	}, false)
 	if _, err := dial(context.Background(), "tcp", "provider.example:443"); err == nil {
 		t.Fatal("expected private address rejection")
+	}
+}
+
+func TestEndpointIDIncludesProviderPath(t *testing.T) {
+	first, err := EndpointIDForBaseURL("https://api.example/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := EndpointIDForBaseURL("https://api.example/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || !strings.HasPrefix(first, "endpoint:") {
+		t.Fatalf("endpoint ids = %q, %q", first, second)
 	}
 }

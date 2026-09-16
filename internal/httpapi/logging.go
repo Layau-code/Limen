@@ -27,7 +27,7 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 			"status", recorder.status,
 			"duration_ms", time.Since(started).Milliseconds(),
 		}
-		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route", "X-Limen-Decision-ID"} {
+		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route", "X-Limen-Decision-ID", "X-Limen-Config-Version"} {
 			if value := recorder.Header().Get(name); value != "" {
 				attrs = append(attrs, logHeaderKey(name), value)
 			}

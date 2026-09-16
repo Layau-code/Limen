@@ -54,21 +54,22 @@ func DefaultRouting() Routing {
 
 // Config 保存 Limen 启动后使用的不可变配置。
 type Config struct {
-	Addr             string
-	LimenAPIKey      string
-	APIKeyStore      string
-	APIKeyHMACSecret string
-	OpenAIAPIKey     string
-	OpenAIBaseURL    string
-	AnthropicAPIKey  string
-	AnthropicBaseURL string
-	Models           []Model
-	Routing          Routing
-	RequestTimeout   time.Duration
-	ConfigVersion    string
-	DatabaseURL      string
-	TenantID         string
-	Scopes           []auth.Scope
+	Addr                string
+	LimenAPIKey         string
+	APIKeyStore         string
+	APIKeyHMACSecret    string
+	CredentialMasterKey string
+	OpenAIAPIKey        string
+	OpenAIBaseURL       string
+	AnthropicAPIKey     string
+	AnthropicBaseURL    string
+	Models              []Model
+	Routing             Routing
+	RequestTimeout      time.Duration
+	ConfigVersion       string
+	DatabaseURL         string
+	TenantID            string
+	Scopes              []auth.Scope
 }
 
 type modelsDocument struct {
@@ -85,20 +86,21 @@ type routingDocument struct {
 // Load 从环境变量读取配置，并校验启动所需的密钥。
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:             valueOrDefault("LIMEN_ADDR", ":8080"),
-		LimenAPIKey:      os.Getenv("LIMEN_API_KEY"),
-		APIKeyStore:      valueOrDefault("LIMEN_API_KEY_STORE", "static"),
-		APIKeyHMACSecret: os.Getenv("LIMEN_API_KEY_HMAC_SECRET"),
-		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
-		OpenAIBaseURL:    valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicBaseURL: valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-		Routing:          DefaultRouting(),
-		RequestTimeout:   60 * time.Second,
-		ConfigVersion:    "compatibility-v1",
-		DatabaseURL:      os.Getenv("LIMEN_DATABASE_URL"),
-		TenantID:         valueOrDefault("LIMEN_TENANT_ID", "local"),
-		Scopes:           auth.AllScopes(),
+		Addr:                valueOrDefault("LIMEN_ADDR", ":8080"),
+		LimenAPIKey:         os.Getenv("LIMEN_API_KEY"),
+		APIKeyStore:         valueOrDefault("LIMEN_API_KEY_STORE", "static"),
+		APIKeyHMACSecret:    os.Getenv("LIMEN_API_KEY_HMAC_SECRET"),
+		CredentialMasterKey: os.Getenv("LIMEN_CREDENTIAL_MASTER_KEY"),
+		OpenAIAPIKey:        os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:       valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		AnthropicAPIKey:     os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicBaseURL:    valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		Routing:             DefaultRouting(),
+		RequestTimeout:      60 * time.Second,
+		ConfigVersion:       "compatibility-v1",
+		DatabaseURL:         os.Getenv("LIMEN_DATABASE_URL"),
+		TenantID:            valueOrDefault("LIMEN_TENANT_ID", "local"),
+		Scopes:              auth.AllScopes(),
 	}
 	if cfg.APIKeyStore != "static" && cfg.APIKeyStore != "postgres" {
 		return Config{}, errors.New("LIMEN_API_KEY_STORE must be static or postgres")

@@ -14,6 +14,7 @@ import (
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/configstore"
+	"github.com/huz/limen/internal/credentialstore"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/httpapi"
 	"github.com/huz/limen/internal/journal"
@@ -43,6 +44,16 @@ func main() {
 	anthropicEndpoint, err := provider.EndpointForBaseURL(cfg.AnthropicBaseURL)
 	if err != nil {
 		logger.Error("invalid Anthropic endpoint", "error", err)
+		os.Exit(1)
+	}
+	openAIEndpointID, err := provider.EndpointIDForBaseURL(cfg.OpenAIBaseURL)
+	if err != nil {
+		logger.Error("invalid OpenAI endpoint binding", "error", err)
+		os.Exit(1)
+	}
+	anthropicEndpointID, err := provider.EndpointIDForBaseURL(cfg.AnthropicBaseURL)
+	if err != nil {
+		logger.Error("invalid Anthropic endpoint binding", "error", err)
 		os.Exit(1)
 	}
 	client := provider.NewSecureHTTPClient(provider.HTTPClientOptions{AllowedEndpoints: []string{openAIEndpoint, anthropicEndpoint}})
@@ -136,6 +147,27 @@ func main() {
 		if cfg.APIKeyStore == "postgres" {
 			authenticator = store.NewAPIKeyAuthenticator(database, cfg.APIKeyHMACSecret)
 		}
+		if cfg.CredentialMasterKey != "" {
+			masterKey, keyErr := credentialstore.ParseMasterKey(cfg.CredentialMasterKey)
+			if keyErr != nil {
+				logger.Error("invalid credential master key", "error", keyErr)
+				os.Exit(1)
+			}
+			vault, vaultErr := credentialstore.NewVault(masterKey)
+			if vaultErr != nil {
+				logger.Error("invalid credential vault", "error", vaultErr)
+				os.Exit(1)
+			}
+			credentials := store.NewPostgresCredentialStore(database, vault)
+			if err := loadStoredCredential(context.Background(), credentials, cfg.TenantID, "openai", openAIEndpointID, openAI); err != nil {
+				logger.Error("OpenAI credential load failed", "error", err)
+				os.Exit(1)
+			}
+			if err := loadStoredCredential(context.Background(), credentials, cfg.TenantID, "anthropic", anthropicEndpointID, anthropic); err != nil {
+				logger.Error("Anthropic credential load failed", "error", err)
+				os.Exit(1)
+			}
+		}
 	}
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
@@ -170,6 +202,30 @@ func main() {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+type apiKeySetter interface {
+	SetAPIKey(string) error
+}
+
+// loadStoredCredential 读取加密凭据并在内存中短暂交给对应 Provider。
+func loadStoredCredential(ctx context.Context, store credentialstore.Store, tenantID, providerName, endpointID string, setter apiKeySetter) error {
+	secret, _, err := store.Resolve(ctx, tenantID, providerName, endpointID)
+	if errors.Is(err, credentialstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for index := range secret {
+			secret[index] = 0
+		}
+	}()
+	if err := setter.SetAPIKey(string(secret)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // recoverExpiredRequests 定期回收崩溃实例遗留的请求租约，不重放上游调用。
