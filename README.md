@@ -11,6 +11,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 逻辑模型名与真实上游模型解耦，配置只在启动时加载并保持只读。
 - `model=auto` 可根据能力契约、数据等级、质量和成本策略生成可解释的执行计划。
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
+- 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；当前使用环境变量静态 Key，便于后续替换为数据库 Key Store。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
@@ -113,7 +114,9 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 
 ## 配置与运维
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）和 `LIMEN_TENANT_ID`（默认 `local`）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt 和 Ledger；启动日志不会输出 DSN。未配置数据库时，设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_SCOPES`（可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）和 `LIMEN_TENANT_ID`（默认 `local`）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt 和 Ledger；启动日志不会输出 DSN。未配置数据库时，设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面。
+
+静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；Dry Run 需要 `inference,decisions:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 

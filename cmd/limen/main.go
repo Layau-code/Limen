@@ -109,7 +109,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenant(cfg.LimenAPIKey, router, health, cfg.TenantID, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantScopes(cfg.LimenAPIKey, router, health, cfg.TenantID, cfg.Scopes, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
