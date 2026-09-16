@@ -63,6 +63,28 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderRotatesAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "rotated" {
+			t.Fatalf("x-api-key = %q", r.Header.Get("x-api-key"))
+		}
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+	client := NewAnthropic(server.Client(), server.URL, "initial")
+	if err := client.SetAPIKey("rotated"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Chat(context.Background(), ChatRequest{Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if err := client.SetAPIKey(""); err == nil {
+		t.Fatal("expected empty key rejection")
+	}
+}
+
 func TestAnthropicChatConvertsStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

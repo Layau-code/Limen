@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -62,6 +64,17 @@ func EndpointForBaseURL(raw string) (string, error) {
 		return "", errors.New("invalid provider base URL")
 	}
 	return normalizeEndpoint(parsed.Scheme + "://" + parsed.Host), nil
+}
+
+// EndpointIDForBaseURL 为完整 Provider 地址生成稳定的非敏感绑定标识。
+func EndpointIDForBaseURL(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
+		return "", errors.New("invalid provider base URL")
+	}
+	canonical := strings.TrimRight(parsed.Scheme+"://"+parsed.Host+"/"+strings.Trim(parsed.Path, "/"), "/")
+	sum := sha256.Sum256([]byte(canonical))
+	return "endpoint:" + hex.EncodeToString(sum[:12]), nil
 }
 
 type secureRoundTripper struct {

@@ -41,6 +41,28 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderRotatesAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer rotated" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	client := NewOpenAI(server.Client(), server.URL, "initial")
+	if err := client.SetAPIKey("rotated"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Chat(context.Background(), ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if err := client.SetAPIKey(" "); err == nil {
+		t.Fatal("expected empty key rejection")
+	}
+}
+
 func TestOpenAIChatCollectsUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":2}}`)

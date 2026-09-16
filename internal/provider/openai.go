@@ -4,15 +4,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // OpenAIProvider 将统一聊天请求转发到 OpenAI Chat Completions API。
 type OpenAIProvider struct {
 	client *http.Client
 	url    string
+	mu     sync.RWMutex
 	apiKey string
+}
+
+// SetAPIKey 原子替换 OpenAI 凭据，供受控轮换流程使用。
+func (p *OpenAIProvider) SetAPIKey(apiKey string) error {
+	if strings.TrimSpace(apiKey) == "" {
+		return errors.New("OpenAI API key must not be empty")
+	}
+	p.mu.Lock()
+	p.apiKey = apiKey
+	p.mu.Unlock()
+	return nil
 }
 
 // NewOpenAI 创建 OpenAI Provider。
@@ -47,7 +61,10 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 	if err != nil {
 		return Response{}, &RequestError{Operation: "build OpenAI request", Err: err}
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+p.apiKey)
+	p.mu.RLock()
+	apiKey := p.apiKey
+	p.mu.RUnlock()
+	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := p.client.Do(httpRequest)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +20,19 @@ const anthropicVersion = "2023-06-01"
 type AnthropicProvider struct {
 	client *http.Client
 	url    string
+	mu     sync.RWMutex
 	apiKey string
+}
+
+// SetAPIKey 原子替换 Anthropic 凭据，供受控轮换流程使用。
+func (p *AnthropicProvider) SetAPIKey(apiKey string) error {
+	if strings.TrimSpace(apiKey) == "" {
+		return errors.New("Anthropic API key must not be empty")
+	}
+	p.mu.Lock()
+	p.apiKey = apiKey
+	p.mu.Unlock()
+	return nil
 }
 
 // NewAnthropic 创建 Anthropic Provider。
@@ -44,7 +57,10 @@ func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (R
 	if err != nil {
 		return Response{}, &RequestError{Operation: "build Anthropic request", Err: err}
 	}
-	httpRequest.Header.Set("x-api-key", p.apiKey)
+	p.mu.RLock()
+	apiKey := p.apiKey
+	p.mu.RUnlock()
+	httpRequest.Header.Set("x-api-key", apiKey)
 	httpRequest.Header.Set("anthropic-version", anthropicVersion)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := p.client.Do(httpRequest)

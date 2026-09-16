@@ -78,3 +78,16 @@ func TestConfigVersionMigrationDefinesTenantIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderCredentialMigrationStoresCiphertextAndEndpointBinding(t *testing.T) {
+	contents, err := os.ReadFile("migrations/005_provider_credentials.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE provider_credentials", "ciphertext BYTEA NOT NULL", "endpoint_id TEXT NOT NULL", "CREATE UNIQUE INDEX provider_credentials_one_active", "ENABLE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
