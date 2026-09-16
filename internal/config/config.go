@@ -51,6 +51,8 @@ type Routing struct {
 type Config struct {
 	Addr             string
 	LimenAPIKey      string
+	APIKeyStore      string
+	APIKeyHMACSecret string
 	OpenAIAPIKey     string
 	OpenAIBaseURL    string
 	AnthropicAPIKey  string
@@ -80,6 +82,8 @@ func Load() (Config, error) {
 	cfg := Config{
 		Addr:             valueOrDefault("LIMEN_ADDR", ":8080"),
 		LimenAPIKey:      os.Getenv("LIMEN_API_KEY"),
+		APIKeyStore:      valueOrDefault("LIMEN_API_KEY_STORE", "static"),
+		APIKeyHMACSecret: os.Getenv("LIMEN_API_KEY_HMAC_SECRET"),
 		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:    valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
@@ -95,13 +99,22 @@ func Load() (Config, error) {
 		TenantID:       valueOrDefault("LIMEN_TENANT_ID", "local"),
 		Scopes:         auth.AllScopes(),
 	}
-	if cfg.LimenAPIKey == "" {
-		return Config{}, errors.New("LIMEN_API_KEY is required")
+	if cfg.APIKeyStore != "static" && cfg.APIKeyStore != "postgres" {
+		return Config{}, errors.New("LIMEN_API_KEY_STORE must be static or postgres")
+	}
+	if cfg.APIKeyStore == "static" && cfg.LimenAPIKey == "" {
+		return Config{}, errors.New("LIMEN_API_KEY is required in static key mode")
+	}
+	if cfg.APIKeyStore == "postgres" && strings.TrimSpace(cfg.APIKeyHMACSecret) == "" {
+		return Config{}, errors.New("LIMEN_API_KEY_HMAC_SECRET is required in postgres key mode")
 	}
 	if cfg.DatabaseURL != "" {
 		if err := validateDatabaseURL(cfg.DatabaseURL); err != nil {
 			return Config{}, err
 		}
+	}
+	if cfg.APIKeyStore == "postgres" && cfg.DatabaseURL == "" {
+		return Config{}, errors.New("LIMEN_DATABASE_URL is required in postgres key mode")
 	}
 	if strings.TrimSpace(cfg.TenantID) == "" {
 		return Config{}, errors.New("LIMEN_TENANT_ID must not be empty")

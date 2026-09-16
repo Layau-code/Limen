@@ -488,7 +488,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前单机实现使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和可选的 `LIMEN_API_SCOPES` 装配一个静态 Principal；默认 Scope 为兼容开发的完整集合。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径。数据库 Key Store、Key 摘要持久化和多租户 Key 管理仍按后续阶段实现。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。
 
 | 接口 | 所需 Scope |
 | --- | --- |

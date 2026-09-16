@@ -52,3 +52,16 @@ func TestDecisionJournalMigrationDefinesTenantIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIKeyMigrationStoresOnlyDigestAndScopes(t *testing.T) {
+	contents, err := os.ReadFile("migrations/003_api_keys.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE api_keys", "digest BYTEA NOT NULL", "scopes JSONB NOT NULL", "tenant_id TEXT NOT NULL"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}

@@ -19,7 +19,7 @@ HTTP Principal/Scope 鉴权与解析
 ```
 
 - `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
-- `internal/auth`：常量时间校验静态 Bearer Key，生成不携带原始 Key 的租户 Principal，并集中定义 Scope。
+- `internal/auth`：常量时间校验静态 Bearer Key，生成不携带原始 Key 的租户 Principal，并集中定义 Scope；`internal/store` 提供 PostgreSQL HMAC Key Store 实现。
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码。
@@ -73,7 +73,7 @@ HTTP Principal/Scope 鉴权与解析
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
-当前 HTTP Run 控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，只有显式 `LIMEN_RUN_STORE=memory` 才启用单机开发实现，避免把进程内状态误当成生产账本。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；后续多租户 API Key Store 会替换这两个单租户环境变量。
+当前 HTTP Run 控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移。未配置数据库时，只有显式 `LIMEN_RUN_STORE=memory` 才启用单机开发实现，避免把进程内状态误当成生产账本。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户和 Scope 从数据库 Key 记录生成。
 
 受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。主进程同时扫描当前租户的过期租约；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本，不重放 Provider 请求。取消 Run 时在同一事务写入租户隔离取消事件，在途 Chat 每秒轮询事件并取消自己的 Provider Context，取消传播不依赖进程内状态。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
