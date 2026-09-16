@@ -186,6 +186,39 @@ func TestChatPublishesCompleteSettlementTrailers(t *testing.T) {
 	}
 }
 
+func TestChatTrailersReachHTTPClientAfterEOF(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":2}}`)
+	}))
+	defer providerServer.Close()
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{
+		Provider:      "openai",
+		UpstreamModel: "gpt-test",
+		Pricing:       &cost.Pricing{InputPerMillionNanoUSD: 1_000_000, OutputPerMillionNanoUSD: 1_000_000},
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiServer := httptest.NewServer(New("limen-secret", newTestRouter(provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret"), nil, registry)))
+	defer apiServer.Close()
+	request, err := http.NewRequest(http.MethodPost, apiServer.URL+"/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response, err := apiServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Trailer.Get("X-Limen-Settlement-Status") != "complete" || response.Trailer.Get("X-Limen-Total-Tokens") != "3" {
+		t.Fatalf("trailers = %v", response.Trailer)
+	}
+}
+
 func TestChatKeepsSettlementMetadataOutOfSSEBody(t *testing.T) {
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
