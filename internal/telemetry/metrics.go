@@ -10,6 +10,8 @@ import (
 	"sync"
 )
 
+const maxSeriesPerMetric = 1024
+
 // Metric 是允许写入的固定指标名称。
 type Metric string
 
@@ -65,6 +67,9 @@ func (registry *Registry) Inc(metric Metric, labels Labels) {
 	}
 	if item := series[key]; item != nil {
 		item.value++
+		return
+	}
+	if len(series) >= maxSeriesPerMetric {
 		return
 	}
 	series[key] = &sample{labels: labels, value: 1}
