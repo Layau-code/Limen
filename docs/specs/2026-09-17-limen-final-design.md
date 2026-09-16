@@ -166,7 +166,7 @@ Attempt 在访问 Provider 前持久化为 started，执行结束后变为 succe
 
 ### 4.5 跨实例取消
 
-取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。持有本地 Context 的实例立即取消；每个实例同时每秒轮询自己租约中的请求，弥补通知丢失和断线。
+取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。当前基础实现使用租户隔离事件表和每秒轮询，持有本地 Context 的实例立即取消；后续可增加 LISTEN/NOTIFY 降低延迟，轮询继续作为断线兜底。
 
 目标是在正常数据库连接下 p95 两秒内把跨实例取消传播到 Provider。即使通知丢失，轮询和截止时间也必须最终停止请求。
 
@@ -624,7 +624,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger 和三十秒租约恢复；当前实现已完成前述租约获取、续租、释放和未知费用恢复，跨实例取消、Provider 凭据加密与端点绑定和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复和轮询取消，LISTEN/NOTIFY、Provider 凭据加密与端点绑定和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 

@@ -19,6 +19,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。
+- Run 取消必须在状态变更事务内写入租户隔离取消事件；执行中的 Chat 通过事件轮询取消 Context，不能只修改当前进程的内存映射。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
@@ -61,6 +62,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、Attempt 边界、已知成本结算和未知成本 `pending`。
 - Run 租约测试必须覆盖同一请求的抢占拒绝、续租、响应后释放、过期恢复、`abandoned/pending` 和 Run `suspended_accounting`，并用竞态测试验证后台恢复。
+- 跨实例取消测试必须覆盖取消事件租户隔离、在途 Context 取消、`run_cancelled` 错误和重复取消幂等。
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
