@@ -55,11 +55,28 @@ func TestObservedSSEExtractsUsageWithoutChangingBody(t *testing.T) {
 func TestObservedSSEReturnsFirstChunkBeforeStreamEnds(t *testing.T) {
 	source := &delayedReader{first: []byte("data: first\n\n"), closed: make(chan struct{})}
 	body := observeOpenAISSE(source, newUsageRecorder())
-	started := time.Now()
-	buffer := make([]byte, 32)
-	count, err := body.Read(buffer)
-	if err != nil || string(buffer[:count]) != "data: first\n\n" || time.Since(started) > 100*time.Millisecond {
-		t.Fatalf("first read count=%d err=%v data=%q", count, err, buffer[:count])
+	result := make(chan struct {
+		count int
+		err   error
+		data  string
+	}, 1)
+	go func() {
+		buffer := make([]byte, 32)
+		count, err := body.Read(buffer)
+		result <- struct {
+			count int
+			err   error
+			data  string
+		}{count: count, err: err, data: string(buffer[:count])}
+	}()
+	select {
+	case got := <-result:
+		if got.err != nil || got.data != "data: first\n\n" {
+			t.Fatalf("first read count=%d err=%v data=%q", got.count, got.err, got.data)
+		}
+	case <-time.After(time.Second):
+		_ = body.Close()
+		t.Fatal("first SSE chunk waited for stream completion")
 	}
 	_ = body.Close()
 }
