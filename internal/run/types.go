@@ -71,6 +71,12 @@ type AdmissionInput struct {
 	Now     time.Time
 }
 
+// Mutation 保存控制面幂等键和规范请求哈希。
+type Mutation struct {
+	Key  string
+	Hash string
+}
+
 // Service 定义 Run Coordinator 对 HTTP 和 Gateway 暴露的统一状态接口。
 type Service interface {
 	CreateRun(context.Context, string, Run) error
@@ -80,6 +86,14 @@ type Service interface {
 	SettleRequest(context.Context, string, string, *int64, time.Time) (Request, error)
 	GetRun(context.Context, string, string) (Run, error)
 	GetRequest(context.Context, string, string) (Request, error)
+}
+
+// ControlService 在 Service 之上提供带幂等控制操作的 Run 生命周期管理。
+type ControlService interface {
+	Service
+	CreateRunWithMutation(context.Context, string, Run, Mutation) (Run, error)
+	CompleteRunWithMutation(context.Context, string, string, Mutation) (Run, error)
+	CancelRunWithMutation(context.Context, string, string, Mutation) (Run, error)
 }
 
 // Run 保存一次 Agent 工作流的预算、截止时间和并发快照。

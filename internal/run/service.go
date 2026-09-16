@@ -24,6 +24,21 @@ func (service *MemoryService) CreateRun(_ context.Context, tenantID string, item
 	return service.store.CreateRun(item)
 }
 
+// CreateRunWithMutation 幂等地创建一个控制面 Run。
+func (service *MemoryService) CreateRunWithMutation(_ context.Context, tenantID string, item Run, mutation Mutation) (Run, error) {
+	return service.store.CreateRunWithMutation(tenantID, item, mutation)
+}
+
+// CompleteRunWithMutation 幂等地结束一个 Run。
+func (service *MemoryService) CompleteRunWithMutation(_ context.Context, tenantID, runID string, mutation Mutation) (Run, error) {
+	return service.store.CompleteRunWithMutation(tenantID, runID, mutation)
+}
+
+// CancelRunWithMutation 幂等地取消一个 Run。
+func (service *MemoryService) CancelRunWithMutation(_ context.Context, tenantID, runID string, mutation Mutation) (Run, error) {
+	return service.store.CancelRunWithMutation(tenantID, runID, mutation)
+}
+
 // AdmitRequest 执行内存 Run 的幂等准入。
 func (service *MemoryService) AdmitRequest(_ context.Context, tenantID, runID string, input AdmissionInput) (Request, error) {
 	return service.store.AdmitRequest(tenantID, runID, input.Request, input.Now)
@@ -63,3 +78,4 @@ func (service *MemoryService) GetRequest(_ context.Context, tenantID, requestID 
 }
 
 var _ Service = (*MemoryService)(nil)
+var _ ControlService = (*MemoryService)(nil)
