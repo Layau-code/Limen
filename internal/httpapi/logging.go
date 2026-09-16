@@ -29,11 +29,20 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route"} {
 			if value := recorder.Header().Get(name); value != "" {
-				attrs = append(attrs, strings.ToLower(strings.TrimPrefix(name, "X-Limen-")), value)
+				attrs = append(attrs, logHeaderKey(name), value)
+			}
+		}
+		for _, name := range settlementTrailerNames {
+			if value := recorder.Header().Get(name); value != "" {
+				attrs = append(attrs, logHeaderKey(name), value)
 			}
 		}
 		logger.Info("request completed", attrs...)
 	})
+}
+
+func logHeaderKey(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(name, "X-Limen-")), "-", "_")
 }
 
 type statusRecorder struct {

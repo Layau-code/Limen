@@ -11,11 +11,20 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
 )
 
 const maxRequestBytes = 4 << 20
+
+var settlementTrailerNames = []string{
+	"X-Limen-Settlement-Status",
+	"X-Limen-Input-Tokens",
+	"X-Limen-Output-Tokens",
+	"X-Limen-Total-Tokens",
+	"X-Limen-Cost-USD",
+}
 
 type Handler struct {
 	apiKey string
@@ -151,12 +160,38 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	if response.ContentType != "" {
 		w.Header().Set("Content-Type", response.ContentType)
 	}
+	declareSettlementTrailers(w)
 	w.WriteHeader(response.StatusCode)
 	if strings.HasPrefix(response.ContentType, "text/event-stream") {
 		relayStream(w, response.Body)
+	} else {
+		_, _ = io.Copy(w, response.Body)
+	}
+	writeSettlementTrailers(w, result.Settlement)
+}
+
+// declareSettlementTrailers 在响应开始前声明请求结束后可用的结算字段。
+func declareSettlementTrailers(w http.ResponseWriter) {
+	w.Header().Set("Trailer", strings.Join(settlementTrailerNames, ", "))
+}
+
+// writeSettlementTrailers 在响应体转发完成后发布结算快照。
+func writeSettlementTrailers(w http.ResponseWriter, settlement *gateway.Settlement) {
+	if settlement == nil {
+		w.Header().Set("X-Limen-Settlement-Status", string(gateway.SettlementUnavailable))
 		return
 	}
-	_, _ = io.Copy(w, response.Body)
+	summary := settlement.Summary()
+	w.Header().Set("X-Limen-Settlement-Status", string(summary.Status))
+	if summary.Status == gateway.SettlementUnavailable {
+		return
+	}
+	w.Header().Set("X-Limen-Input-Tokens", strconv.FormatInt(summary.InputTokens, 10))
+	w.Header().Set("X-Limen-Output-Tokens", strconv.FormatInt(summary.OutputTokens, 10))
+	w.Header().Set("X-Limen-Total-Tokens", strconv.FormatInt(summary.TotalTokens, 10))
+	if summary.CostAvailable {
+		w.Header().Set("X-Limen-Cost-USD", cost.FormatUSD(summary.CostNanoUSD))
+	}
 }
 
 // writeRouteHeaders 暴露不含模型、密钥和正文的路由摘要。

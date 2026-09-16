@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
 )
@@ -157,6 +158,72 @@ func TestChatRelaysProviderResponse(t *testing.T) {
 
 	if response.Code != http.StatusCreated || response.Body.String() != `{"id":"chat-1"}` {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestChatPublishesCompleteSettlementTrailers(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chat-1","usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+	}))
+	defer providerServer.Close()
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{
+		Provider:      "openai",
+		UpstreamModel: "gpt-test",
+		Pricing:       &cost.Pricing{InputPerMillionNanoUSD: 1_000_000, OutputPerMillionNanoUSD: 2_000_000},
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret"), nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Header().Get("X-Limen-Settlement-Status") != "complete" || response.Header().Get("X-Limen-Input-Tokens") != "10" || response.Header().Get("X-Limen-Output-Tokens") != "5" || response.Header().Get("X-Limen-Total-Tokens") != "15" || response.Header().Get("X-Limen-Cost-USD") != "0.00000002" {
+		t.Fatalf("settlement headers = %v", response.Header())
+	}
+}
+
+func TestChatKeepsSettlementMetadataOutOfSSEBody(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n")
+	}))
+	defer providerServer.Close()
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1_000_000, OutputPerMillionNanoUSD: 1_000_000}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret"), nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if strings.Contains(response.Body.String(), "X-Limen-") || response.Header().Get("X-Limen-Settlement-Status") != "complete" {
+		t.Fatalf("stream=%q headers=%v", response.Body.String(), response.Header())
+	}
+}
+
+func TestChatLeavesCostEmptyWithoutPricing(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer providerServer.Close()
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret"), nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Header().Get("X-Limen-Settlement-Status") != "partial" || response.Header().Get("X-Limen-Cost-USD") != "" {
+		t.Fatalf("settlement headers = %v", response.Header())
 	}
 }
 

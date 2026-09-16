@@ -44,3 +44,24 @@ func TestLoggingIncludesSafeRouteFields(t *testing.T) {
 		}
 	}
 }
+
+func TestLoggingIncludesSettlementFields(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Limen-Settlement-Status", "complete")
+		w.Header().Set("X-Limen-Input-Tokens", "10")
+		w.Header().Set("X-Limen-Cost-USD", "0.00002")
+		w.WriteHeader(http.StatusOK)
+	})
+	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	logged := output.String()
+	for _, value := range []string{"complete", "10", "0.00002"} {
+		if !strings.Contains(logged, value) {
+			t.Fatalf("missing settlement value %q in %s", value, logged)
+		}
+	}
+	if !strings.Contains(logged, `"settlement_status":"complete"`) {
+		t.Fatalf("missing structured settlement key in %s", logged)
+	}
+}
