@@ -159,12 +159,24 @@ func main() {
 				os.Exit(1)
 			}
 			credentials := store.NewPostgresCredentialStore(database, vault)
-			if err := loadStoredCredential(context.Background(), credentials, cfg.TenantID, "openai", openAIEndpointID, openAI); err != nil {
-				logger.Error("OpenAI credential load failed", "error", err)
+			credentialContext, cancelCredentials := context.WithTimeout(context.Background(), 3*time.Second)
+			openAIStored, openAIError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "openai", openAIEndpointID, openAI)
+			anthropicStored, anthropicError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "anthropic", anthropicEndpointID, anthropic)
+			cancelCredentials()
+			if openAIError != nil {
+				logger.Error("OpenAI credential load failed", "error", openAIError)
 				os.Exit(1)
 			}
-			if err := loadStoredCredential(context.Background(), credentials, cfg.TenantID, "anthropic", anthropicEndpointID, anthropic); err != nil {
-				logger.Error("Anthropic credential load failed", "error", err)
+			if anthropicError != nil {
+				logger.Error("Anthropic credential load failed", "error", anthropicError)
+				os.Exit(1)
+			}
+			if registryUsesProvider(registry, "openai") && cfg.OpenAIAPIKey == "" && !openAIStored {
+				logger.Error("OpenAI credential is missing")
+				os.Exit(1)
+			}
+			if registryUsesProvider(registry, "anthropic") && cfg.AnthropicAPIKey == "" && !anthropicStored {
+				logger.Error("Anthropic credential is missing")
 				os.Exit(1)
 			}
 		}
@@ -209,13 +221,13 @@ type apiKeySetter interface {
 }
 
 // loadStoredCredential 读取加密凭据并在内存中短暂交给对应 Provider。
-func loadStoredCredential(ctx context.Context, store credentialstore.Store, tenantID, providerName, endpointID string, setter apiKeySetter) error {
+func loadStoredCredential(ctx context.Context, store credentialstore.Store, tenantID, providerName, endpointID string, setter apiKeySetter) (bool, error) {
 	secret, _, err := store.Resolve(ctx, tenantID, providerName, endpointID)
 	if errors.Is(err, credentialstore.ErrNotFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
 		for index := range secret {
@@ -223,9 +235,21 @@ func loadStoredCredential(ctx context.Context, store credentialstore.Store, tena
 		}
 	}()
 	if err := setter.SetAPIKey(string(secret)); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
+}
+
+// registryUsesProvider 判断当前有效目录是否引用指定 Provider。
+func registryUsesProvider(registry *gateway.ModelRegistry, providerName string) bool {
+	for _, model := range registry.List() {
+		for _, target := range model.Targets {
+			if target.Provider == providerName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // recoverExpiredRequests 定期回收崩溃实例遗留的请求租约，不重放上游调用。

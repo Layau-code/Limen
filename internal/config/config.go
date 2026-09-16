@@ -409,6 +409,7 @@ func validateDatabaseURL(raw string) error {
 
 // validateProviderKeys 校验兼容模式或模型注册表实际使用的 Provider 密钥。
 func validateProviderKeys(cfg Config) error {
+	storedCredentialsAvailable := cfg.DatabaseURL != "" && strings.TrimSpace(cfg.CredentialMasterKey) != ""
 	usesOpenAI := len(cfg.Models) == 0
 	usesAnthropic := len(cfg.Models) == 0
 	for _, model := range cfg.Models {
@@ -417,10 +418,10 @@ func validateProviderKeys(cfg Config) error {
 			usesAnthropic = usesAnthropic || target.Provider == "anthropic"
 		}
 	}
-	if usesOpenAI && cfg.OpenAIAPIKey == "" {
+	if usesOpenAI && cfg.OpenAIAPIKey == "" && !storedCredentialsAvailable {
 		return errors.New("OPENAI_API_KEY is required by the model registry")
 	}
-	if usesAnthropic && cfg.AnthropicAPIKey == "" {
+	if usesAnthropic && cfg.AnthropicAPIKey == "" && !storedCredentialsAvailable {
 		return errors.New("ANTHROPIC_API_KEY is required by the model registry")
 	}
 	return nil
