@@ -10,6 +10,7 @@ Limen 面向 Agent 提供统一的 OpenAI 兼容入口。客户端使用稳定�
 HTTP Principal/Scope 鉴权与解析
   → ModelRegistry 提供只读能力目录
   → Decision Engine 生成带哈希的 ExecutionPlan
+  → Decision Journal 保存输入与计划
   → Router Executor 创建总预算并检查 Circuit Breaker
   → Provider 执行一次协议转换和上游调用
   → 路由摘要响应头
@@ -22,6 +23,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码。
+- `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：将请求快照交给 Decision Engine，替换上游模型，管理共享总预算、单次超时、Fallback 和计划执行。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
@@ -66,6 +68,8 @@ HTTP Principal/Scope 鉴权与解析
 `Router` 是计划执行器而不是策略实现者：它在执行前再次原子获取熔断探测权，若 Half-Open 被并发请求占用则记录 `skipped_due_to_race` 并继续下一个计划目标。Provider 只负责协议转换，不读取能力契约或模型映射。
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
+
+当前 Decision Journal 在真实 Chat 调用 Provider 前写入决策快照，并通过 `X-Limen-Decision-ID` 暴露不含正文的标识。`GET /v1/limen/decisions/{decision_id}` 返回输入与计划，`POST /v1/limen/decisions/{decision_id}/replay` 只使用历史输入调用无状态 Decision Engine，对比 `plan_hash`，不访问 Provider 或当前熔断器。
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 

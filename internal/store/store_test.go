@@ -39,3 +39,16 @@ func TestRunLedgerMigrationDefinesTenantIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestDecisionJournalMigrationDefinesTenantIsolation(t *testing.T) {
+	contents, err := os.ReadFile("migrations/002_decision_journal.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE decision_journal", "JSONB NOT NULL", "PRIMARY KEY (tenant_id, decision_id)", "ENABLE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}

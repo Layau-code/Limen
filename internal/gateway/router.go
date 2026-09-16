@@ -37,6 +37,7 @@ type Result struct {
 	Response   provider.Response
 	Decision   Decision
 	Settlement *Settlement
+	Input      decision.Input
 	Plan       decision.ExecutionPlan
 }
 
@@ -96,33 +97,72 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 
 // ChatWithContract 根据能力契约生成计划，再在共享总预算内执行目标。
 func (router *Router) ChatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract) (Result, error) {
-	plan, err := router.plan(request, contract)
+	input, plan, err := router.planWithInput(request, contract)
 	if err != nil {
 		var decisionErr *decision.DecisionError
 		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
-			return Result{Plan: plan}, &NoEligibleTargetError{Plan: plan}
+			return Result{Input: input, Plan: plan}, &NoEligibleTargetError{Plan: plan}
 		}
-		return Result{Plan: plan}, err
+		return Result{Input: input, Plan: plan}, err
 	}
-	return router.executePlan(parent, request, plan)
+	result, err := router.executePlan(parent, request, plan)
+	result.Input = input
+	return result, err
+}
+
+// ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。
+func (router *Router) ChatWithContractHook(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error) (Result, error) {
+	input, plan, err := router.planWithInput(request, contract)
+	if err != nil {
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
+			return Result{Input: input, Plan: plan}, &NoEligibleTargetError{Plan: plan}
+		}
+		return Result{Input: input, Plan: plan}, err
+	}
+	if beforeExecute != nil {
+		if err := beforeExecute(input, plan); err != nil {
+			return Result{Input: input, Plan: plan}, err
+		}
+	}
+	result, err := router.executePlan(parent, request, plan)
+	result.Input = input
+	return result, err
 }
 
 // DryRun 只生成决策计划，不访问 Provider 或改变熔断、结算状态。
 func (router *Router) DryRun(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
-	return router.plan(request, contract)
+	_, plan, err := router.planWithInput(request, contract)
+	return plan, err
+}
+
+// Explain 生成决策输入和执行计划，供审计与 Replay 使用。
+func (router *Router) Explain(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithInput(request, contract)
+}
+
+// Replay 使用历史输入重算计划，不读取当前熔断状态，也不访问 Provider。
+func (router *Router) Replay(input decision.Input) (decision.ExecutionPlan, error) {
+	return router.engine.Decide(input)
 }
 
 // plan 将注册表和熔断器快照组装为确定性的 DecisionInput。
 func (router *Router) plan(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
+	_, plan, err := router.planWithInput(request, contract)
+	return plan, err
+}
+
+// planWithInput 将注册表和熔断器快照组装为可持久化的 DecisionInput。
+func (router *Router) planWithInput(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
 	models := router.registry.List()
 	if request.Model != "auto" {
 		model, found := router.registry.Resolve(request.Model)
 		if !found {
-			return decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
+			return decision.Input{}, decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
 		}
 		models = []Model{model}
 	} else if router.registry.IsCompatibility() {
-		return decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
+		return decision.Input{}, decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
 	}
 	if request.Model == "auto" {
 		contract.Active = true
@@ -150,7 +190,8 @@ func (router *Router) plan(request provider.ChatRequest, contract decision.Contr
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
 		Candidates:        candidates,
 	}
-	return router.engine.Decide(input)
+	plan, err := router.engine.Decide(input)
+	return input, plan, err
 }
 
 // executePlan 按计划顺序执行 Provider，并保留 Fallback、超时和结算语义。

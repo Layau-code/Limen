@@ -11,6 +11,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 启动时严格加载的只读模型注册表；未配置时保留四种前缀兼容模式。
 - 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动时生成稳定 `config_version`，后续 Run 固定引用该版本。
+- `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
 - 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
@@ -57,6 +58,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Decision Engine 测试必须覆盖硬过滤、策略排序、稳定原因码、软预算策略切换、至少 10 个 golden fixture 和重复构造后的哈希一致性。
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
+- Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、Attempt 边界、已知成本结算和未知成本 `pending`。
 - Run 租约测试必须覆盖同一请求的抢占拒绝、续租、响应后释放、过期恢复、`abandoned/pending` 和 Run `suspended_accounting`，并用竞态测试验证后台恢复。
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。

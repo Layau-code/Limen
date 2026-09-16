@@ -510,6 +510,8 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，不重新调用模型或复现运行时 Attempt。
 
+当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并提供 Explain/Replay 接口；配置发布、旧算法注册表和结构化差异字段将在配置控制面阶段继续补齐。
+
 稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、idempotency_conflict、insufficient_scope、config_version_unavailable 和 algorithm_version_unavailable。
 
 | HTTP | 错误码 |

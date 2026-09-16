@@ -148,7 +148,7 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	chat.Header.Set("Idempotency-Key", "request-1")
 	chatResponse := httptest.NewRecorder()
 	handler.ServeHTTP(chatResponse, chat)
-	if chatResponse.Code != http.StatusOK || chatResponse.Header().Get("X-Limen-Request-ID") == "" || chatResponse.Header().Get("X-Limen-Settlement-Status") != "complete" {
+	if chatResponse.Code != http.StatusOK || chatResponse.Header().Get("X-Limen-Request-ID") == "" || chatResponse.Header().Get("X-Limen-Decision-ID") == "" || chatResponse.Header().Get("X-Limen-Settlement-Status") != "complete" {
 		t.Fatalf("chat = %d headers=%v body=%s", chatResponse.Code, chatResponse.Header(), chatResponse.Body.String())
 	}
 	requestID := chatResponse.Header().Get("X-Limen-Request-ID")
@@ -206,6 +206,36 @@ func TestDryRunReturnsPlanWithoutProviderCall(t *testing.T) {
 	}
 	if response.Code != http.StatusOK || plan.PlanHash == "" || len(plan.Targets) != 1 || plan.Targets[0].ModelID != "smart" || called {
 		t.Fatalf("status=%d plan=%+v called=%v", response.Code, plan, called)
+	}
+}
+
+func TestDecisionExplainAndReplay(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(nil, nil, registry))
+	dryRun := httptest.NewRequest(http.MethodPost, "/v1/limen/decisions/dry-run", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	dryRun.Header.Set("Authorization", "Bearer limen-secret")
+	dryResponse := httptest.NewRecorder()
+	handler.ServeHTTP(dryResponse, dryRun)
+	decisionID := dryResponse.Header().Get("X-Limen-Decision-ID")
+	if dryResponse.Code != http.StatusOK || decisionID == "" {
+		t.Fatalf("dry run = %d decision=%q body=%s", dryResponse.Code, decisionID, dryResponse.Body.String())
+	}
+	get := httptest.NewRequest(http.MethodGet, "/v1/limen/decisions/"+decisionID, nil)
+	get.Header.Set("Authorization", "Bearer limen-secret")
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, get)
+	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), decisionID) {
+		t.Fatalf("get decision = %d body=%s", getResponse.Code, getResponse.Body.String())
+	}
+	replay := httptest.NewRequest(http.MethodPost, "/v1/limen/decisions/"+decisionID+"/replay", nil)
+	replay.Header.Set("Authorization", "Bearer limen-secret")
+	replayResponse := httptest.NewRecorder()
+	handler.ServeHTTP(replayResponse, replay)
+	if replayResponse.Code != http.StatusOK || !strings.Contains(replayResponse.Body.String(), `"match":true`) {
+		t.Fatalf("replay = %d body=%s", replayResponse.Code, replayResponse.Body.String())
 	}
 }
 

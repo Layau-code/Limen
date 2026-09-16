@@ -17,11 +17,14 @@ import (
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
+	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 )
 
 const maxRequestBytes = 4 << 20
+
+var errDecisionJournal = errors.New("decision journal unavailable")
 
 var settlementTrailerNames = []string{
 	"X-Limen-Settlement-Status",
@@ -37,6 +40,7 @@ type Handler struct {
 	runs          run.Service
 	tenantID      string
 	leaseOwner    string
+	decisions     journal.Store
 }
 
 const runTenantID = "local"
@@ -70,6 +74,11 @@ func NewWithHealthAndRunsForTenant(apiKey string, router *gateway.Router, health
 
 // NewWithHealthAndRunsForTenantScopes 创建带租户和 Scope 限制的 HTTP 处理器。
 func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, health *Health, tenantID string, scopes []auth.Scope, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenantScopesAndJournal(apiKey, router, health, tenantID, scopes, journal.NewMemoryStore(), runs)
+}
+
+// NewWithHealthAndRunsForTenantScopesAndJournal 创建带决策日志的完整 HTTP 处理器。
+func NewWithHealthAndRunsForTenantScopesAndJournal(apiKey string, router *gateway.Router, health *Health, tenantID string, scopes []auth.Scope, decisions journal.Store, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -77,16 +86,22 @@ func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, 
 	if strings.TrimSpace(tenantID) == "" {
 		tenantID = runTenantID
 	}
+	if decisions == nil {
+		decisions = journal.NewMemoryStore()
+	}
 	handler := &Handler{
 		authenticator: auth.NewStaticAuthenticator(apiKey, tenantID, scopes),
 		router:        router,
 		runs:          runs,
 		tenantID:      tenantID,
 		leaseOwner:    newLeaseOwner(),
+		decisions:     decisions,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
+	mux.HandleFunc("GET /v1/limen/decisions/{decision_id}", handler.getDecision)
+	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
 	mux.HandleFunc("POST /v1/limen/runs", handler.createRun)
 	mux.HandleFunc("GET /v1/limen/runs/{run_id}", handler.getRun)
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/complete", handler.completeRun)
@@ -122,7 +137,7 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
-	plan, err := h.router.DryRun(envelope.Request, envelope.Contract)
+	input, plan, err := h.router.Explain(envelope.Request, envelope.Contract)
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
@@ -142,8 +157,97 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unable to generate decision plan", "invalid_request_error", "decision_error")
 		return
 	}
+	decisionID, err := h.recordDecision(r.Context(), h.requestTenantID(r), input, plan)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "decision journal unavailable", "api_error", "decision_journal_unavailable")
+		return
+	}
+	w.Header().Set("X-Limen-Decision-ID", decisionID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(plan)
+}
+
+// recordDecision 为当前租户保存一次不含敏感正文的决策快照。
+func (h *Handler) recordDecision(ctx context.Context, tenantID string, input decision.Input, plan decision.ExecutionPlan) (string, error) {
+	if h.decisions == nil {
+		return "", errors.New("decision journal is unavailable")
+	}
+	id, err := run.NewID("decision")
+	if err != nil {
+		return "", err
+	}
+	if err := h.decisions.Save(ctx, journal.Record{ID: id, TenantID: tenantID, Input: input, Plan: plan, CreatedAt: time.Now().UTC()}); err != nil {
+		return "", fmt.Errorf("%w: %v", errDecisionJournal, err)
+	}
+	return id, nil
+}
+
+// getDecision 返回当前租户可审计的决策输入和执行计划。
+func (h *Handler) getDecision(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeDecisions) {
+		return
+	}
+	if h.decisions == nil {
+		writeError(w, http.StatusServiceUnavailable, "decision journal unavailable", "api_error", "decision_journal_unavailable")
+		return
+	}
+	record, err := h.decisions.Get(r.Context(), h.requestTenantID(r), r.PathValue("decision_id"))
+	if err != nil {
+		writeDecisionLookupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+// replayDecision 使用历史输入重新计算计划，不访问 Provider 或当前熔断器。
+func (h *Handler) replayDecision(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeDecisions) {
+		return
+	}
+	if h.decisions == nil || h.router == nil {
+		writeError(w, http.StatusServiceUnavailable, "decision replay unavailable", "api_error", "decision_replay_unavailable")
+		return
+	}
+	record, err := h.decisions.Get(r.Context(), h.requestTenantID(r), r.PathValue("decision_id"))
+	if err != nil {
+		writeDecisionLookupError(w, err)
+		return
+	}
+	replay, err := h.router.Replay(record.Input)
+	if err != nil {
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) {
+			writeError(w, http.StatusConflict, "decision algorithm is unavailable", "invalid_request_error", "algorithm_version_unavailable")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "decision replay failed", "api_error", "decision_replay_error")
+		return
+	}
+	differences := comparePlans(record.Plan, replay)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decision_id":   record.ID,
+		"original_plan": record.Plan,
+		"replay_plan":   replay,
+		"match":         len(differences) == 0,
+		"differences":   differences,
+	})
+}
+
+// comparePlans 返回 Replay 与原计划之间的稳定差异码。
+func comparePlans(original, replay decision.ExecutionPlan) []string {
+	if original.PlanHash == replay.PlanHash {
+		return nil
+	}
+	return []string{"plan_hash_mismatch"}
+}
+
+// writeDecisionLookupError 将决策日志查询错误映射为稳定 API 错误。
+func writeDecisionLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, journal.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "decision not found", "invalid_request_error", "decision_not_found")
+		return
+	}
+	writeError(w, http.StatusBadGateway, "decision journal unavailable", "api_error", "decision_journal_unavailable")
 }
 
 type createRunRequest struct {
@@ -623,8 +727,20 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			}
 		}
 	}
-	result, err := h.router.ChatWithContract(r.Context(), request, contract)
+	decisionID := ""
+	result, err := h.router.ChatWithContractHook(r.Context(), request, contract, func(input decision.Input, plan decision.ExecutionPlan) error {
+		id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
+		decisionID = id
+		return recordErr
+	})
+	if decisionID != "" {
+		w.Header().Set("X-Limen-Decision-ID", decisionID)
+	}
 	if err != nil {
+		if errors.Is(err, errDecisionJournal) {
+			writeError(w, http.StatusServiceUnavailable, "decision journal unavailable", "api_error", "decision_journal_unavailable")
+			return
+		}
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
 			writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "unsupported_model")
