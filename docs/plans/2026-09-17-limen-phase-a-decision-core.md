@@ -2,6 +2,8 @@
 
 > **For agentic workers:** 本计划按复选框逐项执行；每个任务完成后运行指定验证并独立提交。
 
+> 状态：已完成（2026-09-17）。目录、决策引擎、能力校验、Plan 执行器、严格 Chat 契约和安全出站 Client 已实现；`make check`、`make build`、`make smoke` 均通过。
+
 **目标：** 在不破坏现有 OpenAI/Anthropic 文本 Chat、SSE、熔断、Fallback、取消和结算行为的前提下，引入能力目录、确定性 Decision Engine、ExecutionPlan 和能力安全 Fallback。
 
 **架构：** 将模型目录从 gateway 注册表职责中独立出来；Decision Engine 只消费带版本的快照并输出有序 ExecutionPlan，Gateway Executor 只执行计划并返回现有 Result/Settlement 所需的报告。阶段 A 不引入 PostgreSQL、Run 持久化、Responses、Tools、Vision 或第三 Provider，但会为后续 Run 保存稳定的输入和计划哈希边界。
