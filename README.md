@@ -9,6 +9,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 ## 项目亮点
 
 - 逻辑模型名与真实上游模型解耦，配置只在启动时加载并保持只读。
+- `model=auto` 可根据能力契约、数据等级、质量和成本策略生成可解释的执行计划。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
@@ -27,13 +28,27 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
     "display_name": "Smart Model",
     "targets": [
       {
+        "id": "openai-primary",
         "provider": "openai",
         "upstream_model": "gpt-5-mini",
+        "capabilities": ["text"],
+        "supports_streaming": true,
+        "quality_tier": 4,
+        "cost_tier": 1,
+        "context_window": 128000,
+        "data_classes": ["public", "internal", "confidential"],
         "pricing": {"input_per_million_usd": "0.250000", "output_per_million_usd": "2.000000"}
       },
       {
+        "id": "anthropic-primary",
         "provider": "anthropic",
         "upstream_model": "claude-sonnet-4-20250514",
+        "capabilities": ["text"],
+        "supports_streaming": true,
+        "quality_tier": 5,
+        "cost_tier": 2,
+        "context_window": 200000,
+        "data_classes": ["public", "internal", "confidential"],
         "pricing": {"input_per_million_usd": "3.000000", "output_per_million_usd": "15.000000"}
       }
     ]
@@ -75,6 +90,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 `GET /v1/models` 与聊天接口共用 Bearer Key 鉴权。配置模式的 `owned_by` 为 `limen`；未配置模型文件时进入兼容模式，支持 `gpt-*`、`o1-*`、`o3-*` 和 `claude-*`，并要求两个 Provider Key。
 
+配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
+
 成功或最终上游响应会带有以下安全摘要：
 
 ```text
@@ -89,7 +106,7 @@ X-Limen-Route: openai:503>anthropic:200
 
 ## 配置与运维
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）和可选的 `LIMEN_HEALTH_URL`。模型文件修改后需重启；只校验注册表实际引用的 Provider Key。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）和可选的 `LIMEN_HEALTH_URL`。生产出站 Client 默认只允许 HTTPS、禁用代理和重定向，并拒绝 loopback、私网、链路本地和云元数据地址。模型文件修改后需重启；只校验注册表实际引用的 Provider Key。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 

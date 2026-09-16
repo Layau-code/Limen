@@ -150,6 +150,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_eligible_target")
 			return
 		}
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) {
+			writeError(w, http.StatusBadRequest, "invalid capability contract", "invalid_request_error", decisionErr.Code)
+			return
+		}
 		status := http.StatusBadGateway
 		code := "provider_error"
 		if errors.Is(err, context.DeadlineExceeded) {

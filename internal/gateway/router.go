@@ -179,7 +179,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
-			return Result{}, &RouteError{Decision: decision, Err: err}
+			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 		}
 		breaker := router.breakers[targetKey(model, target)]
 		if !breaker.allow() {
@@ -196,7 +196,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
-			return Result{}, &RouteError{Decision: decision, Err: err}
+			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 		}
 
 		attempt, cancelAttempt := context.WithTimeout(budget, router.policy.AttemptTimeout)
@@ -209,7 +209,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
-			return Result{}, &ProviderUnavailableError{Name: target.Provider, Decision: decision}
+			return Result{Plan: plan}, &ProviderUnavailableError{Name: target.Provider, Decision: decision}
 		}
 		closePending()
 		upstreamRequest := request
@@ -233,7 +233,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 					if cause == nil {
 						cause = context.Canceled
 					}
-					return Result{}, &RouteError{Decision: decision, Err: cause}
+					return Result{Plan: plan}, &RouteError{Decision: decision, Err: cause}
 				}
 				if hasPendingResponse {
 					return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
@@ -243,7 +243,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				if cause == nil {
 					cause = context.Canceled
 				}
-				return Result{}, &RouteError{Decision: decision, Err: cause}
+				return Result{Plan: plan}, &RouteError{Decision: decision, Err: cause}
 			}
 			var transportError *provider.TransportError
 			if !errors.As(err, &transportError) {
@@ -255,7 +255,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 				breaker.recordNeutral()
 				cancelBudget()
-				return Result{}, &RouteError{Decision: decision, Err: err}
+				return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 			}
 			outcome := "transport_error"
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -289,15 +289,15 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
-			return Result{}, &RouteError{Decision: decision, Err: err}
+			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
 		}
 		return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 	}
 	cancelBudget()
 	if decision.Attempts == 0 {
-		return Result{}, &NoAvailableTargetError{Decision: decision}
+		return Result{Plan: plan}, &NoAvailableTargetError{Decision: decision}
 	}
-	return Result{}, &RouteError{Decision: decision, Err: lastErr}
+	return Result{Plan: plan}, &RouteError{Decision: decision, Err: lastErr}
 }
 
 const maxSettlementDrainBytes = 64 << 10

@@ -70,6 +70,7 @@ type secureRoundTripper struct {
 	allowHTTP bool
 }
 
+// RoundTrip 在连接上游前校验协议和 endpoint allowlist。
 func (transport *secureRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL == nil || request.URL.Hostname() == "" {
 		return nil, errors.New("provider URL has no host")
@@ -85,6 +86,7 @@ func (transport *secureRoundTripper) RoundTrip(request *http.Request) (*http.Res
 	return transport.base.RoundTrip(request)
 }
 
+// safeDialer 解析目标地址并阻止连接到内部网络。
 func safeDialer(lookupIP func(context.Context, string) ([]net.IP, error), allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -116,10 +118,12 @@ func safeDialer(lookupIP func(context.Context, string) ([]net.IP, error), allowP
 	}
 }
 
+// isPrivateAddress 判断 IP 是否属于不应访问的内部或特殊地址范围。
 func isPrivateAddress(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
 }
 
+// normalizeEndpoint 将 URL 或 host:port 规范化为 allowlist 键。
 func normalizeEndpoint(raw string) string {
 	if !strings.Contains(raw, "://") {
 		if host, port, err := net.SplitHostPort(raw); err == nil {

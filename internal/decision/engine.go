@@ -81,6 +81,7 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 	return plan, nil
 }
 
+// validateInput 校验快照版本、契约边界和外部状态枚举。
 func validateInput(input Input) error {
 	if input.SchemaVersion != SchemaVersionV1 {
 		return &DecisionError{Code: "unsupported_decision_schema"}
@@ -121,6 +122,7 @@ func validateInput(input Input) error {
 	return nil
 }
 
+// rejectReason 按固定顺序检查候选目标是否违反硬约束。
 func rejectReason(input Input, candidate Candidate) string {
 	target := candidate.Target
 	if !candidate.Enabled {
@@ -160,6 +162,7 @@ func rejectReason(input Input, candidate Candidate) string {
 	return ""
 }
 
+// effectiveStrategy 根据 Run 软预算快照确定本次排序策略。
 func effectiveStrategy(input Input) (string, []string) {
 	strategy := input.Request.Contract.Strategy
 	if strategy == "" {
@@ -179,6 +182,7 @@ func effectiveStrategy(input Input) (string, []string) {
 	return strategy, nil
 }
 
+// sortCandidates 使用稳定排序生成可解释且可复现的目标顺序。
 func sortCandidates(candidates []Candidate, input Input, strategy string) {
 	useEstimatedCost := hasEstimatedCost(input) && allPriced(candidates)
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -207,10 +211,12 @@ func sortCandidates(candidates []Candidate, input Input, strategy string) {
 	})
 }
 
+// hasEstimatedCost 判断请求是否提供了完整的输入和输出 Token 估算。
 func hasEstimatedCost(input Input) bool {
 	return input.Request.Contract.EstimatedInputTokens > 0 && input.Request.Contract.EstimatedOutputTokens > 0
 }
 
+// allPriced 判断候选目标是否都配置了可计算价格。
 func allPriced(candidates []Candidate) bool {
 	for _, candidate := range candidates {
 		if candidate.Target.Pricing == nil {
@@ -223,6 +229,7 @@ func allPriced(candidates []Candidate) bool {
 	return true
 }
 
+// compareCost 比较两个目标的预计定点成本或配置成本等级。
 func compareCost(left, right Candidate, input Input, useEstimated bool) int {
 	leftCost, rightCost := int64(left.Target.CostTier), int64(right.Target.CostTier)
 	if useEstimated {
@@ -243,6 +250,7 @@ func compareCost(left, right Candidate, input Input, useEstimated bool) int {
 	}
 }
 
+// healthRank 将健康观察映射为稳定排序等级。
 func healthRank(health HealthSnapshot) int {
 	switch health.State {
 	case "half_open":
@@ -252,15 +260,18 @@ func healthRank(health HealthSnapshot) int {
 	}
 }
 
+// percentage 以整数运算计算软预算百分比，避免浮点误差。
 func percentage(value int64, percent int) int64 {
 	quotient, remainder := value/100, value%100
 	return quotient*int64(percent) + remainder*int64(percent)/100
 }
 
+// validStrategy 判断策略是否属于当前版本的受控集合。
 func validStrategy(strategy string) bool {
 	return strategy == StrategyBalanced || strategy == StrategyEconomy
 }
 
+// validDataClass 判断数据等级是否属于当前版本的受控集合。
 func validDataClass(dataClass string) bool {
 	switch dataClass {
 	case "public", "internal", "confidential", "restricted":
@@ -270,6 +281,7 @@ func validDataClass(dataClass string) bool {
 	}
 }
 
+// missingCapability 返回候选目标缺少的第一个必需能力。
 func missingCapability(have, required []string) string {
 	for _, want := range required {
 		if !contains(have, want) {
@@ -279,6 +291,7 @@ func missingCapability(have, required []string) string {
 	return ""
 }
 
+// contains 判断字符串切片是否包含目标值。
 func contains(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
@@ -288,6 +301,7 @@ func contains(values []string, wanted string) bool {
 	return false
 }
 
+// cloneTarget 深复制目标元数据，避免计划和注册表共享可变切片。
 func cloneTarget(target catalog.Target) catalog.Target {
 	target.Capabilities = append([]string(nil), target.Capabilities...)
 	target.DataClasses = append([]string(nil), target.DataClasses...)

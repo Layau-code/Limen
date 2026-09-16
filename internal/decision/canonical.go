@@ -30,6 +30,7 @@ func HashPlan(plan ExecutionPlan) (string, error) {
 	return hashBytes(encoded), nil
 }
 
+// hashBytes 计算规范 JSON 的 SHA-256 内容标识。
 func hashBytes(encoded []byte) string {
 	sum := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(sum[:])

@@ -396,3 +396,18 @@ func TestParseChatRequestExtractsLimenContract(t *testing.T) {
 		t.Fatalf("envelope = %+v", envelope)
 	}
 }
+
+func TestChatRejectsInvalidLimenContract(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(nil, nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}],"limen":{"strategy":"random"}}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "strategy_conflict") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
