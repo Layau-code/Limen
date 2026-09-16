@@ -201,14 +201,21 @@ func (body *observedSSEBody) finishEvent() {
 func setOpenAIUsage(recorder *usageRecorder, body []byte) {
 	var response struct {
 		Usage *struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
+			PromptTokens     *int64 `json:"prompt_tokens"`
+			CompletionTokens *int64 `json:"completion_tokens"`
+			InputTokens      *int64 `json:"input_tokens"`
+			OutputTokens     *int64 `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal(body, &response) != nil || response.Usage == nil {
 		return
 	}
-	recorder.set(response.Usage.PromptTokens, response.Usage.CompletionTokens)
+	if response.Usage.PromptTokens != nil && response.Usage.CompletionTokens != nil {
+		recorder.set(*response.Usage.PromptTokens, *response.Usage.CompletionTokens)
+	}
+	if response.Usage.InputTokens != nil && response.Usage.OutputTokens != nil {
+		recorder.set(*response.Usage.InputTokens, *response.Usage.OutputTokens)
+	}
 }
 
 func bytesTrimSuffixCR(value []byte) []byte {

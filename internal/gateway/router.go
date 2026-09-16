@@ -32,8 +32,9 @@ type Router struct {
 
 // Result 同时返回上游响应和不含业务正文的路由决策。
 type Result struct {
-	Response provider.Response
-	Decision Decision
+	Response   provider.Response
+	Decision   Decision
+	Settlement *Settlement
 }
 
 // Decision 描述一次请求实际经过的安全路由路径。
@@ -93,6 +94,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 	}
 	budget, cancelBudget := context.WithTimeout(parent, router.policy.RequestTimeout)
 	decision := Decision{}
+	settlement := NewSettlement()
 	var lastErr error
 	var pendingResponse provider.Response
 	var pendingCancel context.CancelFunc
@@ -100,6 +102,9 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 	closePending := func() {
 		if !hasPendingResponse {
 			return
+		}
+		if parent.Err() == nil && budget.Err() == nil && pendingResponse.Usage != nil {
+			_, _ = io.CopyN(io.Discard, pendingResponse.Body, maxSettlementDrainBytes+1)
 		}
 		_ = pendingResponse.Body.Close()
 		pendingCancel()
@@ -120,7 +125,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 		if err := budget.Err(); err != nil {
 			breaker.recordNeutral()
 			if hasPendingResponse {
-				return resultWithCancel(pendingResponse, decision, pendingCancel, cancelBudget), nil
+				return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
 			}
 			cancelBudget()
 			return Result{}, &RouteError{Decision: decision, Err: err}
@@ -133,7 +138,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			breaker.recordNeutral()
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "provider_unavailable"})
 			if hasPendingResponse {
-				return resultWithCancel(pendingResponse, decision, pendingCancel, cancelBudget), nil
+				return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
 			}
 			cancelBudget()
 			return Result{}, &ProviderUnavailableError{Name: target.Provider, Decision: decision}
@@ -163,7 +168,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 					return Result{}, &RouteError{Decision: decision, Err: cause}
 				}
 				if hasPendingResponse {
-					return resultWithCancel(pendingResponse, decision, pendingCancel, cancelBudget), nil
+					return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
 				}
 				cancelBudget()
 				cause := firstContextError(parent, budget)
@@ -196,6 +201,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 		if response.Body == nil {
 			response.Body = io.NopCloser(strings.NewReader(""))
 		}
+		settlement.AddAttempt(AttemptSettlement{Provider: target.Provider, UpstreamModel: target.UpstreamModel, StatusCode: response.StatusCode, Pricing: target.Pricing, Usage: response.Usage})
 
 		outcome := strconv.Itoa(response.StatusCode)
 		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
@@ -208,7 +214,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			continue
 		}
 		breaker.recordSuccess()
-		return resultWithCancel(response, decision, cancelAttempt, cancelBudget), nil
+		return resultWithCancel(response, decision, settlement, cancelAttempt, cancelBudget), nil
 	}
 
 	if hasPendingResponse {
@@ -217,7 +223,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			cancelBudget()
 			return Result{}, &RouteError{Decision: decision, Err: err}
 		}
-		return resultWithCancel(pendingResponse, decision, pendingCancel, cancelBudget), nil
+		return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
 	}
 	cancelBudget()
 	if decision.Attempts == 0 {
@@ -225,6 +231,8 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 	}
 	return Result{}, &RouteError{Decision: decision, Err: lastErr}
 }
+
+const maxSettlementDrainBytes = 64 << 10
 
 // Models 返回 Router 当前公开的模型列表。
 func (router *Router) Models() []Model {
@@ -261,13 +269,13 @@ func firstContextError(parent, budget context.Context) error {
 }
 
 // resultWithCancel 将尝试和总预算的释放绑定到响应体关闭。
-func resultWithCancel(response provider.Response, decision Decision, cancels ...context.CancelFunc) Result {
+func resultWithCancel(response provider.Response, decision Decision, settlement *Settlement, cancels ...context.CancelFunc) Result {
 	response.Body = &cancelBody{ReadCloser: response.Body, cancel: func() {
 		for _, cancel := range cancels {
 			cancel()
 		}
 	}}
-	return Result{Response: response, Decision: decision}
+	return Result{Response: response, Decision: decision, Settlement: settlement}
 }
 
 type cancelBody struct {

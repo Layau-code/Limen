@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/huz/limen/internal/cost"
 )
 
 const maxTargetsPerModel = 4
@@ -13,6 +15,7 @@ const maxTargetsPerModel = 4
 type Target struct {
 	Provider      string
 	UpstreamModel string
+	Pricing       *cost.Pricing
 }
 
 // Model 描述客户端可见模型及其有序上游目标。
@@ -111,6 +114,12 @@ func (r *ModelRegistry) List() []Model {
 // cloneModel 深复制模型，避免调用方修改只读注册表。
 func cloneModel(model Model) Model {
 	model.Targets = append([]Target(nil), model.Targets...)
+	for index := range model.Targets {
+		if model.Targets[index].Pricing != nil {
+			pricing := *model.Targets[index].Pricing
+			model.Targets[index].Pricing = &pricing
+		}
+	}
 	return model
 }
 
