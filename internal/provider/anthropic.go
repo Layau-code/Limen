@@ -55,7 +55,8 @@ func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (R
 		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: response.Body}, nil
 	}
 	if request.Stream {
-		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(response.Body)}, nil
+		recorder := newUsageRecorder()
+		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(response.Body, recorder), Usage: recorder}, nil
 	}
 	translated, err := translateAnthropicResponse(response.StatusCode, response.Body)
 	if err != nil {
@@ -140,7 +141,9 @@ func translateAnthropicResponse(status int, source io.ReadCloser) (Response, err
 	if err != nil {
 		return Response{}, fmt.Errorf("encode OpenAI response: %w", err)
 	}
-	return Response{StatusCode: status, ContentType: "application/json", Body: io.NopCloser(bytes.NewReader(body))}, nil
+	recorder := newUsageRecorder()
+	recorder.set(int64(response.Usage.InputTokens), int64(response.Usage.OutputTokens))
+	return Response{StatusCode: status, ContentType: "application/json", Body: io.NopCloser(bytes.NewReader(body)), Usage: recorder}, nil
 }
 
 type anthropicEvent struct {
@@ -148,16 +151,22 @@ type anthropicEvent struct {
 	Message struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
+		Usage struct {
+			InputTokens int64 `json:"input_tokens"`
+		} `json:"usage"`
 	} `json:"message"`
 	Delta struct {
 		Type       string `json:"type"`
 		Text       string `json:"text"`
 		StopReason string `json:"stop_reason"`
 	} `json:"delta"`
+	Usage struct {
+		OutputTokens int64 `json:"output_tokens"`
+	} `json:"usage"`
 }
 
 // translateAnthropicStream 将 Anthropic SSE 事件转换为 OpenAI SSE 事件。
-func translateAnthropicStream(source io.ReadCloser) io.ReadCloser {
+func translateAnthropicStream(source io.ReadCloser, recorder *usageRecorder) io.ReadCloser {
 	reader, writer := io.Pipe()
 	go func() {
 		defer source.Close()
@@ -174,7 +183,7 @@ func translateAnthropicStream(source io.ReadCloser) io.ReadCloser {
 				data = strings.TrimPrefix(line, "data: ")
 			case line == "":
 				if eventName != "" {
-					if err := writeAnthropicEvent(writer, eventName, data); err != nil {
+					if err := writeAnthropicEvent(writer, recorder, eventName, data); err != nil {
 						_ = writer.CloseWithError(err)
 						return
 					}
@@ -211,7 +220,7 @@ func (body *anthropicStreamBody) Close() error {
 }
 
 // writeAnthropicEvent 将一个 Anthropic 事件写成 OpenAI SSE 数据块。
-func writeAnthropicEvent(writer io.Writer, eventName, data string) error {
+func writeAnthropicEvent(writer io.Writer, recorder *usageRecorder, eventName, data string) error {
 	var event anthropicEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return fmt.Errorf("decode Anthropic event: %w", err)
@@ -219,6 +228,7 @@ func writeAnthropicEvent(writer io.Writer, eventName, data string) error {
 	var chunk any
 	switch eventName {
 	case "message_start":
+		recorder.setInput(event.Message.Usage.InputTokens)
 		chunk = map[string]any{"id": event.Message.ID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": event.Message.Model, "choices": []any{map[string]any{"index": 0, "delta": map[string]string{"role": "assistant"}, "finish_reason": nil}}}
 	case "content_block_delta":
 		if event.Delta.Type != "text_delta" {
@@ -226,6 +236,7 @@ func writeAnthropicEvent(writer io.Writer, eventName, data string) error {
 		}
 		chunk = map[string]any{"object": "chat.completion.chunk", "choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": event.Delta.Text}, "finish_reason": nil}}}
 	case "message_delta":
+		recorder.setOutput(event.Usage.OutputTokens)
 		chunk = map[string]any{"object": "chat.completion.chunk", "choices": []any{map[string]any{"index": 0, "delta": map[string]string{}, "finish_reason": anthropicFinishReason(event.Delta.StopReason)}}}
 	case "message_stop":
 		_, err := io.WriteString(writer, "data: [DONE]\n\n")

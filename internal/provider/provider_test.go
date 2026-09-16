@@ -57,14 +57,18 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"chat.completion"`) || !strings.Contains(string(body), `"hello"`) {
 		t.Fatalf("response = %d %s", response.StatusCode, body)
 	}
+	usage := response.Usage.Snapshot()
+	if !usage.Complete || usage.InputTokens != 3 || usage.OutputTokens != 2 {
+		t.Fatalf("usage = %+v", usage)
+	}
 }
 
 func TestAnthropicChatConvertsStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"claude-test\"}}\n\n")
+		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"claude-test\",\"usage\":{\"input_tokens\":4}}}\n\n")
 		_, _ = io.WriteString(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
-		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n")
+		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":6}}\n\n")
 		_, _ = io.WriteString(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 	}))
 	defer server.Close()
@@ -79,6 +83,10 @@ func TestAnthropicChatConvertsStream(t *testing.T) {
 	stream := string(body)
 	if !strings.Contains(stream, `"delta":{"content":"hello"}`) || !strings.Contains(stream, `"finish_reason":"stop"`) || !strings.HasSuffix(stream, "data: [DONE]\n\n") {
 		t.Fatalf("stream = %s", stream)
+	}
+	usage := response.Usage.Snapshot()
+	if !usage.Complete || usage.InputTokens != 4 || usage.OutputTokens != 6 {
+		t.Fatalf("usage = %+v", usage)
 	}
 }
 

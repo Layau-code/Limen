@@ -13,8 +13,10 @@ const (
 )
 
 type usageRecorder struct {
-	mu    sync.RWMutex
-	usage Usage
+	mu        sync.RWMutex
+	usage     Usage
+	inputSet  bool
+	outputSet bool
 }
 
 // newUsageRecorder 创建一次 Provider 调用使用的线程安全用量记录器。
@@ -35,7 +37,35 @@ func (recorder *usageRecorder) set(inputTokens, outputTokens int64) {
 		return
 	}
 	recorder.mu.Lock()
-	recorder.usage = Usage{InputTokens: inputTokens, OutputTokens: outputTokens, Complete: true}
+	recorder.usage.InputTokens = inputTokens
+	recorder.usage.OutputTokens = outputTokens
+	recorder.inputSet = true
+	recorder.outputSet = true
+	recorder.usage.Complete = true
+	recorder.mu.Unlock()
+}
+
+// setInput 写入流式响应已经确认的输入 Token。
+func (recorder *usageRecorder) setInput(inputTokens int64) {
+	if inputTokens < 0 {
+		return
+	}
+	recorder.mu.Lock()
+	recorder.usage.InputTokens = inputTokens
+	recorder.inputSet = true
+	recorder.usage.Complete = recorder.inputSet && recorder.outputSet
+	recorder.mu.Unlock()
+}
+
+// setOutput 写入流式响应已经确认的输出 Token。
+func (recorder *usageRecorder) setOutput(outputTokens int64) {
+	if outputTokens < 0 {
+		return
+	}
+	recorder.mu.Lock()
+	recorder.usage.OutputTokens = outputTokens
+	recorder.outputSet = true
+	recorder.usage.Complete = recorder.inputSet && recorder.outputSet
 	recorder.mu.Unlock()
 }
 

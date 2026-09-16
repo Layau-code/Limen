@@ -29,13 +29,17 @@ func NewOpenAI(client *http.Client, baseURL, apiKey string) *OpenAIProvider {
 
 // Chat 将标准化请求编码为 OpenAI 请求，并返回上游响应正文。
 func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Response, error) {
-	body, err := json.Marshal(openAIRequest{
+	upstreamRequest := openAIRequest{
 		Model:       request.Model,
 		Messages:    request.Messages,
 		MaxTokens:   request.MaxTokens,
 		Temperature: request.Temperature,
 		Stream:      request.Stream,
-	})
+	}
+	if request.Stream {
+		upstreamRequest.StreamOptions = &streamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(upstreamRequest)
 	if err != nil {
 		return Response{}, &RequestError{Operation: "encode OpenAI request", Err: err}
 	}
@@ -49,13 +53,23 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 	if err != nil {
 		return Response{}, &TransportError{Operation: "send OpenAI request", Err: err}
 	}
-	return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: response.Body}, nil
+	recorder := newUsageRecorder()
+	bodyReader := observeJSON(response.Body, recorder)
+	if request.Stream {
+		bodyReader = observeOpenAISSE(response.Body, recorder)
+	}
+	return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: bodyReader, Usage: recorder}, nil
 }
 
 type openAIRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Temperature   *float64       `json:"temperature,omitempty"`
+	Stream        bool           `json:"stream,omitempty"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }

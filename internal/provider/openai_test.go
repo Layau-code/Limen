@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +38,60 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+func TestOpenAIChatCollectsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+	}))
+	defer server.Close()
+
+	client := NewOpenAI(server.Client(), server.URL, "openai-secret")
+	response, err := client.Chat(context.Background(), ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	usage := response.Usage.Snapshot()
+	if !usage.Complete || usage.InputTokens != 3 || usage.OutputTokens != 2 {
+		t.Fatalf("usage = %+v", usage)
+	}
+}
+
+func TestOpenAIStreamRequestsAndCollectsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			StreamOptions struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if !request.StreamOptions.IncludeUsage {
+			t.Error("stream usage option was not enabled")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6}}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client := NewOpenAI(server.Client(), server.URL, "openai-secret")
+	response, err := client.Chat(context.Background(), ChatRequest{Model: "gpt-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	usage := response.Usage.Snapshot()
+	if !usage.Complete || usage.InputTokens != 4 || usage.OutputTokens != 6 {
+		t.Fatalf("usage = %+v", usage)
 	}
 }
 
