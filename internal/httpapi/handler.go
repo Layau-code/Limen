@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/huz/limen/internal/cost"
+	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
 )
@@ -61,16 +63,21 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "invalid_body")
 		return
 	}
-	request, err := parseChatRequest(body)
+	envelope, err := parseChatRequestEnvelope(body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "invalid_chat_request")
+		code := "invalid_chat_request"
+		var unsupported *unsupportedFieldError
+		if errors.As(err, &unsupported) {
+			code = "unsupported_field"
+		}
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", code)
 		return
 	}
 	if h.router == nil {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
-	h.forward(w, r, request)
+	h.forward(w, r, envelope.Request, envelope.Contract)
 }
 
 // models 鉴权并返回当前可用的 OpenAI 兼容模型列表。
@@ -118,8 +125,8 @@ func validBearerToken(header, expected string) bool {
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest) {
-	result, err := h.router.Chat(r.Context(), request)
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract) {
+	result, err := h.router.ChatWithContract(r.Context(), request, contract)
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
@@ -136,6 +143,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		if errors.As(err, &noTarget) {
 			writeRouteHeaders(w, noTarget.Decision)
 			writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_available_target")
+			return
+		}
+		var noEligible *gateway.NoEligibleTargetError
+		if errors.As(err, &noEligible) {
+			writeError(w, http.StatusServiceUnavailable, err.Error(), "api_error", "no_eligible_target")
 			return
 		}
 		status := http.StatusBadGateway
@@ -208,13 +220,27 @@ func writeRouteHeaders(w http.ResponseWriter, decision gateway.Decision) {
 }
 
 type incomingChatRequest struct {
-	Model       string            `json:"model"`
-	Messages    []incomingMessage `json:"messages"`
-	MaxTokens   int               `json:"max_tokens"`
-	Temperature *float64          `json:"temperature"`
-	Stream      bool              `json:"stream"`
-	Tools       json.RawMessage   `json:"tools"`
-	ToolChoice  json.RawMessage   `json:"tool_choice"`
+	Model          string            `json:"model"`
+	Messages       []incomingMessage `json:"messages"`
+	MaxTokens      int               `json:"max_tokens"`
+	Temperature    *float64          `json:"temperature"`
+	Stream         bool              `json:"stream"`
+	Tools          json.RawMessage   `json:"tools"`
+	ToolChoice     json.RawMessage   `json:"tool_choice"`
+	ResponseFormat json.RawMessage   `json:"response_format"`
+	N              *int              `json:"n"`
+	Logprobs       *bool             `json:"logprobs"`
+	Limen          *incomingLimen    `json:"limen"`
+}
+
+type incomingLimen struct {
+	RequiredCapabilities  []string `json:"required_capabilities"`
+	MinimumQualityTier    int      `json:"minimum_quality_tier"`
+	RequiredContextTokens int64    `json:"required_context_tokens"`
+	DataClass             string   `json:"data_class"`
+	EstimatedInputTokens  int64    `json:"estimated_input_tokens"`
+	EstimatedOutputTokens int64    `json:"estimated_output_tokens"`
+	Strategy              string   `json:"strategy"`
 }
 
 type incomingMessage struct {
@@ -237,34 +263,81 @@ type modelResponse struct {
 
 // parseChatRequest 将 OpenAI 请求解析为内部统一请求，并拒绝暂不支持的内容。
 func parseChatRequest(body []byte) (provider.ChatRequest, error) {
+	envelope, err := parseChatRequestEnvelope(body)
+	if err != nil {
+		return provider.ChatRequest{}, err
+	}
+	return envelope.Request, nil
+}
+
+type parsedChatRequest struct {
+	Request  provider.ChatRequest
+	Contract decision.Contract
+}
+
+type unsupportedFieldError struct {
+	Field string
+}
+
+// Error 返回明确指出暂不支持字段的请求错误。
+func (err *unsupportedFieldError) Error() string {
+	return err.Field + " is not supported"
+}
+
+// parseChatRequestEnvelope 严格解析请求并提取 Limen 能力契约。
+func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 	var incoming incomingChatRequest
-	if err := json.Unmarshal(body, &incoming); err != nil {
-		return provider.ChatRequest{}, errors.New("invalid JSON request")
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&incoming); err != nil {
+		return parsedChatRequest{}, errors.New("invalid JSON request")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return parsedChatRequest{}, errors.New("invalid JSON request")
 	}
 	if strings.TrimSpace(incoming.Model) == "" {
-		return provider.ChatRequest{}, errors.New("model is required")
+		return parsedChatRequest{}, errors.New("model is required")
 	}
 	if len(incoming.Messages) == 0 {
-		return provider.ChatRequest{}, errors.New("messages are required")
+		return parsedChatRequest{}, errors.New("messages are required")
 	}
 	if len(incoming.Tools) > 0 || len(incoming.ToolChoice) > 0 {
-		return provider.ChatRequest{}, errors.New("tools are not supported")
+		return parsedChatRequest{}, &unsupportedFieldError{Field: "tools/tool_choice"}
+	}
+	if len(incoming.ResponseFormat) > 0 {
+		return parsedChatRequest{}, &unsupportedFieldError{Field: "response_format"}
+	}
+	if incoming.N != nil {
+		return parsedChatRequest{}, &unsupportedFieldError{Field: "n"}
+	}
+	if incoming.Logprobs != nil {
+		return parsedChatRequest{}, &unsupportedFieldError{Field: "logprobs"}
 	}
 	request := provider.ChatRequest{Model: incoming.Model, MaxTokens: incoming.MaxTokens, Temperature: incoming.Temperature, Stream: incoming.Stream}
 	for _, message := range incoming.Messages {
 		if len(message.ToolCalls) > 0 {
-			return provider.ChatRequest{}, errors.New("tool calls are not supported")
+			return parsedChatRequest{}, &unsupportedFieldError{Field: "messages.tool_calls"}
 		}
 		if message.Role != "system" && message.Role != "user" && message.Role != "assistant" {
-			return provider.ChatRequest{}, fmt.Errorf("unsupported message role: %s", message.Role)
+			return parsedChatRequest{}, fmt.Errorf("unsupported message role: %s", message.Role)
 		}
 		var content string
 		if err := json.Unmarshal(message.Content, &content); err != nil {
-			return provider.ChatRequest{}, errors.New("message content must be text")
+			return parsedChatRequest{}, errors.New("message content must be text")
 		}
 		request.Messages = append(request.Messages, provider.Message{Role: message.Role, Content: content})
 	}
-	return request, nil
+	contract := decision.Contract{Active: incoming.Model == "auto" || incoming.Limen != nil}
+	if incoming.Limen != nil {
+		contract.RequiredCapabilities = append([]string(nil), incoming.Limen.RequiredCapabilities...)
+		contract.MinimumQualityTier = incoming.Limen.MinimumQualityTier
+		contract.RequiredContextTokens = incoming.Limen.RequiredContextTokens
+		contract.DataClass = incoming.Limen.DataClass
+		contract.EstimatedInputTokens = incoming.Limen.EstimatedInputTokens
+		contract.EstimatedOutputTokens = incoming.Limen.EstimatedOutputTokens
+		contract.Strategy = incoming.Limen.Strategy
+	}
+	return parsedChatRequest{Request: request, Contract: contract}, nil
 }
 
 // relayStream 逐块转发 SSE 数据，并在每块写入后刷新客户端。

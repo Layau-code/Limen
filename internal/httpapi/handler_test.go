@@ -374,3 +374,25 @@ func TestChatRejectsUnsupportedContent(t *testing.T) {
 		t.Fatalf("unsupported content status = %d", response.Code)
 	}
 }
+
+func TestParseChatRequestRejectsUnsupportedFields(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[]}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"unknown":true}`,
+	} {
+		if _, err := parseChatRequestEnvelope([]byte(body)); err == nil {
+			t.Fatalf("request was accepted: %s", body)
+		}
+	}
+}
+
+func TestParseChatRequestExtractsLimenContract(t *testing.T) {
+	envelope, err := parseChatRequestEnvelope([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}],"limen":{"required_capabilities":["text"],"minimum_quality_tier":3,"required_context_tokens":1000,"data_class":"internal","strategy":"economy"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Request.Model != "auto" || !envelope.Contract.Active || envelope.Contract.MinimumQualityTier != 3 || envelope.Contract.DataClass != "internal" || envelope.Contract.Strategy != "economy" {
+		t.Fatalf("envelope = %+v", envelope)
+	}
+}
