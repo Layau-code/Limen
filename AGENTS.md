@@ -15,7 +15,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
 - 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
-- 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。当前静态 Key 由 `LIMEN_API_SCOPES` 限制，默认 Scope 只为兼容单机开发，生产 Key Store 后续替换。
+- 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。
 - PostgreSQL Key Store 只按公开前缀查询 HMAC 摘要，使用常量时间比较校验完整 Key；数据库、日志和 Principal 均不得保存或暴露完整 Key。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
