@@ -15,24 +15,24 @@ const maxTargetsPerModel = 4
 
 // Target 描述一个 Provider 及其真实上游模型和声明能力。
 type Target struct {
-	ID                string
-	Provider          string
-	UpstreamModel     string
-	Capabilities      []string
-	SupportsStreaming bool
-	QualityTier       int
-	CostTier          int
-	ContextWindow     int64
-	DataClasses       []string
-	Pricing           *cost.Pricing
+	ID                string        `json:"id"`
+	Provider          string        `json:"provider"`
+	UpstreamModel     string        `json:"upstream_model"`
+	Capabilities      []string      `json:"capabilities"`
+	SupportsStreaming bool          `json:"supports_streaming"`
+	QualityTier       int           `json:"quality_tier"`
+	CostTier          int           `json:"cost_tier"`
+	ContextWindow     int64         `json:"context_window"`
+	DataClasses       []string      `json:"data_classes"`
+	Pricing           *cost.Pricing `json:"pricing,omitempty"`
 }
 
 // Model 描述客户端可见模型及其有序上游目标。
 type Model struct {
-	ID            string
-	DisplayName   string
-	Targets       []Target
-	Compatibility bool
+	ID            string   `json:"id"`
+	DisplayName   string   `json:"display_name,omitempty"`
+	Targets       []Target `json:"targets"`
+	Compatibility bool     `json:"compatibility,omitempty"`
 }
 
 // Registry 保存启动时构建的只读模型映射。
