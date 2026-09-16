@@ -488,7 +488,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |
@@ -510,7 +510,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，不重新调用模型或复现运行时 Attempt。
 
-当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并提供 Explain/Replay 接口；配置发布、旧算法注册表和结构化差异字段将在配置控制面阶段继续补齐。
+当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并提供 Explain/Replay 接口；配置版本控制面已提供创建、列表和发布 API，发布会原子替换 Router 目录与路由参数，旧算法注册表和结构化差异字段仍待补齐。
 
 稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、idempotency_conflict、insufficient_scope、config_version_unavailable 和 algorithm_version_unavailable。
 
@@ -535,7 +535,7 @@ Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本�
 - 客户端不能把 Trailer 当成最终账本，也不能假设收到 DONE 时结算已经完成。
 - Request 在结算终态前继续占用 Run 并发名额；不确定时暂停 Run 后续准入。
 
-日志使用 Go slog，记录 request_id、run_id、decision_id、逻辑模型、目标 ID、Attempt、状态、耗时、TTFB、结算状态和原因码。禁止记录 API Key、Authorization、Prompt、Response、Tool 正文、Provider 凭据和原始错误正文。
+日志使用 Go slog，记录 request_id、run_id、decision_id、逻辑模型、目标 ID、Attempt、状态、耗时、TTFB、结算状态和原因码。禁止记录 API Key、Authorization、Prompt、Response、Tool 正文、Provider 凭据和原始错误正文。基础 `/metrics` 仅输出固定计数器和有界标签，并要求 `admin` Scope。
 
 Metrics 使用有界 Label：endpoint、状态类别、逻辑模型、目标 ID、结果类别和拒绝原因；不使用 request ID、Run ID、用户 ID 或原始错误作为 Label。
 
@@ -624,15 +624,15 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复和轮询取消，LISTEN/NOTIFY、Provider 凭据加密与端点绑定和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询取消、Provider 凭据加密与 endpoint 绑定。LISTEN/NOTIFY 和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 
-把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、算法版本注册、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。
+把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面，算法版本注册、审批审计和结构化配置差异仍待完成。
 
 ### 阶段 D：生产化与 1.0
 
-完成 OpenTelemetry、Prometheus 指标、Provider 凭据在线轮换、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
+完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Provider 凭据管理 API、Secret Manager 接入、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标和 Provider 原子密钥轮换边界。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
 
 ### 1.0 之后
 
