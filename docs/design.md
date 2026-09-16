@@ -34,8 +34,16 @@ HTTP 鉴权与解析
   "models": [{
     "id":"smart-model",
     "targets":[
-      {"provider":"openai", "upstream_model":"gpt-5-mini"},
-      {"provider":"anthropic", "upstream_model":"claude-sonnet-4-20250514"}
+      {
+        "provider":"openai",
+        "upstream_model":"gpt-5-mini",
+        "pricing":{"input_per_million_usd":"0.250000", "output_per_million_usd":"2.000000"}
+      },
+      {
+        "provider":"anthropic",
+        "upstream_model":"claude-sonnet-4-20250514",
+        "pricing":{"input_per_million_usd":"3.000000", "output_per_million_usd":"15.000000"}
+      }
     ]
   }]
 }
