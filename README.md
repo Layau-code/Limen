@@ -113,7 +113,7 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 
 ## 配置与运维
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）和可选的 `LIMEN_HEALTH_URL`。启动时会为规范化模型配置生成 `config_version`；生产出站 Client 默认只允许 HTTPS、禁用代理和重定向，并拒绝 loopback、私网、链路本地和云元数据地址。模型文件修改后需重启；只校验注册表实际引用的 Provider Key。设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面，生产环境应等待 PostgreSQL Store 装配后再启用。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）和 `LIMEN_TENANT_ID`（默认 `local`）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt 和 Ledger；启动日志不会输出 DSN。未配置数据库时，设置 `LIMEN_RUN_STORE=memory` 才会启用单机开发用 Run 控制面。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 

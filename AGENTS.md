@@ -13,6 +13,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
+- 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
@@ -22,7 +23,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 
 ## 工程原则
 
-1. 只使用 Go 标准库；接口由真实替换需求或测试需求驱动。
+1. 核心数据面只使用 Go 标准库；PostgreSQL 允许使用成熟的单一驱动，接口由真实替换需求或测试需求驱动。
 2. `context.Context` 必须贯穿 HTTP、Router 和 Provider；客户端断开要取消上游。
 3. 一次请求只创建一个总预算；每个目标最多调用一次；SSE 返回成功后不切换。
 4. 只有固定瞬时状态（408、409、429、500、502、503、504、529）和传输错误触发 Fallback；确定性错误直接返回。

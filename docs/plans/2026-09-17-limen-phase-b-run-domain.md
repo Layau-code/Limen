@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 标准库、`database/sql` 接口、PostgreSQL SQL 迁移；不在本阶段引入 Web 框架或 ORM。
 
-> 状态：领域状态机、幂等 MemoryStore、PostgreSQL 迁移/Repository、单机 HTTP Run 控制面和受治理 Chat 准入/结算已完成；生产默认不启用内存 Store，PostgreSQL 启动装配与多实例控制面属于下一阶段。
+> 状态：领域状态机、幂等 MemoryStore、PostgreSQL 迁移/Repository、单机 HTTP Run 控制面、受治理 Chat 准入/结算和可选 PostgreSQL 启动装配已完成；多实例租约恢复、跨实例取消和多租户 API Key 控制面属于下一阶段。
 
 ---
 
