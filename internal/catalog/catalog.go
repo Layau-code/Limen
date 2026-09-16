@@ -134,6 +134,11 @@ func (registry *Registry) List() []Model {
 	return models
 }
 
+// IsCompatibility 表示注册表是否处于按模型前缀透传的兼容模式。
+func (registry *Registry) IsCompatibility() bool {
+	return registry.compatibility
+}
+
 // cloneModel 深复制模型，避免调用方修改只读注册表。
 func cloneModel(model Model) Model {
 	model.Targets = append([]Target(nil), model.Targets...)
@@ -161,7 +166,6 @@ func applyLegacyDefaults(target *Target) {
 		target.Capabilities = []string{"text"}
 		target.SupportsStreaming = true
 		target.ContextWindow = math.MaxInt64
-		target.DataClasses = allDataClasses()
 	}
 	if target.QualityTier == 0 {
 		target.QualityTier = 1
