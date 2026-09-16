@@ -16,6 +16,12 @@ type circuitBreaker struct {
 	now         func() time.Time
 }
 
+// breakerObservation 是熔断器提供给决策层的只读状态快照。
+type breakerObservation struct {
+	state          string
+	probeAvailable bool
+}
+
 // newCircuitBreaker 创建使用指定阈值、冷却时间和时钟的熔断器。
 func newCircuitBreaker(threshold int, cooldown time.Duration, now func() time.Time) *circuitBreaker {
 	return &circuitBreaker{threshold: threshold, cooldown: cooldown, now: now}
@@ -33,6 +39,19 @@ func (breaker *circuitBreaker) allow() bool {
 	}
 	breaker.probeActive = true
 	return true
+}
+
+// observe 在不改变熔断状态的前提下返回当前健康观察结果。
+func (breaker *circuitBreaker) observe() breakerObservation {
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+	if breaker.openedAt.IsZero() {
+		return breakerObservation{state: "closed"}
+	}
+	if breaker.now().Sub(breaker.openedAt) < breaker.cooldown {
+		return breakerObservation{state: "open"}
+	}
+	return breakerObservation{state: "half_open", probeAvailable: !breaker.probeActive}
 }
 
 // recordSuccess 清除历史失败并关闭熔断器。

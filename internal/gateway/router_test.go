@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
 )
 
@@ -144,6 +145,41 @@ func TestRouterMapsLogicalModelToAnthropic(t *testing.T) {
 	_ = result.Response.Body.Close()
 	if upstreamModel != "claude-real" {
 		t.Fatalf("upstream model = %q", upstreamModel)
+	}
+}
+
+func TestRouterAutoUsesCapabilityPlan(t *testing.T) {
+	var selected string
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(_ context.Context, request provider.ChatRequest) (provider.Response, error) {
+			selected = "openai:" + request.Model
+			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"openai"}`))}, nil
+		}),
+		"anthropic": providerFunc(func(_ context.Context, request provider.ChatRequest) (provider.Response, error) {
+			selected = "anthropic:" + request.Model
+			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"anthropic"}`))}, nil
+		}),
+	}
+	registry, err := NewModelRegistry([]Model{
+		{ID: "basic", Targets: []Target{{ID: "basic-target", Provider: "openai", UpstreamModel: "gpt-basic", QualityTier: 1, DataClasses: []string{"public"}}}},
+		{ID: "smart", Targets: []Target{{ID: "smart-target", Provider: "anthropic", UpstreamModel: "claude-smart", QualityTier: 4, DataClasses: []string{"public", "internal"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(providers, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Second})
+	result, err := router.ChatWithContract(context.Background(), provider.ChatRequest{Model: "auto"}, decision.Contract{
+		RequiredCapabilities: []string{"text"}, MinimumQualityTier: 3, DataClass: "internal",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Response.Body.Close()
+	if selected != "anthropic:claude-smart" {
+		t.Fatalf("selected = %q", selected)
+	}
+	if len(result.Plan.Targets) != 1 || result.Plan.Targets[0].ModelID != "smart" {
+		t.Fatalf("plan = %+v", result.Plan)
 	}
 }
 

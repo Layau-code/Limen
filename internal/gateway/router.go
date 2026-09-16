@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
 )
 
@@ -28,6 +29,7 @@ type Router struct {
 	registry  *ModelRegistry
 	policy    Policy
 	breakers  map[string]*circuitBreaker
+	engine    decision.Engine
 }
 
 // Result 同时返回上游响应和不含业务正文的路由决策。
@@ -35,6 +37,7 @@ type Result struct {
 	Response   provider.Response
 	Decision   Decision
 	Settlement *Settlement
+	Plan       decision.ExecutionPlan
 }
 
 // Decision 描述一次请求实际经过的安全路由路径。
@@ -86,13 +89,72 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 	return router
 }
 
-// Chat 在共享总预算内依次尝试逻辑模型的上游目标。
+// Chat 使用默认契约处理一次聊天请求，保留 OpenAI 兼容调用方式。
 func (router *Router) Chat(parent context.Context, request provider.ChatRequest) (Result, error) {
-	model, found := router.registry.Resolve(request.Model)
-	if !found {
-		return Result{}, &UnsupportedModelError{Model: request.Model}
+	return router.ChatWithContract(parent, request, decision.Contract{Active: request.Model == "auto"})
+}
+
+// ChatWithContract 根据能力契约生成计划，再在共享总预算内执行目标。
+func (router *Router) ChatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract) (Result, error) {
+	plan, err := router.plan(request, contract)
+	if err != nil {
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
+			return Result{Plan: plan}, &NoEligibleTargetError{Plan: plan}
+		}
+		return Result{Plan: plan}, err
 	}
+	return router.executePlan(parent, request, plan)
+}
+
+// plan 将注册表和熔断器快照组装为确定性的 DecisionInput。
+func (router *Router) plan(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
+	models := router.registry.List()
+	if request.Model != "auto" {
+		model, found := router.registry.Resolve(request.Model)
+		if !found {
+			return decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
+		}
+		models = []Model{model}
+	} else if router.registry.IsCompatibility() {
+		return decision.ExecutionPlan{}, &UnsupportedModelError{Model: request.Model}
+	}
+	if request.Model == "auto" {
+		contract.Active = true
+	}
+	candidates := make([]decision.Candidate, 0)
+	for _, model := range models {
+		for _, target := range model.Targets {
+			observation := router.breakers[targetKey(model, target)].observe()
+			candidates = append(candidates, decision.Candidate{
+				ModelID:         model.ID,
+				Target:          target,
+				Enabled:         true,
+				SecurityAllowed: true,
+				Health: decision.HealthSnapshot{
+					State:          observation.state,
+					ProbeAvailable: observation.probeAvailable,
+				},
+			})
+		}
+	}
+	input := decision.Input{
+		SchemaVersion:     decision.SchemaVersionV1,
+		AlgorithmVersion:  decision.AlgorithmVersionV1,
+		EvaluatedAtUnixMS: time.Now().UnixMilli(),
+		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
+		Candidates:        candidates,
+	}
+	return router.engine.Decide(input)
+}
+
+// executePlan 按计划顺序执行 Provider，并保留 Fallback、超时和结算语义。
+func (router *Router) executePlan(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan) (Result, error) {
 	budget, cancelBudget := context.WithTimeout(parent, router.policy.RequestTimeout)
+	withPlan := func(result Result) Result {
+		result.Plan = plan
+		return result
+	}
 	decision := Decision{}
 	settlement := NewSettlement()
 	var lastErr error
@@ -111,7 +173,9 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 		hasPendingResponse = false
 	}
 
-	for _, target := range model.Targets {
+	for _, planned := range plan.Targets {
+		target := planned.Target
+		model := Model{ID: planned.ModelID, Compatibility: router.registry.IsCompatibility()}
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
@@ -119,13 +183,17 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 		}
 		breaker := router.breakers[targetKey(model, target)]
 		if !breaker.allow() {
-			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "circuit_open"})
+			outcome := "circuit_open"
+			if breaker.observe().state == "half_open" {
+				outcome = "skipped_due_to_race"
+			}
+			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 			continue
 		}
 		if err := budget.Err(); err != nil {
 			breaker.recordNeutral()
 			if hasPendingResponse {
-				return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
+				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
 			return Result{}, &RouteError{Decision: decision, Err: err}
@@ -138,7 +206,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			breaker.recordNeutral()
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "provider_unavailable"})
 			if hasPendingResponse {
-				return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
+				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
 			return Result{}, &ProviderUnavailableError{Name: target.Provider, Decision: decision}
@@ -168,7 +236,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 					return Result{}, &RouteError{Decision: decision, Err: cause}
 				}
 				if hasPendingResponse {
-					return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
+					return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 				}
 				cancelBudget()
 				cause := firstContextError(parent, budget)
@@ -214,7 +282,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			continue
 		}
 		breaker.recordSuccess()
-		return resultWithCancel(response, decision, settlement, cancelAttempt, cancelBudget), nil
+		return withPlan(resultWithCancel(response, decision, settlement, cancelAttempt, cancelBudget)), nil
 	}
 
 	if hasPendingResponse {
@@ -223,7 +291,7 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 			cancelBudget()
 			return Result{}, &RouteError{Decision: decision, Err: err}
 		}
-		return resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget), nil
+		return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 	}
 	cancelBudget()
 	if decision.Attempts == 0 {
@@ -323,6 +391,16 @@ type NoAvailableTargetError struct {
 // Error 返回无可用目标的稳定错误描述。
 func (e *NoAvailableTargetError) Error() string {
 	return "no available model target"
+}
+
+// NoEligibleTargetError 表示能力契约筛选后没有可执行目标。
+type NoEligibleTargetError struct {
+	Plan decision.ExecutionPlan
+}
+
+// Error 返回不泄露请求内容的能力筛选错误描述。
+func (e *NoEligibleTargetError) Error() string {
+	return "no eligible model target"
 }
 
 // RouteError 表示路由在获得可转发响应前失败。
