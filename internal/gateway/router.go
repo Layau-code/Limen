@@ -107,6 +107,11 @@ func (router *Router) ChatWithContract(parent context.Context, request provider.
 	return router.executePlan(parent, request, plan)
 }
 
+// DryRun 只生成决策计划，不访问 Provider 或改变熔断、结算状态。
+func (router *Router) DryRun(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
+	return router.plan(request, contract)
+}
+
 // plan 将注册表和熔断器快照组装为确定性的 DecisionInput。
 func (router *Router) plan(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
 	models := router.registry.List()

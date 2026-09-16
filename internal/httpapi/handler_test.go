@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,6 +15,12 @@ import (
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
 )
+
+type testProviderFunc func(context.Context, provider.ChatRequest) (provider.Response, error)
+
+func (fn testProviderFunc) Chat(ctx context.Context, request provider.ChatRequest) (provider.Response, error) {
+	return fn(ctx, request)
+}
 
 func newTestRouter(openAI, anthropic provider.Provider, registry *gateway.ModelRegistry) *gateway.Router {
 	providers := make(map[string]provider.Provider)
@@ -39,6 +46,38 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestDryRunReturnsPlanWithoutProviderCall(t *testing.T) {
+	called := false
+	registry, err := gateway.NewModelRegistry([]gateway.Model{
+		{ID: "basic", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-basic", QualityTier: 1, DataClasses: []string{"public"}}}},
+		{ID: "smart", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-smart", QualityTier: 4, DataClasses: []string{"public", "internal"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		called = true
+		return provider.Response{}, nil
+	}), nil, registry)
+	handler := New("limen-secret", router)
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/decisions/dry-run", strings.NewReader(`{"model":"auto","messages":[{"role":"user","content":"hello"}],"limen":{"minimum_quality_tier":3,"data_class":"internal"}}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var plan struct {
+		PlanHash string `json:"plan_hash"`
+		Targets  []struct {
+			ModelID string `json:"model_id"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || plan.PlanHash == "" || len(plan.Targets) != 1 || plan.Targets[0].ModelID != "smart" || called {
+		t.Fatalf("status=%d plan=%+v called=%v", response.Code, plan, called)
 	}
 }
 
