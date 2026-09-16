@@ -156,7 +156,7 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.State != run.RequestSettled || !request.LedgerRecorded {
+	if request.State != run.RequestSettled || !request.LedgerRecorded || request.LeaseOwner != "" || !request.LeaseExpiresAt.IsZero() {
 		t.Fatalf("request = %+v", request)
 	}
 	runState, err := runs.GetRun(context.Background(), runTenantID, created.ID)

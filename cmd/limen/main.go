@@ -119,6 +119,9 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if leaseService, ok := runService.(run.LeaseService); ok {
+		go recoverExpiredRequests(ctx, leaseService, cfg.TenantID, logger)
+	}
 	go func() {
 		<-ctx.Done()
 		health.SetReady(false)
@@ -133,6 +136,29 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
+	}
+}
+
+// recoverExpiredRequests 定期回收崩溃实例遗留的请求租约，不重放上游调用。
+func recoverExpiredRequests(ctx context.Context, service run.LeaseService, tenantID string, logger *slog.Logger) {
+	ticker := time.NewTicker(run.RequestLeaseRenewInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			recoveryContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			requests, err := service.RecoverExpiredRequests(recoveryContext, tenantID, time.Now().UTC(), 100)
+			cancel()
+			if err != nil {
+				logger.Error("expired request recovery failed", "error", err)
+				continue
+			}
+			if len(requests) > 0 {
+				logger.Warn("expired requests recovered", "count", len(requests))
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

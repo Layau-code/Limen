@@ -41,7 +41,7 @@ func (service *MemoryService) CancelRunWithMutation(_ context.Context, tenantID,
 
 // AdmitRequest 执行内存 Run 的幂等准入。
 func (service *MemoryService) AdmitRequest(_ context.Context, tenantID, runID string, input AdmissionInput) (Request, error) {
-	return service.store.AdmitRequest(tenantID, runID, input.Request, input.Now)
+	return service.store.AdmitRequestWithLease(tenantID, runID, input)
 }
 
 // RecordAttemptStarted 将内存 Attempt 写入本地 Store。
@@ -52,6 +52,26 @@ func (service *MemoryService) RecordAttemptStarted(_ context.Context, tenantID s
 // FinishAttempt 将内存 Attempt 更新为执行终态。
 func (service *MemoryService) FinishAttempt(_ context.Context, tenantID, attemptID string, state AttemptState, finishedAt time.Time) error {
 	return service.store.FinishAttempt(tenantID, attemptID, state, finishedAt)
+}
+
+// AcquireRequestLease 为内存请求分配执行实例租约。
+func (service *MemoryService) AcquireRequestLease(_ context.Context, tenantID, requestID, owner string, now time.Time, ttl time.Duration) (Request, error) {
+	return service.store.AcquireRequestLease(tenantID, requestID, owner, now, ttl)
+}
+
+// RenewRequestLease 延长内存请求的执行实例租约。
+func (service *MemoryService) RenewRequestLease(_ context.Context, tenantID, requestID, owner string, now time.Time, ttl time.Duration) (Request, error) {
+	return service.store.RenewRequestLease(tenantID, requestID, owner, now, ttl)
+}
+
+// ReleaseRequestLease 释放内存请求的执行实例租约。
+func (service *MemoryService) ReleaseRequestLease(_ context.Context, tenantID, requestID, owner string, now time.Time) error {
+	return service.store.ReleaseRequestLease(tenantID, requestID, owner, now)
+}
+
+// RecoverExpiredRequests 恢复指定租户的过期内存请求。
+func (service *MemoryService) RecoverExpiredRequests(_ context.Context, tenantID string, now time.Time, limit int) ([]Request, error) {
+	return service.store.RecoverExpiredRequests(tenantID, now, limit), nil
 }
 
 // BeginSettlement 将内存 Request 标记为待结算。
@@ -84,3 +104,4 @@ func (service *MemoryService) GetRequest(_ context.Context, tenantID, requestID 
 
 var _ Service = (*MemoryService)(nil)
 var _ ControlService = (*MemoryService)(nil)
+var _ LeaseService = (*MemoryService)(nil)

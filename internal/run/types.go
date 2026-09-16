@@ -63,12 +63,25 @@ var (
 	ErrRequestNotSettleable = errors.New("request is not settleable")
 	// ErrResourceNotFound 表示指定租户下资源不存在。
 	ErrResourceNotFound = errors.New("run resource not found")
+	// ErrLeaseUnavailable 表示请求仍被其他执行实例持有。
+	ErrLeaseUnavailable = errors.New("request lease unavailable")
+	// ErrLeaseLost 表示当前执行实例已失去请求租约。
+	ErrLeaseLost = errors.New("request lease lost")
+)
+
+const (
+	// RequestLeaseDuration 是一次执行租约的最长无续租时间。
+	RequestLeaseDuration = 30 * time.Second
+	// RequestLeaseRenewInterval 是执行实例续租的固定间隔。
+	RequestLeaseRenewInterval = 10 * time.Second
 )
 
 // AdmissionInput 描述已完成规范哈希的请求准入参数。
 type AdmissionInput struct {
-	Request Request
-	Now     time.Time
+	Request    Request
+	Now        time.Time
+	LeaseOwner string
+	LeaseTTL   time.Duration
 }
 
 // Mutation 保存控制面幂等键和规范请求哈希。
@@ -87,6 +100,15 @@ type Service interface {
 	SettleRequest(context.Context, string, string, *int64, time.Time) (Request, error)
 	GetRun(context.Context, string, string) (Run, error)
 	GetRequest(context.Context, string, string) (Request, error)
+}
+
+// LeaseService 定义跨进程执行租约和过期恢复边界。
+type LeaseService interface {
+	Service
+	AcquireRequestLease(context.Context, string, string, string, time.Time, time.Duration) (Request, error)
+	RenewRequestLease(context.Context, string, string, string, time.Time, time.Duration) (Request, error)
+	ReleaseRequestLease(context.Context, string, string, string, time.Time) error
+	RecoverExpiredRequests(context.Context, string, time.Time, int) ([]Request, error)
 }
 
 // ControlService 在 Service 之上提供带幂等控制操作的 Run 生命周期管理。

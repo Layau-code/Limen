@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/huz/limen/internal/auth"
@@ -35,6 +36,7 @@ type Handler struct {
 	router        *gateway.Router
 	runs          run.Service
 	tenantID      string
+	leaseOwner    string
 }
 
 const runTenantID = "local"
@@ -80,6 +82,7 @@ func NewWithHealthAndRunsForTenantScopes(apiKey string, router *gateway.Router, 
 		router:        router,
 		runs:          runs,
 		tenantID:      tenantID,
+		leaseOwner:    newLeaseOwner(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
@@ -404,46 +407,117 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
-	requestID, admitted := h.admitRunRequest(w, r, body)
+	requestID, releaseLease, admitted := h.admitRunRequest(w, r, body)
 	if !admitted {
 		return
 	}
+	defer releaseLease()
 	h.forward(w, r, envelope.Request, envelope.Contract, requestID)
 }
 
 // admitRunRequest 校验 Run Header、幂等键并占用一次并发准入。
-func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body []byte) (string, bool) {
+func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body []byte) (string, func(), bool) {
 	runID := strings.TrimSpace(r.Header.Get("X-Limen-Run-ID"))
 	if runID == "" {
-		return "", true
+		return "", func() {}, true
 	}
 	if h.runs == nil {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
-		return "", false
+		return "", nil, false
 	}
 	key, ok := idempotencyKey(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "Idempotency-Key is required for a Run request", "invalid_request_error", "idempotency_key_required")
-		return "", false
+		return "", nil, false
 	}
 	tenantID := h.requestTenantID(r)
 	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, map[string]string{"x-limen-run-id": runID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
-		return "", false
+		return "", nil, false
 	}
 	requestID, err := run.NewID("request")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to create request", "api_error", "request_id_error")
-		return "", false
+		return "", nil, false
 	}
-	item, err := h.runs.AdmitRequest(r.Context(), tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: time.Now().UTC()})
+	now := time.Now().UTC()
+	item, err := h.runs.AdmitRequest(r.Context(), tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: now, LeaseOwner: h.leaseOwner, LeaseTTL: run.RequestLeaseDuration})
 	if err != nil {
 		writeRunAdmissionError(w, err, item.ID)
-		return "", false
+		return "", nil, false
 	}
 	w.Header().Set("X-Limen-Request-ID", item.ID)
-	return item.ID, true
+	release, ok := h.startRequestLease(w, r, tenantID, item.ID, now)
+	if !ok {
+		_, _ = h.runs.BeginSettlement(r.Context(), tenantID, item.ID, time.Now().UTC())
+		_, _ = h.runs.SettleRequest(r.Context(), tenantID, item.ID, nil, time.Now().UTC())
+		return "", nil, false
+	}
+	return item.ID, release, true
+}
+
+// newLeaseOwner 为当前进程生成不含业务正文的执行实例标识。
+func newLeaseOwner() string {
+	owner, err := run.NewID("worker")
+	if err != nil {
+		return "worker-local"
+	}
+	return owner
+}
+
+// startRequestLease 启动请求租约续期，并返回响应结束时的释放函数。
+func (h *Handler) startRequestLease(w http.ResponseWriter, r *http.Request, tenantID, requestID string, now time.Time) (func(), bool) {
+	lease, ok := h.runs.(run.LeaseService)
+	if !ok {
+		return func() {}, true
+	}
+	if _, err := lease.AcquireRequestLease(r.Context(), tenantID, requestID, h.leaseOwner, now, run.RequestLeaseDuration); err != nil {
+		writeRunLeaseError(w, err)
+		return nil, false
+	}
+	requestContext, cancel := context.WithCancel(r.Context())
+	*r = *r.WithContext(requestContext)
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(run.RequestLeaseRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := lease.RenewRequestLease(requestContext, tenantID, requestID, h.leaseOwner, time.Now().UTC(), run.RequestLeaseDuration); err != nil {
+					cancel()
+					return
+				}
+			case <-stop:
+				return
+			case <-requestContext.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(stop)
+			cancel()
+			releaseContext, releaseCancel := context.WithTimeout(context.Background(), time.Second)
+			defer releaseCancel()
+			_ = lease.ReleaseRequestLease(releaseContext, tenantID, requestID, h.leaseOwner, time.Now().UTC())
+		})
+	}, true
+}
+
+// writeRunLeaseError 将租约冲突映射为稳定的控制面错误。
+func writeRunLeaseError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, run.ErrLeaseUnavailable):
+		writeError(w, http.StatusConflict, "request lease is held by another worker", "invalid_request_error", "request_in_progress")
+	case errors.Is(err, run.ErrRequestAlreadyProcessed):
+		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "run store unavailable", "api_error", "run_store_error")
+	}
 }
 
 // models 鉴权并返回当前可用的 OpenAI 兼容模型列表。
