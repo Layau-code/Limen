@@ -360,6 +360,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		decision.Provider = target.Provider
 		if err != nil {
 			cancelAttempt()
+			errorClass := provider.ClassifyError(err)
 			if budget.Err() != nil || parent.Err() != nil || errors.Is(err, context.Canceled) {
 				outcome := "timeout"
 				if errors.Is(parent.Err(), context.Canceled) {
@@ -388,11 +389,9 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				}
 				return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: cause}
 			}
-			var transportError *provider.TransportError
-			if !errors.As(err, &transportError) {
+			if errorClass != provider.ErrorClassRetryableTransient && !errors.Is(err, context.DeadlineExceeded) {
 				outcome := "internal_error"
-				var requestError *provider.RequestError
-				if errors.As(err, &requestError) {
+				if errorClass == provider.ErrorClassDeterministicRequest {
 					outcome = "request_error"
 				}
 				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})

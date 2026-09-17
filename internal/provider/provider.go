@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -54,6 +55,8 @@ const (
 	ErrorClassAuthentication ErrorClass = "authentication"
 	// ErrorClassQuota 表示配额或账户限制错误。
 	ErrorClassQuota ErrorClass = "quota"
+	// ErrorClassCancelled 表示调用因截止时间或取消而结束。
+	ErrorClassCancelled ErrorClass = "cancelled"
 	// ErrorClassInternal 表示未归类的 Provider 内部错误。
 	ErrorClassInternal ErrorClass = "internal"
 )
@@ -74,6 +77,25 @@ func ClassifyHTTPStatus(status int) ErrorClass {
 	default:
 		return ""
 	}
+}
+
+// ClassifyError 将本地 Provider 错误转换为稳定的错误分类。
+func ClassifyError(err error) ErrorClass {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return ErrorClassCancelled
+	}
+	var requestError *RequestError
+	if errors.As(err, &requestError) {
+		return ErrorClassDeterministicRequest
+	}
+	var transportError *TransportError
+	if errors.As(err, &transportError) {
+		return ErrorClassRetryableTransient
+	}
+	return ErrorClassInternal
 }
 
 // IsRetryableResponse 判断响应是否允许切换到执行计划中的下一个目标。

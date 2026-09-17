@@ -182,6 +182,26 @@ func TestClassifyHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestClassifyError(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		class ErrorClass
+	}{
+		{name: "cancelled", err: context.Canceled, class: ErrorClassCancelled},
+		{name: "request", err: &RequestError{Err: errors.New("invalid")}, class: ErrorClassDeterministicRequest},
+		{name: "transport", err: &TransportError{Err: errors.New("network")}, class: ErrorClassRetryableTransient},
+		{name: "internal", err: errors.New("unknown"), class: ErrorClassInternal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ClassifyError(test.err); got != test.class {
+				t.Fatalf("class = %q, want %q", got, test.class)
+			}
+		})
+	}
+}
+
 func TestAnthropicChatUsesOnlyCallerDeadline(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)
