@@ -1,5 +1,17 @@
 # 变更记录
 
+## 未发布
+
+### 新增
+
+- Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
+- Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
+- PostgreSQL Run 取消支持 `LISTEN/NOTIFY` 低延迟广播，并保留事件表轮询兜底。
+
+### 限制
+
+- 真实 PostgreSQL 多实例故障测试、旧算法保留窗口与审批审计、Secret Manager 和完整 OpenTelemetry 导出仍待后续生产化阶段。
+
 ## v0.3.0
 
 ### 新增
@@ -12,7 +24,7 @@
 
 ### 限制
 
-- 配置文件不热加载；Secret Manager、跨实例凭据变更通知、完整 OpenTelemetry 导出和每日额度仍未实现。
+- 配置文件不热加载；Secret Manager、完整 OpenTelemetry 导出和每日额度仍未实现。
 
 ## v0.2.0
 
