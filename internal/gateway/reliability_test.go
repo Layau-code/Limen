@@ -34,6 +34,32 @@ func TestRouterDoesNotFallbackOnDeterministicStatus(t *testing.T) {
 	}
 }
 
+func TestRouterHonorsProviderErrorClassification(t *testing.T) {
+	var backupCalls int
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			return provider.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				ErrorClass: provider.ErrorClassAuthentication,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"credential"}`)),
+			}, nil
+		}),
+		"anthropic": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			backupCalls++
+			return provider.Response{}, nil
+		}),
+	}
+	router := newReliabilityRouter(t, providers)
+	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Response.Body.Close()
+	if result.Response.StatusCode != http.StatusServiceUnavailable || backupCalls != 0 {
+		t.Fatalf("status=%d backup_calls=%d", result.Response.StatusCode, backupCalls)
+	}
+}
+
 func TestRouterDoesNotFallbackOnRequestError(t *testing.T) {
 	var backupCalls int
 	providers := map[string]provider.Provider{

@@ -311,13 +311,14 @@ DecisionInput 使用版本化、强类型 Schema，而不是 map[string]any：
 1. 目标和 Provider 是否启用。
 2. 是否通过全局安全策略。
 3. 是否满足所有必需能力。
-4. 是否支持请求要求的流式模式。
-5. 上下文窗口是否满足需求。
-6. 数据等级是否允许发送。
-7. 熔断器是否允许调用。
-8. 剩余截止时间是否大于策略配置的 minimum_attempt_window，默认二百五十毫秒。
+4. 质量等级是否达到 `minimum_quality_tier`。
+5. 是否支持请求要求的流式模式。
+6. 上下文窗口是否满足需求。
+7. 数据等级是否允许发送。
+8. 熔断器是否允许调用。
+9. 剩余截止时间是否大于策略配置的 minimum_attempt_window，默认二百五十毫秒。
 
-淘汰结果使用稳定原因码，例如 missing_capability、context_window_too_small、data_policy_denied、circuit_open、deadline_insufficient 和 pricing_missing。
+淘汰结果使用稳定原因码，例如 missing_capability、quality_tier_too_low、context_window_too_small、data_policy_denied、circuit_open、deadline_insufficient 和 pricing_missing。
 
 ### 6.2 字典序排序
 
@@ -344,7 +345,7 @@ model=auto 搜索整个租户可用目录；显式逻辑模型只在其目标内
 
 熔断快照只表示 Decision 时的 observed_eligible。Half-Open 探测资格在 Executor 调用前原子占用；如果计划生成后资格被其他请求占用，Executor 记录 skipped_due_to_race 并继续下一个计划目标。Replay 重现原计划，ExecutionReport 负责说明运行时竞态。
 
-Provider Adapter 把厂商状态和传输错误归一为 retryable_transient、deterministic_request、authentication、quota、cancelled 和 internal。只有 retryable_transient 允许执行计划中的下一个目标；具体分类由 Provider 契约测试固定。
+Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`、`deterministic_request`、`authentication`、`quota`、`cancelled` 和 `internal`。当前 OpenAI/Anthropic 适配器已把上游 HTTP 状态归一化到该边界；只有 `retryable_transient` 允许执行计划中的下一个目标，具体分类由 Provider 契约测试固定。
 
 ## 7. 可靠性执行与 Provider
 

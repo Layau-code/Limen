@@ -133,6 +133,9 @@ func rejectReason(input Input, candidate Candidate) string {
 		return "security_policy_denied"
 	}
 	contract := input.Request.Contract
+	if contract.MinimumQualityTier > target.QualityTier {
+		return "quality_tier_too_low"
+	}
 	if missing := missingCapability(target.Capabilities, contract.RequiredCapabilities); missing != "" {
 		return "missing_capability:" + missing
 	}

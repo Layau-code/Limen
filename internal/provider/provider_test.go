@@ -163,6 +163,25 @@ func TestAnthropicChatPreservesProviderErrorStatus(t *testing.T) {
 	}
 }
 
+func TestClassifyHTTPStatus(t *testing.T) {
+	tests := []struct {
+		status int
+		class  ErrorClass
+	}{
+		{http.StatusUnauthorized, ErrorClassAuthentication},
+		{http.StatusPaymentRequired, ErrorClassQuota},
+		{http.StatusBadRequest, ErrorClassDeterministicRequest},
+		{http.StatusTooManyRequests, ErrorClassRetryableTransient},
+		{http.StatusInternalServerError, ErrorClassRetryableTransient},
+		{http.StatusNotImplemented, ErrorClassInternal},
+	}
+	for _, test := range tests {
+		if got := ClassifyHTTPStatus(test.status); got != test.class {
+			t.Errorf("status %d class = %q, want %q", test.status, got, test.class)
+		}
+	}
+}
+
 func TestAnthropicChatUsesOnlyCallerDeadline(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)

@@ -76,7 +76,7 @@ func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (R
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		recorder := newUsageRecorder()
-		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: observeJSON(response.Body, recorder), Usage: recorder}, nil
+		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: observeJSON(response.Body, recorder), Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode)}, nil
 	}
 	if request.Stream {
 		recorder := newUsageRecorder()

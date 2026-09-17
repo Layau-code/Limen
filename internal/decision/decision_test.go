@@ -95,6 +95,16 @@ func TestDecideRejectsHardConstraints(t *testing.T) {
 			reason: "missing_capability:reasoning",
 		},
 		{
+			name: "quality tier too low",
+			input: func() Input {
+				candidate := eligibleCandidate(testTarget("target", 2, true, []string{"text"}, []string{"public"}))
+				input := decisionInput(candidate)
+				input.Request.Contract.MinimumQualityTier = 3
+				return input
+			},
+			reason: "quality_tier_too_low",
+		},
+		{
 			name: "streaming unsupported",
 			input: func() Input {
 				candidate := eligibleCandidate(testTarget("target", 3, false, []string{"text"}, []string{"public"}))

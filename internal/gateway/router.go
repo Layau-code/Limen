@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -392,7 +391,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 
 		outcome := strconv.Itoa(response.StatusCode)
 		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-		if isTransientStatus(response.StatusCode) {
+		if provider.IsRetryableResponse(response) {
 			breaker.recordFailure()
 			lastErr = nil
 			pendingResponse = response
@@ -448,18 +447,6 @@ func targetKey(model Model, target Target) string {
 		upstreamModel = model.ID
 	}
 	return model.ID + "\x00" + target.Provider + "\x00" + upstreamModel
-}
-
-// isTransientStatus 判断上游状态是否允许切换到下一个目标。
-func isTransientStatus(status int) bool {
-	switch status {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests,
-		http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout, 529:
-		return true
-	default:
-		return false
-	}
 }
 
 // firstContextError 优先返回调用方取消原因，否则返回总预算原因。

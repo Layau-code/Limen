@@ -66,9 +66,9 @@ HTTP Principal/Scope 鉴权与解析
 
 没有模型文件时使用兼容注册表，模型名原样透传，不执行跨 Provider Fallback。配置模式的 `/v1/models` 使用 `owned_by=limen`，兼容模式使用实际 Provider。
 
-请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、流式、上下文、数据等级、健康和最小尝试窗口过滤。`balanced` 优先健康和质量，`economy` 优先预计定点成本；治理 Run 接近软预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
+请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、质量下限、流式、上下文、数据等级、健康和最小尝试窗口过滤。`minimum_quality_tier` 是硬约束，低于门槛的目标返回 `quality_tier_too_low`，不会进入 Fallback 计划。`balanced` 优先健康和质量，`economy` 优先预计定点成本；治理 Run 接近软预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
 
-`Router` 是计划执行器而不是策略实现者：它在执行前再次原子获取熔断探测权，若 Half-Open 被并发请求占用则记录 `skipped_due_to_race` 并继续下一个计划目标。Provider 只负责协议转换，不读取能力契约或模型映射。
+`Router` 是计划执行器而不是策略实现者：它在执行前再次原子获取熔断探测权，若 Half-Open 被并发请求占用则记录 `skipped_due_to_race` 并继续下一个计划目标。Provider 负责协议转换和错误分类（`retryable_transient`、`deterministic_request`、`authentication`、`quota`、`internal`），Router 只根据归一化分类决定是否 Fallback，不读取能力契约或模型映射。
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
 
@@ -93,7 +93,7 @@ HTTP Principal/Scope 鉴权与解析
 
 ## 错误与可解释性
 
-Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错误标记为 `TransportError`。Router 使用 `UnsupportedModelError`、`NoAvailableTargetError` 和 `RouteError`，HTTP 层统一映射为 OpenAI 风格错误；已有的最终上游状态和正文继续透传。
+Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错误标记为 `TransportError`；上游响应同时提供 `retryable_transient`、`deterministic_request`、`authentication`、`quota` 或 `internal` 分类。Router 使用 `UnsupportedModelError`、`NoAvailableTargetError` 和 `RouteError`，HTTP 层统一映射为 OpenAI 风格错误；已有的最终上游状态和正文继续透传。
 
 Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`、`stream` 和 Limen 能力契约。Tools、tool calls、`response_format`、`n`、`logprobs`、多模态内容以及未知字段均显式返回 `400`；这组边界在引入 Responses、Tools 或 Vision 前保持稳定。
 

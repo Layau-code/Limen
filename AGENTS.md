@@ -47,9 +47,9 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 
 - Provider 只接收 `internal/provider.ChatRequest` 和 Context，负责一次协议调用及转换，不依赖 HTTP Handler，也不负责模型映射。
 - `ModelRegistry` 保存逻辑模型、有序目标和兼容模式；Router 替换上游模型、管理预算、熔断和 Fallback。
-- `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤、稳定排序、原因码及 `InputHash`/`PlanHash`。
+- `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤（包括 `minimum_quality_tier`）、稳定排序、原因码及 `InputHash`/`PlanHash`。
 - `Router.ChatWithContract` 先生成 ExecutionPlan，再按计划执行；Half-Open 探测权在执行前再次原子获取，竞争失败记录 `skipped_due_to_race`。
-- Provider 映射使用名称到实例的只读映射。新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误、超时和取消测试。
+- Provider 映射使用名称到实例的只读映射。Provider 适配层必须把上游状态归一为稳定错误分类，只有 `retryable_transient` 允许 Fallback；新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误分类、超时和取消测试。
 - `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，并保留仍存在目标的熔断状态。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
@@ -63,7 +63,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 
 - 新行为先写能复现边界的失败测试，再写最小实现；测试聚焦可观察行为，辅助函数保持少而清楚。
 - Provider 使用 `httptest.Server`，不访问真实网络或密钥；Router 使用固定 Provider 验证预算、熔断、Fallback 和 SSE 边界。
-- Decision Engine 测试必须覆盖硬过滤、策略排序、稳定原因码、软预算策略切换、至少 10 个 golden fixture 和重复构造后的哈希一致性。
+- Decision Engine 测试必须覆盖能力、质量下限、流式、上下文、数据等级等硬过滤、策略排序、稳定原因码、软预算策略切换、至少 10 个 golden fixture 和重复构造后的哈希一致性。
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。

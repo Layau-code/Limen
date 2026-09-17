@@ -39,6 +39,49 @@ type Response struct {
 	ContentType string
 	Body        io.ReadCloser
 	Usage       UsageRecorder
+	ErrorClass  ErrorClass
+}
+
+// ErrorClass 表示 Provider 对上游失败语义的归一化分类。
+type ErrorClass string
+
+const (
+	// ErrorClassRetryableTransient 表示允许执行计划中的下一个目标。
+	ErrorClassRetryableTransient ErrorClass = "retryable_transient"
+	// ErrorClassDeterministicRequest 表示请求本身无须重试。
+	ErrorClassDeterministicRequest ErrorClass = "deterministic_request"
+	// ErrorClassAuthentication 表示 Provider 凭据或权限错误。
+	ErrorClassAuthentication ErrorClass = "authentication"
+	// ErrorClassQuota 表示配额或账户限制错误。
+	ErrorClassQuota ErrorClass = "quota"
+	// ErrorClassInternal 表示未归类的 Provider 内部错误。
+	ErrorClassInternal ErrorClass = "internal"
+)
+
+// ClassifyHTTPStatus 将上游 HTTP 状态转换为稳定的 Provider 错误分类。
+func ClassifyHTTPStatus(status int) ErrorClass {
+	switch {
+	case status == 401 || status == 403:
+		return ErrorClassAuthentication
+	case status == 402:
+		return ErrorClassQuota
+	case status == 408 || status == 409 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504 || status == 529:
+		return ErrorClassRetryableTransient
+	case status >= 400 && status < 500:
+		return ErrorClassDeterministicRequest
+	case status >= 500:
+		return ErrorClassInternal
+	default:
+		return ""
+	}
+}
+
+// IsRetryableResponse 判断响应是否允许切换到执行计划中的下一个目标。
+func IsRetryableResponse(response Response) bool {
+	if response.ErrorClass != "" {
+		return response.ErrorClass == ErrorClassRetryableTransient
+	}
+	return ClassifyHTTPStatus(response.StatusCode) == ErrorClassRetryableTransient
 }
 
 // Provider 定义统一的聊天调用入口。
