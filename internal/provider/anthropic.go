@@ -76,16 +76,17 @@ func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (R
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		recorder := newUsageRecorder()
-		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: observeJSON(response.Body, recorder), Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode)}, nil
+		return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: observeJSON(response.Body, recorder), Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode), ProviderRequestID: providerRequestID(response.Header)}, nil
 	}
 	if request.Stream {
 		recorder := newUsageRecorder()
-		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(response.Body, recorder), Usage: recorder}, nil
+		return Response{StatusCode: response.StatusCode, ContentType: "text/event-stream", Body: translateAnthropicStream(response.Body, recorder), Usage: recorder, ProviderRequestID: providerRequestID(response.Header)}, nil
 	}
 	translated, err := translateAnthropicResponse(response.StatusCode, response.Body)
 	if err != nil {
 		return Response{}, &RequestError{Operation: "decode Anthropic response", Err: err}
 	}
+	translated.ProviderRequestID = providerRequestID(response.Header)
 	return translated, nil
 }
 

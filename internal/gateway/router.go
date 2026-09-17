@@ -47,12 +47,13 @@ type Result struct {
 
 // AttemptReport 描述一次真实 Provider 调用的安全结果摘要。
 type AttemptReport struct {
-	TargetID      string
-	Provider      string
-	UpstreamModel string
-	Outcome       string
-	StatusCode    int
-	ErrorClass    provider.ErrorClass
+	TargetID          string
+	Provider          string
+	UpstreamModel     string
+	Outcome           string
+	StatusCode        int
+	ErrorClass        provider.ErrorClass
+	ProviderRequestID string
 }
 
 // AttemptStartHook 在 Provider 调用前持久化 Attempt，失败时不会发起调用。
@@ -417,7 +418,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 
 		outcome := strconv.Itoa(response.StatusCode)
 		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-		attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome, StatusCode: response.StatusCode, ErrorClass: response.ErrorClass})
+		attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome, StatusCode: response.StatusCode, ErrorClass: response.ErrorClass, ProviderRequestID: response.ProviderRequestID})
 		if provider.IsRetryableResponse(response) {
 			breaker.recordFailure()
 			lastErr = nil

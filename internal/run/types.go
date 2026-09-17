@@ -99,6 +99,7 @@ type Service interface {
 	CreateRun(context.Context, string, Run) error
 	AdmitRequest(context.Context, string, string, AdmissionInput) (Request, error)
 	RecordAttemptStarted(context.Context, string, Attempt) error
+	UpdateAttemptProviderRequestID(context.Context, string, string, string) error
 	FinishAttempt(context.Context, string, string, AttemptState, time.Time) error
 	BeginSettlement(context.Context, string, string, time.Time) (Request, error)
 	SettleRequest(context.Context, string, string, *int64, time.Time) (Request, error)

@@ -8,6 +8,7 @@
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
 - PostgreSQL Run 取消支持 `LISTEN/NOTIFY` 低延迟广播，并保留事件表轮询兜底。
 - 未知费用支持管理员幂等补记或明确接受，Run 可从 `suspended_accounting` 恢复；PostgreSQL 保存处置摘要。
+- Provider 返回的非敏感 request ID 会补写到对应 Attempt，保留上游调用证据。
 
 ### 限制
 

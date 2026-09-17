@@ -954,6 +954,11 @@ func (h *Handler) finishAttemptReports(ctx context.Context, tenantID string, att
 	for index, attempt := range attempts {
 		state := run.AttemptAbandoned
 		if index < len(reports) {
+			if reports[index].ProviderRequestID != "" {
+				if err := h.runs.UpdateAttemptProviderRequestID(ctx, tenantID, attempt.ID, reports[index].ProviderRequestID); err != nil {
+					return err
+				}
+			}
 			state = attemptState(reports[index])
 		}
 		if err := h.runs.FinishAttempt(ctx, tenantID, attempt.ID, state, time.Now().UTC()); err != nil {

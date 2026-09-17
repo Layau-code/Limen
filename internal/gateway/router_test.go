@@ -132,11 +132,11 @@ func TestRouterReportsEachProviderAttempt(t *testing.T) {
 	providers := map[string]provider.Provider{
 		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
 			calls = append(calls, "openai")
-			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy")), ProviderRequestID: "req-primary"}, nil
 		}),
 		"anthropic": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
 			calls = append(calls, "anthropic")
-			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), ProviderRequestID: "req-backup"}, nil
 		}),
 	}
 	router := NewRouter(providers, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Second})
@@ -152,7 +152,7 @@ func TestRouterReportsEachProviderAttempt(t *testing.T) {
 	if !slices.Equal(calls, []string{"openai", "anthropic"}) || !slices.Equal(started, []string{"primary", "backup"}) {
 		t.Fatalf("calls=%v started=%v", calls, started)
 	}
-	if len(result.Attempts) != 2 || result.Attempts[0].TargetID != "primary" || result.Attempts[0].StatusCode != http.StatusServiceUnavailable || result.Attempts[1].TargetID != "backup" || result.Attempts[1].StatusCode != http.StatusOK {
+	if len(result.Attempts) != 2 || result.Attempts[0].TargetID != "primary" || result.Attempts[0].StatusCode != http.StatusServiceUnavailable || result.Attempts[0].ProviderRequestID != "req-primary" || result.Attempts[1].TargetID != "backup" || result.Attempts[1].StatusCode != http.StatusOK || result.Attempts[1].ProviderRequestID != "req-backup" {
 		t.Fatalf("attempts=%+v", result.Attempts)
 	}
 }

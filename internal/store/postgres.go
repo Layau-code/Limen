@@ -466,6 +466,29 @@ func (store *PostgresStore) RecordAttemptStarted(ctx context.Context, tenantID s
 	return tx.Commit()
 }
 
+// UpdateAttemptProviderRequestID 保存 PostgreSQL Attempt 的上游请求标识。
+func (store *PostgresStore) UpdateAttemptProviderRequestID(ctx context.Context, tenantID, attemptID, providerRequestID string) error {
+	if store.db == nil {
+		return errors.New("postgres database is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE attempts SET provider_request_id=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, attemptID, providerRequestID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return run.ErrResourceNotFound
+	}
+	return tx.Commit()
+}
+
 // FinishAttempt 更新 PostgreSQL 中 Attempt 的终态和完成时间。
 func (store *PostgresStore) FinishAttempt(ctx context.Context, tenantID, attemptID string, state run.AttemptState, finishedAt time.Time) error {
 	if store.db == nil {

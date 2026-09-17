@@ -49,6 +49,11 @@ func (service *MemoryService) RecordAttemptStarted(_ context.Context, tenantID s
 	return service.store.RecordAttemptStarted(tenantID, attempt)
 }
 
+// UpdateAttemptProviderRequestID 保存内存 Attempt 的上游请求标识。
+func (service *MemoryService) UpdateAttemptProviderRequestID(_ context.Context, tenantID, attemptID, providerRequestID string) error {
+	return service.store.UpdateAttemptProviderRequestID(tenantID, attemptID, providerRequestID)
+}
+
 // FinishAttempt 将内存 Attempt 更新为执行终态。
 func (service *MemoryService) FinishAttempt(_ context.Context, tenantID, attemptID string, state AttemptState, finishedAt time.Time) error {
 	return service.store.FinishAttempt(tenantID, attemptID, state, finishedAt)

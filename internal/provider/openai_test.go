@@ -166,6 +166,23 @@ func TestOpenAIChatUsesOnlyCallerDeadline(t *testing.T) {
 	_ = response.Body.Close()
 }
 
+func TestOpenAIChatCapturesProviderRequestID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-request-id", "req-openai-1")
+		_, _ = io.WriteString(w, `{"id":"chat-1"}`)
+	}))
+	defer server.Close()
+
+	response, err := NewOpenAI(server.Client(), server.URL, "openai-secret").Chat(context.Background(), ChatRequest{Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.ProviderRequestID != "req-openai-1" {
+		t.Fatalf("provider request id = %q", response.ProviderRequestID)
+	}
+}
+
 func TestOpenAIChatClassifiesCallErrors(t *testing.T) {
 	tests := []struct {
 		name     string

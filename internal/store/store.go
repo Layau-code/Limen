@@ -34,6 +34,7 @@ type Store interface {
 	CreateRun(context.Context, string, run.Run) error
 	AdmitRequest(context.Context, string, string, AdmissionInput) (run.Request, error)
 	RecordAttemptStarted(context.Context, string, run.Attempt) error
+	UpdateAttemptProviderRequestID(context.Context, string, string, string) error
 	BeginSettlement(context.Context, string, string, time.Time) (run.Request, error)
 	SettleRequest(context.Context, string, string, *int64, time.Time) (run.Request, error)
 	ResolveAccounting(context.Context, string, string, run.AccountingResolution, time.Time) (run.Request, error)

@@ -282,10 +282,10 @@ func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	openAI := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
-		return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+		return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy")), ProviderRequestID: "req-primary"}, nil
 	})
 	anthropic := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
-		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`)), Usage: staticUsage{InputTokens: 1, OutputTokens: 1, Complete: true}}, nil
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`)), ProviderRequestID: "req-backup", Usage: staticUsage{InputTokens: 1, OutputTokens: 1, Complete: true}}, nil
 	})
 	runs := run.NewMemoryService(nil)
 	handler := NewWithRuns("limen-secret", newTestRouter(openAI, anthropic, registry), runs)
@@ -308,7 +308,7 @@ func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
 		t.Fatalf("chat = %d %s", chatResponse.Code, chatResponse.Body.String())
 	}
 	attempts := runs.AttemptsForRequest(runTenantID, chatResponse.Header().Get("X-Limen-Request-ID"))
-	if len(attempts) != 2 || attempts[0].State != run.AttemptTransientFailed || attempts[1].State != run.AttemptSucceeded {
+	if len(attempts) != 2 || attempts[0].State != run.AttemptTransientFailed || attempts[0].ProviderRequestID != "req-primary" || attempts[1].State != run.AttemptSucceeded || attempts[1].ProviderRequestID != "req-backup" {
 		t.Fatalf("attempts = %+v", attempts)
 	}
 }

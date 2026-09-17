@@ -36,11 +36,12 @@ type UsageRecorder interface {
 
 // Response 表示 Provider 返回的、与 HTTP 框架无关的响应。
 type Response struct {
-	StatusCode  int
-	ContentType string
-	Body        io.ReadCloser
-	Usage       UsageRecorder
-	ErrorClass  ErrorClass
+	StatusCode        int
+	ContentType       string
+	Body              io.ReadCloser
+	Usage             UsageRecorder
+	ErrorClass        ErrorClass
+	ProviderRequestID string
 }
 
 // ErrorClass 表示 Provider 对上游失败语义的归一化分类。

@@ -34,6 +34,7 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 		if request.Model != "claude-test" || request.System != "be concise" || request.MaxToken != 64 || len(request.Messages) != 1 || request.Temp == nil {
 			t.Fatalf("unexpected request: %+v", request)
 		}
+		w.Header().Set("request-id", "req-anthropic-1")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"msg-1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
 	}))
@@ -56,6 +57,9 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"chat.completion"`) || !strings.Contains(string(body), `"hello"`) {
 		t.Fatalf("response = %d %s", response.StatusCode, body)
+	}
+	if response.ProviderRequestID != "req-anthropic-1" {
+		t.Fatalf("provider request id = %q", response.ProviderRequestID)
 	}
 	usage := response.Usage.Snapshot()
 	if !usage.Complete || usage.InputTokens != 3 || usage.OutputTokens != 2 {

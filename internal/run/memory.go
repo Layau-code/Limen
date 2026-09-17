@@ -76,6 +76,20 @@ func (store *MemoryStore) FinishAttempt(tenantID, attemptID string, state Attemp
 	return nil
 }
 
+// UpdateAttemptProviderRequestID 保存上游返回的非敏感请求标识。
+func (store *MemoryStore) UpdateAttemptProviderRequestID(tenantID, attemptID, providerRequestID string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, attemptID)
+	attempt, exists := store.attempts[key]
+	if !exists {
+		return ErrResourceNotFound
+	}
+	attempt.ProviderRequestID = providerRequestID
+	store.attempts[key] = attempt
+	return nil
+}
+
 // AttemptsForRequest 返回指定请求的 Attempt 副本，供内存控制面验证执行轨迹。
 func (store *MemoryStore) AttemptsForRequest(tenantID, requestID string) []Attempt {
 	store.mu.Lock()

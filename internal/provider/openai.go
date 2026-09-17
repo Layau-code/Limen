@@ -82,7 +82,7 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 	if request.Stream {
 		bodyReader = observeOpenAISSE(response.Body, recorder)
 	}
-	return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: bodyReader, Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode)}, nil
+	return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: bodyReader, Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode), ProviderRequestID: providerRequestID(response.Header)}, nil
 }
 
 type openAIRequest struct {
