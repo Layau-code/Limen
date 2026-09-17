@@ -409,6 +409,10 @@ func validateDatabaseURL(raw string) error {
 
 // validateProviderKeys 校验兼容模式或模型注册表实际使用的 Provider 密钥。
 func validateProviderKeys(cfg Config) error {
+	// 配置可能来自数据库中尚未加载的已发布版本，启动装配完成后再按实际目录校验。
+	if len(cfg.Models) == 0 && cfg.DatabaseURL != "" {
+		return nil
+	}
 	storedCredentialsAvailable := cfg.DatabaseURL != "" && strings.TrimSpace(cfg.CredentialMasterKey) != ""
 	usesOpenAI := len(cfg.Models) == 0
 	usesAnthropic := len(cfg.Models) == 0

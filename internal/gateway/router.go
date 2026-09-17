@@ -248,7 +248,7 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 		SchemaVersion:     decision.SchemaVersionV1,
 		AlgorithmVersion:  decision.AlgorithmVersionV1,
 		ConfigVersion:     configVersion,
-		EvaluatedAtUnixMS: time.Now().UnixMilli(),
+		EvaluatedAtUnixMS: router.now().UnixMilli(),
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
 		Candidates:        candidates,
 	}

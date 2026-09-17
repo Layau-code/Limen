@@ -29,6 +29,13 @@ func (p *OpenAIProvider) SetAPIKey(apiKey string) error {
 	return nil
 }
 
+// ClearAPIKey 清除 OpenAI Provider 内存中的当前密钥。
+func (p *OpenAIProvider) ClearAPIKey() {
+	p.mu.Lock()
+	p.apiKey = ""
+	p.mu.Unlock()
+}
+
 // NewOpenAI 创建 OpenAI Provider。
 func NewOpenAI(client *http.Client, baseURL, apiKey string) *OpenAIProvider {
 	if client == nil {

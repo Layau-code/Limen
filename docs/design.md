@@ -109,4 +109,4 @@ Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`
 
 ## 明确不包含
 
-本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Provider 凭据管理 API、大型管理后台或完整 OpenTelemetry 导出平台；PostgreSQL API Key Store、配置版本存储和基础 Prometheus 文本指标已实现。
+本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Secret Manager 接入、大型管理后台或完整 OpenTelemetry 导出平台；PostgreSQL API Key Store、配置版本存储、Provider 凭据轮换/撤销 API 和基础 Prometheus 文本指标已实现。

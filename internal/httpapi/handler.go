@@ -16,6 +16,7 @@ import (
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
+	"github.com/huz/limen/internal/credentialstore"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/journal"
@@ -37,14 +38,18 @@ var settlementTrailerNames = []string{
 }
 
 type Handler struct {
-	authenticator auth.Authenticator
-	router        *gateway.Router
-	runs          run.Service
-	tenantID      string
-	leaseOwner    string
-	decisions     journal.Store
-	configs       configstore.Store
-	metrics       *telemetry.Registry
+	authenticator       auth.Authenticator
+	router              *gateway.Router
+	runs                run.Service
+	tenantID            string
+	leaseOwner          string
+	decisions           journal.Store
+	configs             configstore.Store
+	metrics             *telemetry.Registry
+	credentials         credentialstore.Store
+	credentialSetters   map[string]ProviderCredentialSetter
+	credentialEndpoints map[string]string
+	credentialMu        sync.Mutex
 }
 
 const runTenantID = "local"
@@ -93,6 +98,17 @@ func NewWithHealthAndRunsForTenantAuthenticatorAndJournal(authenticator auth.Aut
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig 创建包含决策和配置控制面的完整处理器。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, runs run.Service) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, tenantID, decisions, configs, nil, nil, nil, runs)
+}
+
+// ProviderCredentialSetter 定义 Provider 密钥的原子替换和撤销操作。
+type ProviderCredentialSetter interface {
+	SetAPIKey(string) error
+	ClearAPIKey()
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials 创建完整数据面和凭据控制面。
+func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -107,14 +123,17 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator au
 		configs = configstore.NewMemoryStore()
 	}
 	handler := &Handler{
-		authenticator: authenticator,
-		router:        router,
-		runs:          runs,
-		tenantID:      tenantID,
-		leaseOwner:    newLeaseOwner(),
-		decisions:     decisions,
-		configs:       configs,
-		metrics:       telemetry.NewRegistry(),
+		authenticator:       authenticator,
+		router:              router,
+		runs:                runs,
+		tenantID:            tenantID,
+		leaseOwner:          newLeaseOwner(),
+		decisions:           decisions,
+		configs:             configs,
+		metrics:             telemetry.NewRegistry(),
+		credentials:         credentials,
+		credentialSetters:   setters,
+		credentialEndpoints: endpoints,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
@@ -124,6 +143,8 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator au
 	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
+	mux.HandleFunc("POST /v1/limen/credentials/{provider}", handler.rotateCredential)
+	mux.HandleFunc("POST /v1/limen/credentials/{provider}/revoke", handler.revokeCredential)
 	mux.HandleFunc("POST /v1/limen/runs", handler.createRun)
 	mux.HandleFunc("GET /v1/limen/runs/{run_id}", handler.getRun)
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/complete", handler.completeRun)

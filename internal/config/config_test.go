@@ -111,6 +111,17 @@ func TestLoadAllowsProviderKeysFromCredentialStore(t *testing.T) {
 	}
 }
 
+func TestLoadDefersCompatibilityProviderKeysWhenDatabaseConfigMayOverride(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_DATABASE_URL", "postgresql://limen:secret@db.example/limen?sslmode=require")
+	if _, err := Load(); err != nil {
+		t.Fatalf("expected database-backed configuration to defer key validation: %v", err)
+	}
+}
+
 func TestLoadRejectsInvalidDatabaseURL(t *testing.T) {
 	t.Setenv("LIMEN_API_KEY", "limen-secret")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")

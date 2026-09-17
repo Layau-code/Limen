@@ -6,6 +6,7 @@ import (
 
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/credentialstore"
+	"github.com/huz/limen/internal/gateway"
 )
 
 func TestGatewayTargetPreservesPricing(t *testing.T) {
@@ -32,5 +33,20 @@ func TestLoadStoredCredentialDoesNotExposeMissingRecordAsSuccess(t *testing.T) {
 	loaded, err := loadStoredCredential(context.Background(), credentialstore.NewMemoryStore(vault), "tenant", "openai", "endpoint", setter)
 	if err != nil || loaded || setter.key != "" {
 		t.Fatalf("loaded=%t key=%q err=%v", loaded, setter.key, err)
+	}
+}
+
+func TestValidateRuntimeProviderKeysUsesActiveRegistry(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "openai-only", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{OpenAIAPIKey: "openai-secret"}
+	if err := validateRuntimeProviderKeys(registry, cfg); err != nil {
+		t.Fatalf("unexpected key validation error: %v", err)
+	}
+	cfg.OpenAIAPIKey = ""
+	if err := validateRuntimeProviderKeys(registry, cfg); err == nil {
+		t.Fatal("expected missing active provider key")
 	}
 }

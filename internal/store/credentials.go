@@ -25,6 +25,9 @@ func (store *PostgresCredentialStore) Rotate(ctx context.Context, tenantID, prov
 	if store == nil || store.db == nil {
 		return credentialstore.Record{}, ErrDatabaseRequired
 	}
+	if store.vault == nil {
+		return credentialstore.Record{}, credentialstore.ErrInvalidCredential
+	}
 	sealed, err := store.vault.Encrypt(tenantID, provider, endpointID, secret)
 	if err != nil {
 		return credentialstore.Record{}, err
@@ -58,6 +61,9 @@ func (store *PostgresCredentialStore) Rotate(ctx context.Context, tenantID, prov
 func (store *PostgresCredentialStore) Resolve(ctx context.Context, tenantID, provider, endpointID string) ([]byte, credentialstore.Record, error) {
 	if store == nil || store.db == nil {
 		return nil, credentialstore.Record{}, ErrDatabaseRequired
+	}
+	if store.vault == nil {
+		return nil, credentialstore.Record{}, credentialstore.ErrInvalidCredential
 	}
 	tx, err := store.beginCredentialTenantTx(ctx, tenantID)
 	if err != nil {

@@ -86,7 +86,9 @@ func (run *Run) Settle(costNanoUSD *int64) error {
 		run.SettledCostNanoUSD += *costNanoUSD
 	} else {
 		run.InFlight--
-		run.State = StateSuspendedAccounting
+		if !isTerminal(run.State) {
+			run.State = StateSuspendedAccounting
+		}
 		return ErrAccountingSuspended
 	}
 	run.InFlight--

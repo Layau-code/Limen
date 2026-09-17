@@ -463,6 +463,9 @@ POST /v1/limen/decisions/{decision_id}/replay
 GET  /v1/limen/configs
 POST /v1/limen/configs
 POST /v1/limen/configs/{version}/publish
+
+POST /v1/limen/credentials/{provider}
+POST /v1/limen/credentials/{provider}/revoke
 ~~~
 
 成功响应增加 request_id、run_id、decision_id、config_version、provider、attempts 和 route 的安全摘要 Header。真实上游模型名称仅向具备审计权限的调用者展示。
@@ -488,7 +491,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |
@@ -499,8 +502,9 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | Dry Run | inference 与 decisions:read |
 | 读取配置 | configs:read |
 | 创建和发布配置 | configs:write |
+| 轮换和撤销 Provider 凭据 | admin |
 
-Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用；阶段 D 完成在线轮换。
+Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通知和 Secret Manager 仍后置。
 
 ### 9.4 Explain、Dry Run、Replay
 
@@ -632,7 +636,7 @@ git diff --check
 
 ### 阶段 D：生产化与 1.0
 
-完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Provider 凭据管理 API、Secret Manager 接入、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标和 Provider 原子密钥轮换边界。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
+完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、跨实例凭据变更通知、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标和 Provider 凭据轮换/撤销控制面。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
 
 ### 1.0 之后
 

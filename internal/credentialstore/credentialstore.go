@@ -135,6 +135,9 @@ func (store *MemoryStore) Rotate(ctx context.Context, tenantID, provider, endpoi
 	if err := contextError(ctx); err != nil {
 		return Record{}, err
 	}
+	if store == nil || store.vault == nil {
+		return Record{}, ErrInvalidCredential
+	}
 	sealed, err := store.vault.Encrypt(tenantID, provider, endpointID, secret)
 	if err != nil {
 		return Record{}, err
@@ -161,6 +164,9 @@ func (store *MemoryStore) Resolve(ctx context.Context, tenantID, provider, endpo
 	if err := contextError(ctx); err != nil {
 		return nil, Record{}, err
 	}
+	if store == nil || store.vault == nil {
+		return nil, Record{}, ErrInvalidCredential
+	}
 	store.mu.RLock()
 	id := store.active[activeKey(tenantID, provider, endpointID)]
 	entry, ok := store.entries[id]
@@ -179,6 +185,9 @@ func (store *MemoryStore) Resolve(ctx context.Context, tenantID, provider, endpo
 func (store *MemoryStore) Revoke(ctx context.Context, tenantID, provider, endpointID string) error {
 	if err := contextError(ctx); err != nil {
 		return err
+	}
+	if store == nil {
+		return ErrInvalidCredential
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()

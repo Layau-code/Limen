@@ -100,6 +100,22 @@ func TestRunSuspendsWhenSettlementIsUnknown(t *testing.T) {
 	}
 }
 
+func TestUnknownSettlementDoesNotReopenTerminalRun(t *testing.T) {
+	for _, state := range []RunState{StateCancelled, StateDeadlineExceeded, StateSoftBudgetExhausted} {
+		t.Run(string(state), func(t *testing.T) {
+			run := testRun()
+			run.State = state
+			run.InFlight = 1
+			if err := run.Settle(nil); !errors.Is(err, ErrAccountingSuspended) {
+				t.Fatalf("error = %v", err)
+			}
+			if run.State != state || run.InFlight != 0 {
+				t.Fatalf("run = %+v", run)
+			}
+		})
+	}
+}
+
 func TestRunRejectsRepeatedTerminalTransition(t *testing.T) {
 	run := testRun()
 	if err := run.Cancel(); err != nil {

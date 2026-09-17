@@ -35,6 +35,13 @@ func (p *AnthropicProvider) SetAPIKey(apiKey string) error {
 	return nil
 }
 
+// ClearAPIKey 清除 Anthropic Provider 内存中的当前密钥。
+func (p *AnthropicProvider) ClearAPIKey() {
+	p.mu.Lock()
+	p.apiKey = ""
+	p.mu.Unlock()
+}
+
 // NewAnthropic 创建 Anthropic Provider。
 func NewAnthropic(client *http.Client, baseURL, apiKey string) *AnthropicProvider {
 	if client == nil {

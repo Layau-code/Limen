@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -93,6 +94,9 @@ func main() {
 	var runService run.Service
 	var decisionStore journal.Store = journal.NewMemoryStore()
 	var configStore configstore.Store = configstore.NewMemoryStore()
+	var credentialStore credentialstore.Store
+	var credentialSetters map[string]httpapi.ProviderCredentialSetter
+	var credentialEndpoints map[string]string
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
@@ -139,6 +143,7 @@ func main() {
 				logger.Error("published model registry activation failed", "error", err)
 				os.Exit(1)
 			}
+			registry = publishedRegistry
 			cfg.ConfigVersion = published.Version
 		} else if !errors.Is(publishErr, configstore.ErrNotFound) {
 			logger.Error("published model registry load failed", "error", publishErr)
@@ -159,6 +164,9 @@ func main() {
 				os.Exit(1)
 			}
 			credentials := store.NewPostgresCredentialStore(database, vault)
+			credentialStore = credentials
+			credentialSetters = map[string]httpapi.ProviderCredentialSetter{"openai": openAI, "anthropic": anthropic}
+			credentialEndpoints = map[string]string{"openai": openAIEndpointID, "anthropic": anthropicEndpointID}
 			credentialContext, cancelCredentials := context.WithTimeout(context.Background(), 3*time.Second)
 			openAIStored, openAIError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "openai", openAIEndpointID, openAI)
 			anthropicStored, anthropicError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "anthropic", anthropicEndpointID, anthropic)
@@ -184,9 +192,15 @@ func main() {
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
+	if credentialStore == nil {
+		if err := validateRuntimeProviderKeys(registry, cfg); err != nil {
+			logger.Error("provider credential is missing", "error", err)
+			os.Exit(1)
+		}
+	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator, router, health, cfg.TenantID, decisionStore, configStore, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -214,6 +228,17 @@ func main() {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// validateRuntimeProviderKeys 在数据库配置生效后按当前目录校验环境密钥。
+func validateRuntimeProviderKeys(registry *gateway.ModelRegistry, cfg config.Config) error {
+	if registryUsesProvider(registry, "openai") && strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
+		return errors.New("OPENAI_API_KEY is required by the active model registry")
+	}
+	if registryUsesProvider(registry, "anthropic") && strings.TrimSpace(cfg.AnthropicAPIKey) == "" {
+		return errors.New("ANTHROPIC_API_KEY is required by the active model registry")
+	}
+	return nil
 }
 
 type apiKeySetter interface {

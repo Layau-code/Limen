@@ -543,7 +543,7 @@ func (store *PostgresStore) SettleRequest(ctx context.Context, tenantID, request
 	if costNanoUSD == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE run_requests SET settlement_status='pending', updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, now)
 		if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE runs SET state='suspended_accounting', in_flight=GREATEST(in_flight-1,0), updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, now)
+			_, err = tx.ExecContext(ctx, `UPDATE runs SET state=CASE WHEN state IN ('completed','cancelled','deadline_exceeded','soft_budget_exhausted') THEN state ELSE 'suspended_accounting' END, in_flight=GREATEST(in_flight-1,0), updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, now)
 		}
 		if err != nil {
 			return request, err
