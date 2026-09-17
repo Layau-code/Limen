@@ -13,6 +13,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 每次 Dry Run 和真实 Chat 都生成不含 Prompt/Response 的 Decision Journal，返回 `decision_id`，可 Explain 查询并 Replay 校验 `plan_hash`。
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
 - 受治理 Chat 的 Request 在准入后持有 30 秒租约并每 10 秒续租；实例崩溃后不重放 Provider 调用，而是标记未知费用并暂停 Run，避免重复计费。
+- 崩溃恢复会把遗留的 `Attempt started` 原子标记为 `abandoned`；PostgreSQL 事务连接池具有 5 秒 I/O 期限，网络黑洞不会永久阻塞恢复任务。
 - 每次真实 Provider 调用都保存独立 Attempt；若上游返回 request ID，Limen 会在结算前补写该非敏感标识，便于审计调用是否已经发生。
 - Run 取消会写入租户隔离的取消事件；PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 低延迟广播，在途 Chat 同时保留每秒轮询作为断线兜底。
 - 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。
@@ -145,7 +146,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 ## 开发验证
 
-`make check` 运行格式、静态分析和竞态测试；`make integration` 使用临时 PostgreSQL 17 容器验证 RLS、100 并发准入、幂等、唯一账本、租约竞争恢复以及取消通知/轮询。集成测试也可通过 `LIMEN_TEST_DATABASE_ADMIN_URL`、`LIMEN_TEST_DATABASE_URL` 和 `LIMEN_TEST_DATABASE_ROLE` 使用外部测试数据库，三个变量必须同时提供。
+`make check` 运行格式、静态分析和竞态测试；`make integration` 使用临时 PostgreSQL 17 容器验证 RLS、100 并发准入、幂等、唯一账本、强制终止执行进程、数据库暂停/恢复、租约竞争以及取消通知/轮询。集成测试也可通过 `LIMEN_TEST_DATABASE_ADMIN_URL`、`LIMEN_TEST_DATABASE_URL` 和 `LIMEN_TEST_DATABASE_ROLE` 使用外部测试数据库，三个变量必须同时提供；此时无法安全控制数据库生命周期的暂停场景会跳过。
 
 ```bash
 make check   # gofmt、go vet、竞态测试

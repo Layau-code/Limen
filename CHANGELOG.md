@@ -11,14 +11,16 @@
 - Provider 返回的非敏感 request ID 会补写到对应 Attempt，保留上游调用证据。
 - PostgreSQL 新增 008 迁移，对所有租户表启用 `FORCE ROW LEVEL SECURITY`。
 - 真实 PostgreSQL 集成测试覆盖非超级用户 RLS、100 并发准入与幂等、唯一账本、双 Store 租约恢复竞争和取消事件双路径。
+- 故障注入会强制终止持有租约的独立进程，并暂停/恢复 PostgreSQL 验证结算任务不会丢失或重复记账。
 
 ### 修复
 
 - PostgreSQL Request 读取可正确处理尚未生成 `decision_id` 的准入状态。
+- 过期租约恢复会把遗留的 `Attempt started` 标记为 `abandoned`；PostgreSQL 事务连接池设置 5 秒网络 I/O 期限，避免断连时永久阻塞。
 
 ### 限制
 
-- 进程崩溃与数据库断连故障注入、旧算法保留窗口与审批审计、Secret Manager 和完整 OpenTelemetry 导出仍待后续生产化阶段。
+- 旧算法保留窗口与审批审计、Secret Manager 和完整 OpenTelemetry 导出仍待后续生产化阶段。
 
 ## v0.3.0
 

@@ -22,7 +22,6 @@ import (
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 	"github.com/huz/limen/internal/store"
-	_ "github.com/lib/pq"
 )
 
 // main 组装 Limen 依赖并管理 HTTP 服务生命周期。
@@ -103,7 +102,7 @@ func main() {
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
-		database, err = sql.Open("postgres", cfg.DatabaseURL)
+		database, err = store.OpenPostgres(cfg.DatabaseURL, 5*time.Second)
 		if err != nil {
 			logger.Error("open database failed", "error", err)
 			os.Exit(1)

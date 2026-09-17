@@ -405,6 +405,9 @@ func (store *PostgresStore) RecoverExpiredRequests(ctx context.Context, tenantID
 		if _, err := tx.ExecContext(ctx, `UPDATE run_requests SET state='abandoned', settlement_status='pending', lease_owner=NULL, lease_expires_at=NULL, updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, now); err != nil {
 			return nil, err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE attempts SET state=$3,finished_at=COALESCE(finished_at,$4) WHERE tenant_id=$1 AND request_id=$2 AND state=$5`, tenantID, requestID, run.AttemptAbandoned, now, run.AttemptStarted); err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=CASE WHEN state IN ('completed','cancelled','deadline_exceeded','soft_budget_exhausted') THEN state ELSE 'suspended_accounting' END, in_flight=GREATEST(in_flight-1,0), updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, runID, now); err != nil {
 			return nil, err
 		}

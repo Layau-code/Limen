@@ -53,5 +53,6 @@ mapped_port="$(docker port "$container_name" 5432/tcp | awk -F: 'NR==1 {print $N
 export LIMEN_TEST_DATABASE_ADMIN_URL="postgres://limen_admin:${admin_password}@127.0.0.1:${mapped_port}/limen_test?sslmode=disable"
 export LIMEN_TEST_DATABASE_URL="postgres://limen_app:${app_password}@127.0.0.1:${mapped_port}/limen_test?sslmode=disable"
 export LIMEN_TEST_DATABASE_ROLE="limen_app"
+export LIMEN_TEST_DATABASE_CONTAINER="$container_name"
 
 run_tests

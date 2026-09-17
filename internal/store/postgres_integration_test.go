@@ -1,11 +1,14 @@
 package store
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -254,7 +257,7 @@ func TestPostgresIntegrationLeaseRecoveryCompetition(t *testing.T) {
 	tenantID := integrationID("tenant-recovery")
 	ensureIntegrationTenant(t, adminDB, tenantID)
 	first := NewPostgresStore(appDB)
-	secondDB, err := sql.Open("postgres", appURL)
+	secondDB, err := OpenPostgres(appURL, 500*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +325,217 @@ func TestPostgresIntegrationLeaseRecoveryCompetition(t *testing.T) {
 	}
 }
 
+// TestPostgresIntegrationCrashRecoveryAbandonsAttempt 验证崩溃实例遗留的调用证据会进入明确终态。
+func TestPostgresIntegrationCrashRecoveryAbandonsAttempt(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-crash")
+	runID := integrationID("run-crash")
+	requestID := integrationID("request-crash")
+	attemptID := integrationID("attempt-crash")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	if err := store.CreateRun(ctx, tenantID, integrationRun(runID, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestPostgresIntegrationCrashHelper$")
+	command.Env = append(os.Environ(),
+		"LIMEN_FAULT_HELPER=crash",
+		"LIMEN_FAULT_TENANT_ID="+tenantID,
+		"LIMEN_FAULT_RUN_ID="+runID,
+		"LIMEN_FAULT_REQUEST_ID="+requestID,
+		"LIMEN_FAULT_ATTEMPT_ID="+attemptID,
+	)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	killed := false
+	t.Cleanup(func() {
+		if !killed && command.Process != nil {
+			_ = command.Process.Kill()
+			_, _ = command.Process.Wait()
+		}
+	})
+	ready := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		if scanner.Scan() {
+			ready <- scanner.Text()
+			return
+		}
+		ready <- ""
+	}()
+	select {
+	case marker := <-ready:
+		if marker != "READY" {
+			t.Fatalf("crash helper marker=%q stderr=%s", marker, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("crash helper did not become ready: %s", stderr.String())
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	killed = true
+	if err := command.Wait(); err == nil {
+		t.Fatal("crash helper exited without forced termination")
+	}
+
+	request, err := store.GetRequest(ctx, tenantID, requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait := time.Until(request.LeaseExpiresAt.Add(20 * time.Millisecond)); wait > 0 {
+		timer := time.NewTimer(wait)
+		<-timer.C
+	}
+	secondDB, err := OpenPostgres(appURL, 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+	second := NewPostgresStore(secondDB)
+	recovered, err := second.RecoverExpiredRequests(ctx, tenantID, time.Now().UTC(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0].ID != requestID {
+		t.Fatalf("recovered requests = %+v", recovered)
+	}
+	if state := tenantAttemptState(t, appDB, tenantID, attemptID); state != run.AttemptAbandoned {
+		t.Fatalf("attempt state = %s", state)
+	}
+	if count := tenantRowCount(t, appDB, tenantID, `SELECT count(*) FROM ledger_entries WHERE request_id=$1`, requestID); count != 0 {
+		t.Fatalf("ledger rows = %d", count)
+	}
+	storedRun, err := store.GetRun(ctx, tenantID, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.State != run.StateSuspendedAccounting || storedRun.InFlight != 0 {
+		t.Fatalf("run state=%s in_flight=%d", storedRun.State, storedRun.InFlight)
+	}
+}
+
+// TestPostgresIntegrationCrashHelper 模拟持久化调用证据后仍在执行的独立实例。
+func TestPostgresIntegrationCrashHelper(t *testing.T) {
+	if os.Getenv("LIMEN_FAULT_HELPER") != "crash" {
+		return
+	}
+	db, err := OpenPostgres(os.Getenv("LIMEN_TEST_DATABASE_URL"), 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewPostgresStore(db)
+	now := time.Now().UTC()
+	tenantID := os.Getenv("LIMEN_FAULT_TENANT_ID")
+	requestID := os.Getenv("LIMEN_FAULT_REQUEST_ID")
+	request, err := store.AdmitRequest(context.Background(), tenantID, os.Getenv("LIMEN_FAULT_RUN_ID"), AdmissionInput{
+		Request:    run.Request{ID: requestID, Endpoint: "/v1/chat/completions", IdempotencyKey: "crash-key", RequestHash: "crash-hash"},
+		Now:        now,
+		LeaseOwner: "crash-helper",
+		LeaseTTL:   500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAttemptStarted(context.Background(), tenantID, run.Attempt{
+		ID:            os.Getenv("LIMEN_FAULT_ATTEMPT_ID"),
+		RequestID:     request.ID,
+		TargetID:      "primary",
+		Provider:      "openai",
+		UpstreamModel: "gpt-test",
+		StartedAt:     now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(os.Stdout, "READY"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Stdout.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	select {}
+}
+
+// TestPostgresIntegrationSettlementSurvivesDatabasePause 验证短暂断连不会丢失已持久化结算任务。
+func TestPostgresIntegrationSettlementSurvivesDatabasePause(t *testing.T) {
+	containerName := os.Getenv("LIMEN_TEST_DATABASE_CONTAINER")
+	if containerName == "" {
+		t.Skip("the external PostgreSQL lifecycle is not controlled by this test")
+	}
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-db-pause")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-db-pause"), 1)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	request, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request: run.Request{ID: integrationID("request-db-pause"), Endpoint: "/v1/chat/completions", IdempotencyKey: "db-pause-key", RequestHash: "db-pause-hash"},
+		Now:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(250_000)
+	if err := store.QueueSettlement(ctx, tenantID, request.ID, &cost, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("docker", "pause", containerName).CombinedOutput(); err != nil {
+		t.Fatalf("pause PostgreSQL: %v: %s", err, output)
+	}
+	paused := true
+	t.Cleanup(func() {
+		if paused {
+			_ = exec.Command("docker", "unpause", containerName).Run()
+		}
+	})
+
+	outageContext, cancelOutage := context.WithTimeout(ctx, 300*time.Millisecond)
+	processed, outageErr := run.ProcessSettlementJobs(outageContext, store, tenantID, "worker-during-outage", time.Now().UTC(), 10)
+	cancelOutage()
+	if outageErr == nil || processed != 0 {
+		t.Fatalf("outage processed=%d error=%v", processed, outageErr)
+	}
+	if output, err := exec.Command("docker", "unpause", containerName).CombinedOutput(); err != nil {
+		t.Fatalf("unpause PostgreSQL: %v: %s", err, output)
+	}
+	paused = false
+	waitForIntegrationDatabase(t, appDB, 5*time.Second)
+
+	processed, err = run.ProcessSettlementJobs(ctx, store, tenantID, "worker-after-recovery", time.Now().UTC().Add(time.Second), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("recovered settlements = %d", processed)
+	}
+	if count := tenantRowCount(t, appDB, tenantID, `SELECT count(*) FROM ledger_entries WHERE request_id=$1`, request.ID); count != 1 {
+		t.Fatalf("ledger rows = %d", count)
+	}
+	storedRun, err := store.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.SettledCostNanoUSD != cost || storedRun.InFlight != 0 {
+		t.Fatalf("settled_cost=%d in_flight=%d", storedRun.SettledCostNanoUSD, storedRun.InFlight)
+	}
+}
+
 // TestPostgresIntegrationCancellationNotificationAndPolling 验证通知和事件表形成快慢两条取消路径。
 func TestPostgresIntegrationCancellationNotificationAndPolling(t *testing.T) {
 	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
@@ -380,7 +594,7 @@ func postgresIntegrationDatabases(t *testing.T) (*sql.DB, *sql.DB, string) {
 			integrationSetupErr = fmt.Errorf("invalid integration role %q", role)
 			return
 		}
-		integrationAdminDB, integrationSetupErr = sql.Open("postgres", adminURL)
+		integrationAdminDB, integrationSetupErr = OpenPostgres(adminURL, 2*time.Second)
 		if integrationSetupErr != nil {
 			return
 		}
@@ -401,7 +615,7 @@ func postgresIntegrationDatabases(t *testing.T) (*sql.DB, *sql.DB, string) {
 				return
 			}
 		}
-		integrationAppDB, integrationSetupErr = sql.Open("postgres", appURL)
+		integrationAppDB, integrationSetupErr = OpenPostgres(appURL, 500*time.Millisecond)
 		if integrationSetupErr != nil {
 			return
 		}
@@ -461,4 +675,44 @@ func tenantRowCount(t *testing.T, db *sql.DB, tenantID, query string, args ...an
 		t.Fatal(err)
 	}
 	return count
+}
+
+// tenantAttemptState 在租户会话内读取一次 Attempt 的状态。
+func tenantAttemptState(t *testing.T, db *sql.DB, tenantID, attemptID string) run.AttemptState {
+	t.Helper()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(context.Background(), tx, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	var state run.AttemptState
+	if err := tx.QueryRowContext(context.Background(), `SELECT state FROM attempts WHERE id=$1`, attemptID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+// waitForIntegrationDatabase 等待暂停后的测试数据库重新接受查询。
+func waitForIntegrationDatabase(t *testing.T, db *sql.DB, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		pingContext, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		err := db.PingContext(pingContext)
+		cancel()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("database did not recover: %v", err)
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		<-timer.C
+	}
 }

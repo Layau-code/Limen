@@ -46,6 +46,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 11. 所有受治理 Store 方法必须显式接收 tenant_id；跨租户资源不能只依赖单列 ID，账本以 `(tenant_id, request_id)` 幂等。
 12. Run 创建后固定 `strategy` 和 `config_version`；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 13. `suspended_accounting` 期间允许记录 `complete_requested` 但不得直接完成；所有未知费用处置完毕后才按固定优先级恢复或进入 `completed`。
+14. 生产 PostgreSQL 事务连接池必须通过 `store.OpenPostgres` 设置有限 I/O 期限；`LISTEN/NOTIFY` 专用监听器除外，禁止为业务 Store 重新使用裸 `sql.Open("postgres", ...)`。
 
 ## Provider 与路由
 
@@ -85,8 +86,8 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
-- PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
-- 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
+- PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
+- 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 
 ## 文档同步
 

@@ -27,7 +27,8 @@
 3. `503 no_available_target`：所有目标正在熔断，等待冷却或查看上游恢复情况。
 4. `504 provider_timeout`：检查 `LIMEN_REQUEST_TIMEOUT` 与 `routing.attempt_timeout`，总预算不会因切换目标而重置。
 5. 无 Fallback：确定性 4xx、请求转换错误、客户端取消和已开始的 SSE 都按设计不切换。
+6. PostgreSQL 暂时不可用：事务连接池的单次网络 I/O 最多等待 5 秒；已持久化的结算任务在连接恢复后继续处理，未完成且租约过期的请求进入 `suspended_accounting`，不会自动重放 Provider。
 
 ## 交付检查
 
-提交前运行 `go clean -testcache && make check && make build && make smoke && make bench && git diff --check`。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。
+提交前运行 `go clean -testcache && make check && make integration && make build && make smoke && make bench && git diff --check`。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。
