@@ -9,8 +9,8 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `POST /v1/chat/completions`、`GET /v1/models`、`/livez`、`/readyz`。
 - OpenAI 与 Anthropic 协议适配，普通响应和 SSE 流式响应。
 - 启动时严格加载的模型注册表；未配置文件时保留四种前缀兼容模式，配置 API 发布后可原子替换当前进程目录。
-- `GET/POST /v1/limen/configs` 和 `POST /v1/limen/configs/{version}/publish` 提供租户隔离的不可变配置版本控制；PostgreSQL 模式下重启恢复已发布版本。
-- 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan。
+- `GET/POST /v1/limen/configs`、配置 diff 和 `POST /v1/limen/configs/{version}/publish` 提供租户隔离的不可变配置版本控制；PostgreSQL 模式下重启恢复已发布版本。
+- 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan；Replay 必须通过算法注册表解析版本，不得静默回退。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动或配置版本发布时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
@@ -72,7 +72,8 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 跨实例取消测试必须覆盖取消事件租户隔离、在途 Context 取消、`run_cancelled` 错误和重复取消幂等。
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
-- 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换和 `/v1/limen/configs` Scope。
+- 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
+- 算法版本测试必须覆盖当前版本解析、未知版本拒绝和重复注册拒绝；配置 diff 测试必须证明只返回稳定路径与变化类型。
 - 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签和 admin 鉴权。
 - 凭据控制面测试必须覆盖 admin Scope、endpoint 不匹配拒绝、轮换后立即生效、撤销清除内存密钥以及响应不包含明文。
 - 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。

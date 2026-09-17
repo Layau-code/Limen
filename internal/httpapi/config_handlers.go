@@ -52,6 +52,34 @@ func (h *Handler) listConfigs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
+// diffConfig 返回两个配置版本的稳定结构差异，不返回配置值或上游密钥。
+func (h *Handler) diffConfig(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeConfigsRead) {
+		return
+	}
+	if h.configs == nil {
+		writeError(w, http.StatusServiceUnavailable, "config store unavailable", "api_error", "config_store_unavailable")
+		return
+	}
+	tenantID := h.requestTenantID(r)
+	before, err := h.configs.Get(r.Context(), tenantID, r.PathValue("base_version"))
+	if err != nil {
+		writeConfigStoreError(w, err)
+		return
+	}
+	after, err := h.configs.Get(r.Context(), tenantID, r.PathValue("version"))
+	if err != nil {
+		writeConfigStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object":       "config_diff",
+		"base_version": before.Version,
+		"version":      after.Version,
+		"changes":      configstore.Diff(before, after),
+	})
+}
+
 // createConfig 校验并保存一个不可变的配置草稿。
 func (h *Handler) createConfig(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticateScopes(w, r, auth.ScopeConfigsWrite) {

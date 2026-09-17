@@ -141,6 +141,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 	mux.HandleFunc("GET /v1/limen/decisions/{decision_id}", handler.getDecision)
 	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
 	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
+	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
 	mux.HandleFunc("POST /v1/limen/credentials/{provider}", handler.rotateCredential)

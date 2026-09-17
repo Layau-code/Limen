@@ -173,6 +173,19 @@ func TestRouterReplacesRegistryAndRecordsConfigVersion(t *testing.T) {
 	}
 }
 
+func TestRouterReplayRejectsUnavailableAlgorithmVersion(t *testing.T) {
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, registry)
+	_, err = router.Replay(decision.Input{SchemaVersion: decision.SchemaVersionV1, AlgorithmVersion: "decision.v0", EvaluatedAtUnixMS: 1, Request: decision.Request{Model: "model"}})
+	var decisionErr *decision.DecisionError
+	if !errors.As(err, &decisionErr) || decisionErr.Code != "algorithm_version_unavailable" {
+		t.Fatalf("replay error=%v", err)
+	}
+}
+
 func TestRouterRegistryReplacementIsConcurrentSafe(t *testing.T) {
 	first, err := NewModelRegistry([]Model{{ID: "first", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-first"}}}})
 	if err != nil {

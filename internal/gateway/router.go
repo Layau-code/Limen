@@ -32,6 +32,7 @@ type Router struct {
 	policy        Policy
 	breakers      map[string]*circuitBreaker
 	engine        decision.Engine
+	algorithms    *decision.AlgorithmRegistry
 	now           func() time.Time
 }
 
@@ -74,11 +75,12 @@ func NewRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 // newRouter 使用可替换时钟创建路由器，便于确定性验证熔断行为。
 func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, policy Policy, now func() time.Time) *Router {
 	router := &Router{
-		providers: make(map[string]provider.Provider, len(providers)),
-		registry:  registry,
-		policy:    policy,
-		breakers:  make(map[string]*circuitBreaker),
-		now:       now,
+		providers:  make(map[string]provider.Provider, len(providers)),
+		registry:   registry,
+		policy:     policy,
+		breakers:   make(map[string]*circuitBreaker),
+		now:        now,
+		algorithms: decision.NewAlgorithmRegistry(),
 	}
 	for name, upstream := range providers {
 		router.providers[name] = upstream
@@ -198,7 +200,11 @@ func (router *Router) Explain(request provider.ChatRequest, contract decision.Co
 
 // Replay 使用历史输入重算计划，不读取当前熔断状态，也不访问 Provider。
 func (router *Router) Replay(input decision.Input) (decision.ExecutionPlan, error) {
-	return router.engine.Decide(input)
+	engine, ok := router.algorithms.Resolve(input.AlgorithmVersion)
+	if !ok {
+		return decision.ExecutionPlan{}, &decision.DecisionError{Code: "algorithm_version_unavailable"}
+	}
+	return engine.Decide(input)
 }
 
 // plan 将注册表和熔断器快照组装为确定性的 DecisionInput。

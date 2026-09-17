@@ -24,7 +24,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复。
 - `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
-- `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码。
+- `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码；算法注册表负责 Replay 的版本解析，未知版本不回退。
 - `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：将请求快照交给 Decision Engine，替换上游模型，管理共享总预算、单次超时、Fallback 和计划执行。

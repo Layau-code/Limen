@@ -461,6 +461,7 @@ POST /v1/limen/decisions/dry-run
 POST /v1/limen/decisions/{decision_id}/replay
 
 GET  /v1/limen/configs
+GET  /v1/limen/configs/{version}/diff/{base_version}
 POST /v1/limen/configs
 POST /v1/limen/configs/{version}/publish
 
@@ -501,6 +502,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | Explain、Replay | decisions:read |
 | Dry Run | inference 与 decisions:read |
 | 读取配置 | configs:read |
+| 比较配置版本 | configs:read |
 | 创建和发布配置 | configs:write |
 | 轮换和撤销 Provider 凭据 | admin |
 
@@ -514,7 +516,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，不重新调用模型或复现运行时 Attempt。
 
-当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并提供 Explain/Replay 接口；配置版本控制面已提供创建、列表和发布 API，发布会原子替换 Router 目录与路由参数，旧算法注册表和结构化差异字段仍待补齐。
+当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数。旧算法实现保留窗口、审批审计和完整差异树仍待补齐。
 
 稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、idempotency_conflict、insufficient_scope、config_version_unavailable 和 algorithm_version_unavailable。
 
@@ -632,7 +634,7 @@ git diff --check
 
 ### 阶段 C：版本化控制面与 Replay
 
-把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面，算法版本注册、审批审计和结构化配置差异仍待完成。
+把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、结构化配置 diff、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面、当前算法注册和结构化路径 diff，旧算法保留窗口与审批审计仍待完成。
 
 ### 阶段 D：生产化与 1.0
 
