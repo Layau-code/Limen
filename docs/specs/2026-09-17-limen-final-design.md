@@ -166,7 +166,7 @@ Attempt 在访问 Provider 前持久化为 started，执行结束后变为 succe
 
 ### 4.5 跨实例取消
 
-取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。当前基础实现使用租户隔离事件表和每秒轮询；凭据变更已使用独立的 PostgreSQL LISTEN/NOTIFY 监听器刷新 Provider，数据库记录仍是唯一事实来源。取消轮询继续作为断线兜底。
+取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。当前实现已增加独立取消监听器和进程内广播器；凭据变更也使用独立监听器刷新 Provider，数据库记录仍是唯一事实来源。取消轮询继续作为断线兜底。
 
 目标是在正常数据库连接下 p95 两秒内把跨实例取消传播到 Provider。即使通知丢失，轮询和截止时间也必须最终停止请求。
 
@@ -631,7 +631,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。取消通知仍以轮询为断线兜底，多实例事务测试和持久化后台结算任务仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询与 LISTEN/NOTIFY 取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。多实例事务测试仍待补齐，阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 

@@ -98,6 +98,8 @@ func main() {
 	var credentialSetters map[string]httpapi.ProviderCredentialSetter
 	var credentialEndpoints map[string]string
 	var credentialListener *store.CredentialChangeListener
+	var cancellationListener *store.CancellationEventListener
+	cancellationHub := run.NewCancellationHub()
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
@@ -127,6 +129,11 @@ func main() {
 		}
 		cancelMigration()
 		runService = store.NewPostgresStore(database)
+		cancellationListener, err = store.NewCancellationEventListener(cfg.DatabaseURL)
+		if err != nil {
+			logger.Warn("cancellation listener unavailable", "error", err)
+			cancellationListener = nil
+		}
 		decisionStore = store.NewDecisionJournal(database)
 		configStore = store.NewPostgresConfigStore(database)
 		published, publishErr := configStore.GetPublished(context.Background(), cfg.TenantID)
@@ -206,7 +213,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService)),
+		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, cancellationHub)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -219,6 +226,10 @@ func main() {
 	if credentialListener != nil {
 		defer credentialListener.Close()
 		go watchCredentialChanges(ctx, credentialListener, cfg.TenantID, credentialStore, credentialSetters, credentialEndpoints, logger)
+	}
+	if cancellationListener != nil {
+		defer cancellationListener.Close()
+		go watchCancellationEvents(ctx, cancellationListener, cancellationHub, logger)
 	}
 	if leaseService, ok := runService.(run.LeaseService); ok {
 		go recoverExpiredRequests(ctx, leaseService, cfg.TenantID, logger)
@@ -240,6 +251,16 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
+	}
+}
+
+// watchCancellationEvents 将 PostgreSQL 取消通知广播到当前实例的在途请求。
+func watchCancellationEvents(ctx context.Context, listener *store.CancellationEventListener, hub *run.CancellationHub, logger *slog.Logger) {
+	err := listener.Run(ctx, func(event run.CancellationEvent) {
+		hub.Publish(event)
+	})
+	if err != nil && ctx.Err() == nil {
+		logger.Error("cancellation listener stopped", "error", err)
 	}
 }
 

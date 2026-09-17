@@ -10,7 +10,7 @@
 - `CancellationService` 按事件 ID 游标读取通知，内存和 PostgreSQL Store 使用同一接口。
 - 在途 Chat 每秒轮询当前 Run 的事件；收到事件后以 `ErrRunCancelled` 取消 Provider Context。
 - HTTP 返回稳定的 `409 run_cancelled`，结算使用不受客户端取消影响的短超时 Context。
-- 轮询保证断线可恢复；后续可增加 PostgreSQL LISTEN/NOTIFY 降低延迟。
+- PostgreSQL 实例使用 `LISTEN/NOTIFY` 传递不含业务正文的取消元数据；每秒轮询事件表继续作为通知丢失或连接断开时的可靠兜底。
 
 ## 验收
 

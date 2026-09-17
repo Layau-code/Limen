@@ -13,7 +13,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 每次 Dry Run 和真实 Chat 都生成不含 Prompt/Response 的 Decision Journal，返回 `decision_id`，可 Explain 查询并 Replay 校验 `plan_hash`。
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
 - 受治理 Chat 的 Request 在准入后持有 30 秒租约并每 10 秒续租；实例崩溃后不重放 Provider 调用，而是标记未知费用并暂停 Run，避免重复计费。
-- Run 取消会写入租户隔离的取消事件；在途 Chat 每秒轮询事件并取消 Provider Context，跨实例取消不依赖单进程内存。
+- Run 取消会写入租户隔离的取消事件；PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 低延迟广播，在途 Chat 同时保留每秒轮询作为断线兜底。
 - 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。
 - 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库，默认仍使用静态 Key 便于单机开发。
 - Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；Provider 密钥轮换不会打断在途请求。

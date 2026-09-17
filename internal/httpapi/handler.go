@@ -49,6 +49,7 @@ type Handler struct {
 	credentials         credentialstore.Store
 	credentialSetters   map[string]ProviderCredentialSetter
 	credentialEndpoints map[string]string
+	cancellations       *run.CancellationHub
 	credentialMu        sync.Mutex
 }
 
@@ -108,7 +109,7 @@ type ProviderCredentialSetter interface {
 }
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials 创建完整数据面和凭据控制面。
-func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service) http.Handler {
+func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, cancellationHubs ...*run.CancellationHub) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -122,6 +123,10 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 	if configs == nil {
 		configs = configstore.NewMemoryStore()
 	}
+	var cancellationHub *run.CancellationHub
+	if len(cancellationHubs) > 0 {
+		cancellationHub = cancellationHubs[0]
+	}
 	handler := &Handler{
 		authenticator:       authenticator,
 		router:              router,
@@ -134,6 +139,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 		credentials:         credentials,
 		credentialSetters:   setters,
 		credentialEndpoints: endpoints,
+		cancellations:       cancellationHub,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
@@ -582,6 +588,11 @@ func (h *Handler) watchRunCancellation(r *http.Request, tenantID, runID string) 
 	}
 	requestContext, cancel := context.WithCancelCause(r.Context())
 	*r = *r.WithContext(requestContext)
+	var notified <-chan struct{}
+	unsubscribe := func() {}
+	if h.cancellations != nil {
+		notified, unsubscribe = h.cancellations.Subscribe(tenantID, runID)
+	}
 	stop := make(chan struct{})
 	var once sync.Once
 	go func() {
@@ -590,6 +601,9 @@ func (h *Handler) watchRunCancellation(r *http.Request, tenantID, runID string) 
 		var afterID int64
 		for {
 			select {
+			case <-notified:
+				cancel(run.ErrRunCancelled)
+				return
 			case <-ticker.C:
 				events, err := service.PollCancellationEvents(requestContext, tenantID, afterID, 100)
 				if err != nil {
@@ -613,6 +627,7 @@ func (h *Handler) watchRunCancellation(r *http.Request, tenantID, runID string) 
 	}()
 	return func() {
 		once.Do(func() {
+			unsubscribe()
 			close(stop)
 			cancel(nil)
 		})

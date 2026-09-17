@@ -136,9 +136,12 @@ func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID,
 		return run.Run{}, err
 	}
 	if operation == "cancel" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO cancellation_events (tenant_id,run_id,created_at) VALUES ($1,$2,$3)`, tenantID, runID, now); err != nil {
+		var eventID int64
+		if err := tx.QueryRowContext(ctx, `INSERT INTO cancellation_events (tenant_id,run_id,created_at) VALUES ($1,$2,$3) RETURNING id`, tenantID, runID, now).Scan(&eventID); err != nil {
 			return run.Run{}, err
 		}
+		// 通知只降低传播延迟，失败时仍依赖事件表轮询完成取消。
+		_ = notifyCancellationEvent(ctx, tx, run.CancellationEvent{ID: eventID, TenantID: tenantID, RunID: runID, CreatedAt: now})
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO control_operations (tenant_id,endpoint,idempotency_key,request_hash,resource_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, tenantID, endpoint, mutation.Key, mutation.Hash, runID, now); err != nil {
 		return run.Run{}, err
