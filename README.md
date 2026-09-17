@@ -23,8 +23,9 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 仅对 Provider 归一化的 `retryable_transient` 和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
 - Provider 用量采集与按目标价格的定点成本结算；普通响应和 SSE 都保持实时转发。
-- 只使用 Go 标准库，包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
+- 核心 HTTP 数据面不使用 Web 框架或 ORM；外部依赖只用于 PostgreSQL 与 OpenTelemetry 等明确边界，并包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统。
+- 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 
 ## 快速开始
 
@@ -134,6 +135,8 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本和 API Key 摘要；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 记录需要由受控管理流程预置。设置凭据主密钥后，启动会按租户和 endpoint 读取加密 Provider 凭据；未找到时回退到对应 Provider 环境变量。
 
+设置标准环境变量 `OTEL_EXPORTER_OTLP_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 即可启用 OTLP/HTTP Trace；认证头可使用 `OTEL_EXPORTER_OTLP_HEADERS`。未配置端点时使用无操作 Provider。导出在后台批量执行，初始化或导出失败只关闭或降级遥测，不改变模型请求响应。
+
 启用数据库和 `LIMEN_CREDENTIAL_MASTER_KEY` 后，管理员可使用 `POST /v1/limen/credentials/{provider}` 轮换 Provider 凭据，或调用 `POST /v1/limen/credentials/{provider}/revoke` 撤销。请求必须提供匹配当前配置的 `endpoint_id`，响应只返回凭据元数据，不返回密钥；endpoint ID 可由 `provider.EndpointIDForBaseURL` 生成。凭据轮换在当前实例立即生效，其他实例通过 PostgreSQL `NOTIFY` 刷新；通知故障不会回滚数据库变更，实例可重启重新加载。
 
 静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；Dry Run 需要 `inference,decisions:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
@@ -155,6 +158,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的多次基准大致为：主路径 `5–6 μs/op`、53 次分配；Fallback 路径 `5–6 μs/op`、61 次分配。该数字只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的当前基准大致为：主路径 `5.8 μs/op`、59 次分配；Fallback 路径 `6.0 μs/op`、70 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。

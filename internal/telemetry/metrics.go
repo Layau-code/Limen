@@ -1,4 +1,4 @@
-// Package telemetry 提供低基数、进程内 Prometheus 文本指标。
+// Package telemetry 提供低基数指标和隐私安全的 OpenTelemetry Trace。
 package telemetry
 
 import (

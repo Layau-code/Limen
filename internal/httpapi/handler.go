@@ -23,6 +23,9 @@ import (
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 	"github.com/huz/limen/internal/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const maxRequestBytes = 4 << 20
@@ -752,11 +755,31 @@ func (h *Handler) watchRunCancellation(r *http.Request, tenantID, runID string) 
 }
 
 // admitRunRequest 校验 Run Header、幂等键并占用一次并发准入。
-func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body []byte) (string, func(), bool) {
+func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body []byte) (requestID string, release func(), admitted bool) {
 	runID := strings.TrimSpace(r.Header.Get("X-Limen-Run-ID"))
 	if runID == "" {
 		return "", func() {}, true
 	}
+	ctx, span := otel.Tracer("github.com/huz/limen/internal/httpapi").Start(r.Context(), "limen.run.admission")
+	*r = *r.WithContext(ctx)
+	defer func() {
+		outcome := "rejected"
+		if admitted {
+			outcome = "admitted"
+		} else {
+			span.SetStatus(codes.Error, "")
+		}
+		if span.IsRecording() {
+			if admitted {
+				span.SetAttributes(attribute.String("limen.run.id", runID))
+			}
+			if requestID != "" {
+				span.SetAttributes(attribute.String("limen.run.request_id", requestID))
+			}
+			span.SetAttributes(attribute.String("limen.admission.outcome", outcome))
+		}
+		span.End()
+	}()
 	if h.runs == nil {
 		writeError(w, http.StatusServiceUnavailable, "run control is unavailable", "api_error", "run_unavailable")
 		return "", nil, false
@@ -772,7 +795,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return "", nil, false
 	}
-	requestID, err := run.NewID("request")
+	requestID, err = run.NewID("request")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to create request", "api_error", "request_id_error")
 		return "", nil, false
@@ -784,7 +807,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 		return "", nil, false
 	}
 	w.Header().Set("X-Limen-Request-ID", item.ID)
-	release, ok := h.startRequestLease(w, r, tenantID, item.ID, now)
+	release, ok = h.startRequestLease(w, r, tenantID, item.ID, now)
 	if !ok {
 		_, _ = h.runs.BeginSettlement(r.Context(), tenantID, item.ID, time.Now().UTC())
 		_, _ = h.runs.SettleRequest(r.Context(), tenantID, item.ID, nil, time.Now().UTC())
@@ -1142,20 +1165,41 @@ func returnRunDecisionError(w http.ResponseWriter, err error) {
 }
 
 // settleRunRequest 将响应结束后的成本提交到 Run Service。
-func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settlement *gateway.Settlement) error {
+func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settlement *gateway.Settlement) (err error) {
+	ctx, span := otel.Tracer("github.com/huz/limen/internal/httpapi").Start(ctx, "limen.settlement")
+	defer func() {
+		outcome := "complete"
+		if err != nil {
+			outcome = "pending"
+			span.SetStatus(codes.Error, "")
+		}
+		if span.IsRecording() {
+			span.SetAttributes(attribute.String("limen.settlement.outcome", outcome))
+		}
+		span.End()
+	}()
 	if h.runs == nil {
 		return errors.New("run service unavailable")
 	}
 	tenantID := h.contextTenantID(ctx)
 	var costNanoUSD *int64
+	settlementStatus := string(gateway.SettlementUnavailable)
 	if settlement != nil {
 		summary := settlement.Summary()
+		settlementStatus = string(summary.Status)
 		if summary.CostAvailable {
 			value := summary.CostNanoUSD
 			costNanoUSD = &value
 		}
 	}
-	err := retrySettlement(ctx, func() error {
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("limen.run.request_id", requestID),
+			attribute.Bool("limen.settlement.cost_known", costNanoUSD != nil),
+			attribute.String("limen.settlement.status", settlementStatus),
+		)
+	}
+	err = retrySettlement(ctx, func() error {
 		if _, err := h.runs.BeginSettlement(ctx, tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
 			return err
 		}

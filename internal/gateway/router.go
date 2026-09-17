@@ -12,6 +12,9 @@ import (
 
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Policy 定义完整请求预算、单次尝试和熔断参数。
@@ -178,8 +181,23 @@ func (router *Router) ChatWithContractHooks(parent context.Context, request prov
 
 // chatWithContract 统一处理计划生成、审计回调和计划执行。
 func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
+	ctx, span := otel.Tracer("github.com/huz/limen/internal/gateway").Start(parent, "limen.decision")
+	defer span.End()
 	input, plan, err := router.planWithInput(request, contract)
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("limen.config.version", plan.ConfigVersion),
+			attribute.String("limen.algorithm.version", plan.AlgorithmVersion),
+			attribute.String("limen.decision.input_hash", plan.InputHash),
+			attribute.String("limen.decision.plan_hash", plan.PlanHash),
+			attribute.Int("limen.decision.target_count", len(plan.Targets)),
+		)
+		if err == nil {
+			span.SetAttributes(attribute.String("limen.model.id", request.Model))
+		}
+	}
 	if err != nil {
+		span.SetStatus(codes.Error, "")
 		var decisionErr *decision.DecisionError
 		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
 			return Result{Input: input, Plan: plan}, &NoEligibleTargetError{Plan: plan}
@@ -188,10 +206,14 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 	}
 	if beforeExecute != nil {
 		if err := beforeExecute(input, plan); err != nil {
+			span.SetStatus(codes.Error, "")
 			return Result{Input: input, Plan: plan}, err
 		}
 	}
-	result, err := router.executePlan(parent, request, plan, beforeAttempt)
+	result, err := router.executePlan(ctx, request, plan, beforeAttempt)
+	if err != nil {
+		span.SetStatus(codes.Error, "")
+	}
 	result.Input = input
 	return result, err
 }
@@ -356,7 +378,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		}
 		upstreamRequest := request
 		upstreamRequest.Model = target.UpstreamModel
-		response, err := upstream.Chat(attempt, upstreamRequest)
+		response, err := traceProviderChat(attempt, upstream, upstreamRequest, planned)
 		decision.Attempts++
 		decision.Provider = target.Provider
 		if err != nil {
@@ -444,6 +466,51 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		return withPlan(Result{Decision: decision, Settlement: settlement}), &NoAvailableTargetError{Decision: decision}
 	}
 	return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: lastErr}
+}
+
+// traceProviderChat 为一次真实上游调用记录不含业务正文和上游模型名的 Attempt Span。
+func traceProviderChat(ctx context.Context, upstream provider.Provider, request provider.ChatRequest, planned decision.PlanTarget) (provider.Response, error) {
+	ctx, span := otel.Tracer("github.com/huz/limen/internal/gateway").Start(ctx, "limen.provider.attempt")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("limen.target.id", planned.Target.ID),
+			attribute.String("limen.provider.name", planned.Target.Provider),
+		)
+	}
+	response, err := upstream.Chat(ctx, request)
+	if err != nil {
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.String("limen.attempt.result", attemptErrorResult(ctx, err)),
+				attribute.String("limen.error.class", string(provider.ClassifyError(err))),
+			)
+		}
+		span.SetStatus(codes.Error, "")
+		return response, err
+	}
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("limen.attempt.result", "response"),
+			attribute.Int("http.response.status_code", response.StatusCode),
+			attribute.String("limen.error.class", string(provider.ClassifyHTTPStatus(response.StatusCode))),
+		)
+	}
+	if response.StatusCode >= 400 {
+		span.SetStatus(codes.Error, "")
+	}
+	return response, nil
+}
+
+// attemptErrorResult 将 Context 状态归并为有限的 Attempt 结果类别。
+func attemptErrorResult(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "transport_error"
 }
 
 const maxSettlementDrainBytes = 64 << 10

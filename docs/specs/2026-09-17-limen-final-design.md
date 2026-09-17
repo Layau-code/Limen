@@ -646,7 +646,7 @@ git diff --check
 
 ### 阶段 D：生产化与 1.0
 
-完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标、Provider 凭据轮换/撤销控制面和跨实例凭据通知边界。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
+完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备隐私安全的 OTLP Trace、基础 Prometheus 文本指标、Provider 凭据轮换/撤销控制面、跨实例凭据通知和数据库故障注入边界；遥测可视化后端、完整指标和 Secret Manager 仍待完成。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
 
 ### 1.0 之后
 

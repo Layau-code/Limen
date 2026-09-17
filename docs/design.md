@@ -16,6 +16,7 @@ HTTP Principal/Scope 鉴权与解析
   → 路由摘要响应头
   → 普通响应或 SSE 转发
   → 响应结束后汇总成本并写入 Trailer / 结构化日志
+  → OpenTelemetry 将请求、准入、决策、Attempt 和结算关联为证据链
 ```
 
 - `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
@@ -32,6 +33,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
+- `internal/telemetry`：提供有界 Prometheus 指标和可选 OTLP/HTTP Trace；遥测失败不参与业务控制流。
 
 ## 模型与路由
 
@@ -101,6 +103,8 @@ Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`
 
 响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`；响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志读取这些字段，不记录 API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
+配置 OTLP 端点后，每个请求建立 `limen.http.request` 根 Span；受治理请求继续产生 `limen.run.admission`、`limen.decision`、每次真实调用的 `limen.provider.attempt` 和 `limen.settlement`。属性只允许稳定标识、有限枚举、状态和计数，不写入 Prompt、Response、Authorization、API Key、Provider Key、原始错误正文或上游模型名。入口只提取 W3C `traceparent`，不接受 Baggage。Exporter 使用后台批处理，初始化失败会禁用 Trace，运行时导出失败只写通用告警。
+
 ## 健康与交付
 
 `/livez` 只表示进程可响应；`/readyz` 表示启动依赖已完成，关闭时先变为未就绪再执行 `Server.Shutdown`。`limen version` 和 `limen healthcheck` 不读取业务密钥；Docker 使用静态非 root 运行时。完整运维说明见 [`docs/operations.md`](operations.md)。
@@ -111,4 +115,4 @@ Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`
 
 ## 明确不包含
 
-本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Secret Manager 接入、大型管理后台或完整 OpenTelemetry 导出平台；PostgreSQL API Key Store、配置版本存储、Provider 凭据轮换/撤销 API 和基础 Prometheus 文本指标已实现。
+本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Secret Manager 接入、遥测可视化后端或大型管理后台；PostgreSQL API Key Store、配置版本存储、Provider 凭据轮换/撤销 API、基础 Prometheus 文本指标和 OTLP Trace 已实现。

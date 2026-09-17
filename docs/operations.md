@@ -20,6 +20,12 @@
 
 `X-Limen-Route` 例如 `openai:503>anthropic:200`，可用于解释是否发生 Fallback。`X-Limen-Attempts` 是实际发出的上游请求数，不代表同一目标重试次数。
 
+## Trace
+
+设置 `OTEL_EXPORTER_OTLP_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 后启用 OTLP/HTTP Trace，认证头使用 `OTEL_EXPORTER_OTLP_HEADERS`。Limen 接受并继续传播 W3C `traceparent`，不传播 Baggage。一次受治理请求可以沿同一 Trace 查看 HTTP、Run 准入、Decision、每个 Provider Attempt 和 Settlement；Span 不包含 Prompt、Response、密钥、原始错误正文或上游模型名。
+
+Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导出失败只记录不含端点和凭据的通用告警，不影响模型请求。进程关闭时最多等待 5 秒刷新 Trace。
+
 ## 常见排障
 
 1. `401 invalid_api_key`：检查客户端是否发送 `Authorization: Bearer <LIMEN_API_KEY>`。

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
@@ -13,10 +14,8 @@ import (
 func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		requestID := r.Header.Get("X-Request-ID")
-		if requestID == "" {
-			requestID = newRequestID()
-		}
+		requestID := safeRequestID(r.Header.Get("X-Request-ID"))
+		r.Header.Set("X-Request-ID", requestID)
 		w.Header().Set("X-Request-ID", requestID)
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
@@ -39,6 +38,15 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 		logger.Info("request completed", attrs...)
 	})
+}
+
+// safeRequestID 将客户端标识压缩为不可逆摘要，避免任意输入进入日志和 Trace。
+func safeRequestID(value string) string {
+	if value == "" || len(value) > 256 {
+		return newRequestID()
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:12])
 }
 
 func logHeaderKey(name string) string {

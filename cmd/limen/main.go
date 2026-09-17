@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/auth"
+	"github.com/huz/limen/internal/buildinfo"
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/credentialstore"
@@ -22,6 +23,8 @@ import (
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 	"github.com/huz/limen/internal/store"
+	"github.com/huz/limen/internal/telemetry"
+	"go.opentelemetry.io/otel"
 )
 
 // main 组装 Limen 依赖并管理 HTTP 服务生命周期。
@@ -210,9 +213,24 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	traceContext, cancelTraceInit := context.WithTimeout(context.Background(), 5*time.Second)
+	tracing, traceErr := telemetry.NewTracing(traceContext, buildinfo.Version)
+	cancelTraceInit()
+	if traceErr != nil {
+		logger.Warn("telemetry initialization failed; tracing disabled")
+	} else {
+		tracing.Install()
+		if tracing.Enabled() {
+			logger.Info("OpenTelemetry tracing enabled")
+		}
+	}
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
+		logger.Warn("telemetry export failed")
+	}))
+	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, cancellationHub)
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.WithLogging(logger, httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, cancellationHub)),
+		Handler:           httpapi.WithLogging(logger, httpapi.WithTracing(apiHandler)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
@@ -247,8 +265,14 @@ func main() {
 	}()
 
 	logger.Info("Limen listening", "address", cfg.Addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		logger.Error("server failed", "error", err)
+	serverErr := server.ListenAndServe()
+	traceShutdownContext, cancelTraceShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := tracing.Shutdown(traceShutdownContext); err != nil {
+		logger.Warn("telemetry shutdown failed")
+	}
+	cancelTraceShutdown()
+	if serverErr != nil && serverErr != http.ErrServerClosed {
+		logger.Error("server failed", "error", serverErr)
 		os.Exit(1)
 	}
 }

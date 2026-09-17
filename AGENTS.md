@@ -27,13 +27,14 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 未知费用会暂停 Run；管理员可通过带 `admin` Scope 和幂等键的会计处置接口补记金额或明确接受未知费用。处置必须是事务化、可重复执行且不把未知值写成零。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签，不允许请求 ID、租户 ID、原始错误或正文进入指标。
+- OpenTelemetry Trace 只使用字段白名单串联请求、准入、决策、Attempt 和结算；只传播 `traceparent`，导出失败不得改变模型请求。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
-明确不包含：每日额度和超额拦截、模型文件热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、Secret Manager 接入、完整 OpenTelemetry 导出平台和大型管理后台。
+明确不包含：每日额度和超额拦截、模型文件热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、Secret Manager 接入、遥测可视化后端和大型管理后台。
 
 ## 工程原则
 
-1. 核心数据面只使用 Go 标准库；PostgreSQL 允许使用成熟的单一驱动，接口由真实替换需求或测试需求驱动。
+1. 核心 HTTP 数据面不使用 Web 框架；外部依赖只允许用于 PostgreSQL 驱动和 OpenTelemetry 等明确边界，接口由真实替换需求或测试需求驱动。
 2. `context.Context` 必须贯穿 HTTP、Router 和 Provider；客户端断开要取消上游。
 3. 一次请求只创建一个总预算；每个目标最多调用一次；SSE 返回成功后不切换。
 4. 只有 Provider 归一化为 `retryable_transient` 的响应和传输错误触发 Fallback；认证、配额和确定性错误直接返回。
@@ -47,6 +48,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 12. Run 创建后固定 `strategy` 和 `config_version`；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 13. `suspended_accounting` 期间允许记录 `complete_requested` 但不得直接完成；所有未知费用处置完毕后才按固定优先级恢复或进入 `completed`。
 14. 生产 PostgreSQL 事务连接池必须通过 `store.OpenPostgres` 设置有限 I/O 期限；`LISTEN/NOTIFY` 专用监听器除外，禁止为业务 Store 重新使用裸 `sql.Open("postgres", ...)`。
+15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。
 
 ## Provider 与路由
 
@@ -86,6 +88,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
+- Trace 测试必须覆盖同一 Trace ID 的请求、准入、决策、Fallback Attempt 和结算，并用哨兵值证明正文、密钥和上游模型名不会进入 Span。
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 
