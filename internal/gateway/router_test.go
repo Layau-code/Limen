@@ -120,6 +120,43 @@ func TestRouterMapsLogicalModelToUpstreamModel(t *testing.T) {
 	}
 }
 
+func TestRouterReportsEachProviderAttempt(t *testing.T) {
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary"},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			calls = append(calls, "openai")
+			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+		}),
+		"anthropic": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			calls = append(calls, "anthropic")
+			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+		}),
+	}
+	router := NewRouter(providers, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Second})
+	var started []string
+	result, err := router.ChatWithContractHooks(context.Background(), provider.ChatRequest{Model: "model"}, decision.Contract{}, nil, func(target decision.PlanTarget) error {
+		started = append(started, target.Target.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Response.Body.Close()
+	if !slices.Equal(calls, []string{"openai", "anthropic"}) || !slices.Equal(started, []string{"primary", "backup"}) {
+		t.Fatalf("calls=%v started=%v", calls, started)
+	}
+	if len(result.Attempts) != 2 || result.Attempts[0].TargetID != "primary" || result.Attempts[0].StatusCode != http.StatusServiceUnavailable || result.Attempts[1].TargetID != "backup" || result.Attempts[1].StatusCode != http.StatusOK {
+		t.Fatalf("attempts=%+v", result.Attempts)
+	}
+}
+
 func TestRouterMapsLogicalModelToAnthropic(t *testing.T) {
 	var upstreamModel string
 	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

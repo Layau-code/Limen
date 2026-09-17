@@ -810,47 +810,90 @@ func validBearerToken(header, expected string) bool {
 	return ok
 }
 
+type trackedAttempt struct {
+	ID string
+}
+
+// finishAttemptReports 将 Router 的调用结果写回每个已持久化 Attempt。
+func (h *Handler) finishAttemptReports(ctx context.Context, tenantID string, attempts []trackedAttempt, reports []gateway.AttemptReport) error {
+	if h.runs == nil {
+		return errors.New("run service unavailable")
+	}
+	for index, attempt := range attempts {
+		state := run.AttemptAbandoned
+		if index < len(reports) {
+			state = attemptState(reports[index])
+		}
+		if err := h.runs.FinishAttempt(ctx, tenantID, attempt.ID, state, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attemptState 将有限的路由结果映射为持久化 Attempt 状态。
+func attemptState(report gateway.AttemptReport) run.AttemptState {
+	switch report.Outcome {
+	case "canceled", "timeout":
+		return run.AttemptCancelled
+	case "transport_error":
+		return run.AttemptTransientFailed
+	case "request_error", "internal_error":
+		return run.AttemptDeterministicFail
+	}
+	if report.StatusCode >= http.StatusOK && report.StatusCode < http.StatusMultipleChoices {
+		return run.AttemptSucceeded
+	}
+	if report.ErrorClass != "" {
+		if report.ErrorClass == provider.ErrorClassRetryableTransient {
+			return run.AttemptTransientFailed
+		}
+		return run.AttemptDeterministicFail
+	}
+	if provider.ClassifyHTTPStatus(report.StatusCode) == provider.ErrorClassRetryableTransient {
+		return run.AttemptTransientFailed
+	}
+	return run.AttemptDeterministicFail
+}
+
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runRequestID string) {
 	tenantID := h.requestTenantID(r)
 	settledRunRequest := false
-	attemptID := ""
-	attemptFinished := false
+	attempts := make([]trackedAttempt, 0)
+	attemptReports := make([]gateway.AttemptReport, 0)
+	attemptsFinished := false
 	defer func() {
 		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
 		defer cancelSettlement()
-		if attemptID != "" && !attemptFinished {
-			_ = h.runs.FinishAttempt(settlementContext, tenantID, attemptID, run.AttemptAbandoned, time.Now().UTC())
+		if runRequestID != "" && !attemptsFinished {
+			_ = h.finishAttemptReports(settlementContext, tenantID, attempts, attemptReports)
 		}
 		if runRequestID != "" && !settledRunRequest {
 			_ = h.settleRunRequest(settlementContext, runRequestID, nil)
 		}
 	}()
+	var beforeAttempt gateway.AttemptStartHook
 	if runRequestID != "" {
-		plan, err := h.router.DryRun(request, contract)
-		if err != nil {
-			returnRunDecisionError(w, err)
-			return
-		}
-		if len(plan.Targets) > 0 {
-			first := plan.Targets[0].Target
-			attemptID, err = run.NewID("attempt")
+		beforeAttempt = func(target decision.PlanTarget) error {
+			attemptID, err := run.NewID("attempt")
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "unable to create attempt", "api_error", "attempt_id_error")
-				return
+				return err
 			}
-			if err := h.runs.RecordAttemptStarted(r.Context(), tenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: first.ID, Provider: first.Provider, UpstreamModel: first.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
-				writeError(w, http.StatusServiceUnavailable, "run store unavailable", "api_error", "run_store_error")
-				return
+			if err := h.runs.RecordAttemptStarted(r.Context(), tenantID, run.Attempt{ID: attemptID, RequestID: runRequestID, TargetID: target.Target.ID, Provider: target.Target.Provider, UpstreamModel: target.Target.UpstreamModel, State: run.AttemptStarted, StartedAt: time.Now().UTC()}); err != nil {
+				return err
 			}
+			attempts = append(attempts, trackedAttempt{ID: attemptID})
+			return nil
 		}
 	}
 	decisionID := ""
-	result, err := h.router.ChatWithContractHook(r.Context(), request, contract, func(input decision.Input, plan decision.ExecutionPlan) error {
+	result, err := h.router.ChatWithContractHooks(r.Context(), request, contract, func(input decision.Input, plan decision.ExecutionPlan) error {
 		id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
 		decisionID = id
 		return recordErr
-	})
+	}, beforeAttempt)
+	attemptReports = result.Attempts
 	for _, step := range result.Decision.Steps {
 		h.metrics.Inc(telemetry.AttemptsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: request.Model, Provider: step.Provider, Result: step.Outcome})
 	}
@@ -927,11 +970,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	if runRequestID != "" {
 		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
 		defer cancelSettlement()
-		if err := h.runs.FinishAttempt(settlementContext, tenantID, attemptID, run.AttemptSucceeded, time.Now().UTC()); err != nil {
+		if err := h.finishAttemptReports(settlementContext, tenantID, attempts, attemptReports); err != nil {
 			writePendingSettlementTrailers(w)
 			return
 		}
-		attemptFinished = true
+		attemptsFinished = true
 		settledRunRequest = true
 		if err := h.settleRunRequest(settlementContext, runRequestID, result.Settlement); err != nil {
 			writePendingSettlementTrailers(w)

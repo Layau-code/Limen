@@ -54,6 +54,11 @@ func (service *MemoryService) FinishAttempt(_ context.Context, tenantID, attempt
 	return service.store.FinishAttempt(tenantID, attemptID, state, finishedAt)
 }
 
+// AttemptsForRequest 返回内存实现记录的请求 Attempt，便于开发和测试检查轨迹。
+func (service *MemoryService) AttemptsForRequest(tenantID, requestID string) []Attempt {
+	return service.store.AttemptsForRequest(tenantID, requestID)
+}
+
 // AcquireRequestLease 为内存请求分配执行实例租约。
 func (service *MemoryService) AcquireRequestLease(_ context.Context, tenantID, requestID, owner string, now time.Time, ttl time.Duration) (Request, error) {
 	return service.store.AcquireRequestLease(tenantID, requestID, owner, now, ttl)

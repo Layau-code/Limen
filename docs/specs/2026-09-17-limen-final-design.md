@@ -376,7 +376,7 @@ DecisionEngine.Decide(DecisionInput) → ExecutionPlan
 GatewayExecutor.Execute(Context, ExecutionPlan, ChatRequest) → ExecutionReport
 ~~~
 
-Gateway Executor 负责请求级总 Context、目标级超时、瞬时错误 Fallback、熔断、连接关闭、普通响应与 SSE 的有界实时转发、客户端取消传播，并产生 AttemptReport。它不持久化 Attempt 或 Ledger；Run Coordinator 根据 ExecutionReport 完成事务。
+Gateway Executor 负责请求级总 Context、目标级超时、瞬时错误 Fallback、熔断、连接关闭、普通响应与 SSE 的有界实时转发、客户端取消传播，并按真实调用顺序产生 AttemptReport。调用前由 Run Coordinator 通过 AttemptStartHook 持久化对应 Attempt，Executor 不持久化 Attempt 或 Ledger；Run Coordinator 根据 ExecutionReport 完成事务。
 
 Responses、Tools、结构化输出、多模态、Gemini 和通用 OpenAI-Compatible Provider 属于 1.0 后续演进。届时根据至少两个真实协议提取请求模型，禁止使用 map[string]any 作为万能请求结构。
 

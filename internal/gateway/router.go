@@ -40,9 +40,23 @@ type Result struct {
 	Response   provider.Response
 	Decision   Decision
 	Settlement *Settlement
+	Attempts   []AttemptReport
 	Input      decision.Input
 	Plan       decision.ExecutionPlan
 }
+
+// AttemptReport 描述一次真实 Provider 调用的安全结果摘要。
+type AttemptReport struct {
+	TargetID      string
+	Provider      string
+	UpstreamModel string
+	Outcome       string
+	StatusCode    int
+	ErrorClass    provider.ErrorClass
+}
+
+// AttemptStartHook 在 Provider 调用前持久化 Attempt，失败时不会发起调用。
+type AttemptStartHook func(decision.PlanTarget) error
 
 // Decision 描述一次请求实际经过的安全路由路径。
 type Decision struct {
@@ -153,21 +167,16 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 
 // ChatWithContract 根据能力契约生成计划，再在共享总预算内执行目标。
 func (router *Router) ChatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract) (Result, error) {
-	input, plan, err := router.planWithInput(request, contract)
-	if err != nil {
-		var decisionErr *decision.DecisionError
-		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
-			return Result{Input: input, Plan: plan}, &NoEligibleTargetError{Plan: plan}
-		}
-		return Result{Input: input, Plan: plan}, err
-	}
-	result, err := router.executePlan(parent, request, plan)
-	result.Input = input
-	return result, err
+	return router.chatWithContract(parent, request, contract, nil, nil)
 }
 
-// ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。
-func (router *Router) ChatWithContractHook(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error) (Result, error) {
+// ChatWithContractHooks 允许调用方同时记录决策和每次 Provider 尝试。
+func (router *Router) ChatWithContractHooks(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
+	return router.chatWithContract(parent, request, contract, beforeExecute, beforeAttempt)
+}
+
+// chatWithContract 统一处理计划生成、审计回调和计划执行。
+func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
 	input, plan, err := router.planWithInput(request, contract)
 	if err != nil {
 		var decisionErr *decision.DecisionError
@@ -181,9 +190,14 @@ func (router *Router) ChatWithContractHook(parent context.Context, request provi
 			return Result{Input: input, Plan: plan}, err
 		}
 	}
-	result, err := router.executePlan(parent, request, plan)
+	result, err := router.executePlan(parent, request, plan, beforeAttempt)
 	result.Input = input
 	return result, err
+}
+
+// ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。
+func (router *Router) ChatWithContractHook(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error) (Result, error) {
+	return router.chatWithContract(parent, request, contract, beforeExecute, nil)
 }
 
 // DryRun 只生成决策计划，不访问 Provider 或改变熔断、结算状态。
@@ -262,14 +276,16 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 }
 
 // executePlan 按计划顺序执行 Provider，并保留 Fallback、超时和结算语义。
-func (router *Router) executePlan(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan) (Result, error) {
+func (router *Router) executePlan(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, beforeAttempt AttemptStartHook) (Result, error) {
 	policy := router.Policy()
 	budget, cancelBudget := context.WithTimeout(parent, policy.RequestTimeout)
+	decision := Decision{}
+	attemptReports := make([]AttemptReport, 0, len(plan.Targets))
 	withPlan := func(result Result) Result {
 		result.Plan = plan
+		result.Attempts = append([]AttemptReport(nil), attemptReports...)
 		return result
 	}
-	decision := Decision{}
 	settlement := NewSettlement()
 	var lastErr error
 	var pendingResponse provider.Response
@@ -293,7 +309,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
-			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
+			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
 		}
 		breaker := router.breakerFor(targetKey(model, target))
 		if breaker == nil {
@@ -314,7 +330,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
-			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
+			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
 		}
 
 		attempt, cancelAttempt := context.WithTimeout(budget, policy.AttemptTimeout)
@@ -327,9 +343,16 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 			}
 			cancelBudget()
-			return Result{Plan: plan}, &ProviderUnavailableError{Name: target.Provider, Decision: decision}
+			return withPlan(Result{Decision: decision, Settlement: settlement}), &ProviderUnavailableError{Name: target.Provider, Decision: decision}
 		}
 		closePending()
+		if beforeAttempt != nil {
+			if err := beforeAttempt(planned); err != nil {
+				cancelAttempt()
+				cancelBudget()
+				return withPlan(Result{Decision: decision, Settlement: settlement}), &AttemptStartError{Err: err}
+			}
+		}
 		upstreamRequest := request
 		upstreamRequest.Model = target.UpstreamModel
 		response, err := upstream.Chat(attempt, upstreamRequest)
@@ -345,14 +368,16 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 				breaker.recordNeutral()
 				if errors.Is(parent.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+					attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
 					closePending()
 					cancelBudget()
 					cause := firstContextError(parent, budget)
 					if cause == nil {
 						cause = context.Canceled
 					}
-					return Result{Plan: plan}, &RouteError{Decision: decision, Err: cause}
+					return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: cause}
 				}
+				attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
 				if hasPendingResponse {
 					return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 				}
@@ -361,7 +386,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 				if cause == nil {
 					cause = context.Canceled
 				}
-				return Result{Plan: plan}, &RouteError{Decision: decision, Err: cause}
+				return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: cause}
 			}
 			var transportError *provider.TransportError
 			if !errors.As(err, &transportError) {
@@ -371,15 +396,17 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 					outcome = "request_error"
 				}
 				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
+				attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
 				breaker.recordNeutral()
 				cancelBudget()
-				return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
+				return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
 			}
 			outcome := "transport_error"
 			if errors.Is(err, context.DeadlineExceeded) {
 				outcome = "timeout"
 			}
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
+			attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
 			breaker.recordFailure()
 			lastErr = err
 			continue
@@ -391,6 +418,7 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 
 		outcome := strconv.Itoa(response.StatusCode)
 		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
+		attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome, StatusCode: response.StatusCode, ErrorClass: response.ErrorClass})
 		if provider.IsRetryableResponse(response) {
 			breaker.recordFailure()
 			lastErr = nil
@@ -407,15 +435,15 @@ func (router *Router) executePlan(parent context.Context, request provider.ChatR
 		if err := parent.Err(); err != nil {
 			closePending()
 			cancelBudget()
-			return Result{Plan: plan}, &RouteError{Decision: decision, Err: err}
+			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
 		}
 		return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
 	}
 	cancelBudget()
 	if decision.Attempts == 0 {
-		return Result{Plan: plan}, &NoAvailableTargetError{Decision: decision}
+		return withPlan(Result{Decision: decision, Settlement: settlement}), &NoAvailableTargetError{Decision: decision}
 	}
-	return Result{Plan: plan}, &RouteError{Decision: decision, Err: lastErr}
+	return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: lastErr}
 }
 
 const maxSettlementDrainBytes = 64 << 10
@@ -537,5 +565,20 @@ func (e *RouteError) Error() string {
 
 // Unwrap 返回底层错误，便于 API 层识别取消和超时。
 func (e *RouteError) Unwrap() error {
+	return e.Err
+}
+
+// AttemptStartError 表示调用 Provider 前无法持久化 Attempt。
+type AttemptStartError struct {
+	Err error
+}
+
+// Error 返回安全的 Attempt 持久化错误描述。
+func (e *AttemptStartError) Error() string {
+	return fmt.Sprintf("attempt start failed: %v", e.Err)
+}
+
+// Unwrap 返回底层 Store 错误，供 HTTP 层映射服务不可用。
+func (e *AttemptStartError) Unwrap() error {
 	return e.Err
 }

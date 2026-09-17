@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -70,6 +71,22 @@ func (store *MemoryStore) FinishAttempt(tenantID, attemptID string, state Attemp
 	attempt.FinishedAt = finishedAt
 	store.attempts[key] = attempt
 	return nil
+}
+
+// AttemptsForRequest 返回指定请求的 Attempt 副本，供内存控制面验证执行轨迹。
+func (store *MemoryStore) AttemptsForRequest(tenantID, requestID string) []Attempt {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	result := make([]Attempt, 0)
+	for _, attempt := range store.attempts {
+		if attempt.TenantID == tenantID && attempt.RequestID == requestID {
+			result = append(result, attempt)
+		}
+	}
+	slices.SortFunc(result, func(left, right Attempt) int {
+		return left.StartedAt.Compare(right.StartedAt)
+	})
+	return result
 }
 
 // CreateRun 保存一个尚未开始请求的 Run，并拒绝跨租户 ID 冲突。

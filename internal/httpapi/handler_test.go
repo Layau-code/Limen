@@ -226,6 +226,66 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	}
 }
 
+func TestAttemptStateUsesProviderClassification(t *testing.T) {
+	tests := []struct {
+		name   string
+		report gateway.AttemptReport
+		state  run.AttemptState
+	}{
+		{name: "success", report: gateway.AttemptReport{StatusCode: http.StatusOK}, state: run.AttemptSucceeded},
+		{name: "transient", report: gateway.AttemptReport{StatusCode: http.StatusServiceUnavailable, ErrorClass: provider.ErrorClassRetryableTransient}, state: run.AttemptTransientFailed},
+		{name: "authentication", report: gateway.AttemptReport{StatusCode: http.StatusServiceUnavailable, ErrorClass: provider.ErrorClassAuthentication}, state: run.AttemptDeterministicFail},
+		{name: "cancelled", report: gateway.AttemptReport{Outcome: "canceled"}, state: run.AttemptCancelled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := attemptState(test.report); got != test.state {
+				t.Fatalf("state = %q, want %q", got, test.state)
+			}
+		})
+	}
+}
+
+func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary"},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openAI := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+	})
+	anthropic := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`)), Usage: staticUsage{InputTokens: 1, OutputTokens: 1, Complete: true}}, nil
+	})
+	runs := run.NewMemoryService(nil)
+	handler := NewWithRuns("limen-secret", newTestRouter(openAI, anthropic, registry), runs)
+	create := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
+	create.Header.Set("Authorization", "Bearer limen-secret")
+	create.Header.Set("Idempotency-Key", "fallback-run-create")
+	createdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createdResponse, create)
+	var created run.Run
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer limen-secret")
+	chat.Header.Set("X-Limen-Run-ID", created.ID)
+	chat.Header.Set("Idempotency-Key", "fallback-request")
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chat)
+	if chatResponse.Code != http.StatusOK {
+		t.Fatalf("chat = %d %s", chatResponse.Code, chatResponse.Body.String())
+	}
+	attempts := runs.AttemptsForRequest(runTenantID, chatResponse.Header().Get("X-Limen-Request-ID"))
+	if len(attempts) != 2 || attempts[0].State != run.AttemptTransientFailed || attempts[1].State != run.AttemptSucceeded {
+		t.Fatalf("attempts = %+v", attempts)
+	}
+}
+
 func TestRunCancellationStopsInFlightChat(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
 	if err != nil {
