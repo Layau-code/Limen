@@ -127,6 +127,8 @@ X-Limen-Route: openai:503>anthropic:200
 
 Run 预算采用事后软阈值：已开始请求允许完成，结算后达到阈值才阻止后续请求；不设置单请求金额上限。阶段 B 的持久化边界使用租户组合键、RLS 和 `ledger_entries(tenant_id, request_id)` 唯一约束，结算未知时保留 `pending` 并暂停 Run 记账。请求租约默认 30 秒、每 10 秒续租；结算存储失败会进入持久化 `settlement_jobs`，过期恢复不自动重放可能已经产生费用的上游调用。
 
+PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表所有者路径也不能绕过租户策略；需要运维操作时应使用独立的数据库角色。
+
 ## 配置与运维
 
 环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本和 API Key 摘要；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 记录需要由受控管理流程预置。设置凭据主密钥后，启动会按租户和 endpoint 读取加密 Provider 凭据；未找到时回退到对应 Provider 环境变量。

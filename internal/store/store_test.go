@@ -117,3 +117,16 @@ func TestAccountingOperationMigrationDefinesIdempotencyAndTenantBinding(t *testi
 		}
 	}
 }
+
+func TestForceRLSPolicyMigrationCoversTenantTables(t *testing.T) {
+	contents, err := os.ReadFile("migrations/008_force_rls.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, table := range []string{"runs", "run_requests", "attempts", "ledger_entries", "cancellation_events", "control_operations", "decision_journal", "api_keys", "provider_credentials", "config_versions", "settlement_jobs", "accounting_operations"} {
+		if !strings.Contains(source, "ALTER TABLE "+table+" FORCE ROW LEVEL SECURITY") {
+			t.Fatalf("force RLS missing for %s", table)
+		}
+	}
+}

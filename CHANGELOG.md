@@ -9,6 +9,7 @@
 - PostgreSQL Run 取消支持 `LISTEN/NOTIFY` 低延迟广播，并保留事件表轮询兜底。
 - 未知费用支持管理员幂等补记或明确接受，Run 可从 `suspended_accounting` 恢复；PostgreSQL 保存处置摘要。
 - Provider 返回的非敏感 request ID 会补写到对应 Attempt，保留上游调用证据。
+- PostgreSQL 新增 008 迁移，对所有租户表启用 `FORCE ROW LEVEL SECURITY`。
 
 ### 限制
 
