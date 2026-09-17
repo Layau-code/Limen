@@ -11,6 +11,7 @@
 - HTTP 请求默认持有 30 秒租约，每 10 秒续租，响应结束释放；续租失败取消本地 Context。
 - 主进程按 10 秒间隔扫描过期租约，将在途请求标记为 `abandoned/pending`，并把 Run 置为 `suspended_accounting`。
 - Memory Store 与 PostgreSQL Store 使用相同的租约语义；PostgreSQL 恢复使用行锁和 `SKIP LOCKED`。
+- 结算存储失败时写入 `settlement_jobs`；后台任务使用独立租约恢复已知费用，未知费用安全转为 `suspended_accounting`。
 
 ## 安全边界
 

@@ -89,6 +89,26 @@ func (service *MemoryService) SettleRequest(_ context.Context, tenantID, request
 	return service.store.SettleRequest(tenantID, requestID, costNanoUSD, now)
 }
 
+// QueueSettlement 将失败的结算保存为可恢复任务。
+func (service *MemoryService) QueueSettlement(ctx context.Context, tenantID, requestID string, costNanoUSD *int64, nextAttemptAt time.Time) error {
+	return service.store.QueueSettlement(ctx, tenantID, requestID, costNanoUSD, nextAttemptAt)
+}
+
+// ClaimSettlementJobs 领取当前租户到期的结算任务。
+func (service *MemoryService) ClaimSettlementJobs(ctx context.Context, tenantID, owner string, now time.Time, leaseTTL time.Duration, limit int) ([]SettlementJob, error) {
+	return service.store.ClaimSettlementJobs(ctx, tenantID, owner, now, leaseTTL, limit)
+}
+
+// CompleteSettlementJob 删除已处理的结算任务。
+func (service *MemoryService) CompleteSettlementJob(ctx context.Context, tenantID, requestID, owner string) error {
+	return service.store.CompleteSettlementJob(ctx, tenantID, requestID, owner)
+}
+
+// FailSettlementJob 释放失败任务的租约并更新下一次尝试时间。
+func (service *MemoryService) FailSettlementJob(ctx context.Context, tenantID, requestID, owner string, nextAttemptAt time.Time, reason string) error {
+	return service.store.FailSettlementJob(ctx, tenantID, requestID, owner, nextAttemptAt, reason)
+}
+
 // GetRun 读取内存 Run，并将不存在映射为统一错误。
 func (service *MemoryService) GetRun(_ context.Context, tenantID, runID string) (Run, error) {
 	item, ok := service.store.GetRun(tenantID, runID)
@@ -111,3 +131,4 @@ var _ Service = (*MemoryService)(nil)
 var _ ControlService = (*MemoryService)(nil)
 var _ LeaseService = (*MemoryService)(nil)
 var _ CancellationService = (*MemoryService)(nil)
+var _ SettlementRecoveryService = (*MemoryService)(nil)

@@ -966,9 +966,6 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 		return errors.New("run service unavailable")
 	}
 	tenantID := h.contextTenantID(ctx)
-	if _, err := h.runs.BeginSettlement(ctx, tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
-		return err
-	}
 	var costNanoUSD *int64
 	if settlement != nil {
 		summary := settlement.Summary()
@@ -977,8 +974,63 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 			costNanoUSD = &value
 		}
 	}
-	_, err := h.runs.SettleRequest(ctx, tenantID, requestID, costNanoUSD, time.Now().UTC())
+	err := retrySettlement(ctx, func() error {
+		if _, err := h.runs.BeginSettlement(ctx, tenantID, requestID, time.Now().UTC()); err != nil && !errors.Is(err, run.ErrRequestAlreadyProcessed) {
+			return err
+		}
+		_, err := h.runs.SettleRequest(ctx, tenantID, requestID, costNanoUSD, time.Now().UTC())
+		return err
+	})
+	if err != nil && retryableSettlementError(err) {
+		if recovery, ok := h.runs.(run.SettlementRecoveryService); ok {
+			queueContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			_ = recovery.QueueSettlement(queueContext, tenantID, requestID, costNanoUSD, time.Now().UTC().Add(100*time.Millisecond))
+			cancel()
+		}
+	}
 	return err
+}
+
+// retrySettlement 对暂时性持久化失败执行短暂、有界且幂等的重试。
+func retrySettlement(ctx context.Context, operation func() error) error {
+	return retrySettlementWithDelays(ctx, operation, []time.Duration{0, 100 * time.Millisecond, 500 * time.Millisecond})
+}
+
+// retrySettlementWithDelays 使用指定退避序列执行结算操作，便于测试恢复边界。
+func retrySettlementWithDelays(ctx context.Context, operation func() error, delays []time.Duration) error {
+	var lastErr error
+	for _, delay := range delays {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lastErr = operation()
+		if lastErr == nil || !retryableSettlementError(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+// retryableSettlementError 判断哪些结算错误值得再次尝试。
+func retryableSettlementError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	switch {
+	case errors.Is(err, run.ErrAccountingSuspended), errors.Is(err, run.ErrRequestAlreadyProcessed), errors.Is(err, run.ErrRequestNotSettleable), errors.Is(err, run.ErrResourceNotFound):
+		return false
+	default:
+		return true
+	}
 }
 
 // writePendingSettlementTrailers 标记数据库未完成的异步结算。

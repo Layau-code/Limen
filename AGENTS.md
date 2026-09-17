@@ -21,7 +21,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，管理员可通过凭据控制 API 轮换或撤销当前实例的 Provider 密钥。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
-- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。
+- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；执行中的 Chat 通过事件轮询取消 Context，不能只修改当前进程的内存映射。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签，不允许请求 ID、租户 ID、原始错误或正文进入指标。
@@ -55,7 +55,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
 - Provider 密钥通过 `SetAPIKey` 原子替换；加密存储只能返回短暂明文给对应适配器，禁止写入日志、决策快照或 HTTP 响应。
-- 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。
+- 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新，数据库记录仍是唯一事实来源。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 
@@ -75,8 +75,10 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换和 `/v1/limen/configs` Scope。
 - 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签和 admin 鉴权。
 - 凭据控制面测试必须覆盖 admin Scope、endpoint 不匹配拒绝、轮换后立即生效、撤销清除内存密钥以及响应不包含明文。
+- 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
+- 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 
 ## 文档同步

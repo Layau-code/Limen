@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -115,5 +116,61 @@ func TestMemoryRequestLeaseRenewsAndRecovers(t *testing.T) {
 	run, ok := store.GetRun("tenant-1", "run-1")
 	if !ok || run.State != StateSuspendedAccounting || run.InFlight != 0 {
 		t.Fatalf("run after recovery = %+v found=%v", run, ok)
+	}
+}
+
+func TestSettlementRecoveryProcessesKnownCostOnce(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateRun(testRun()); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := HashRequest("tenant-1", "/v1/chat/completions", "settlement-key", []byte(`{"model":"auto"}`), nil)
+	request, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "settlement-key", RequestHash: hash}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement("tenant-1", request.ID, time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(42)
+	if err := store.QueueSettlement(context.Background(), "tenant-1", request.ID, &cost, time.Unix(102, 0)); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := ProcessSettlementJobs(context.Background(), NewMemoryService(store), "tenant-1", "worker-a", time.Unix(102, 0), 10)
+	if err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	settled, ok := store.GetRequest("tenant-1", request.ID)
+	if !ok || settled.State != RequestSettled || store.LedgerCount() != 1 {
+		t.Fatalf("request=%+v found=%v ledger=%d", settled, ok, store.LedgerCount())
+	}
+	if jobs, err := store.ClaimSettlementJobs(context.Background(), "tenant-1", "worker-b", time.Unix(103, 0), time.Second, 10); err != nil || len(jobs) != 0 {
+		t.Fatalf("remaining jobs=%+v err=%v", jobs, err)
+	}
+}
+
+func TestSettlementRecoveryMarksUnknownCostSafely(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateRun(testRun()); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := HashRequest("tenant-1", "/v1/chat/completions", "unknown-settlement", []byte(`{"model":"auto"}`), nil)
+	request, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "unknown-settlement", RequestHash: hash}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement("tenant-1", request.ID, time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueSettlement(context.Background(), "tenant-1", request.ID, nil, time.Unix(102, 0)); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := ProcessSettlementJobs(context.Background(), NewMemoryService(store), "tenant-1", "worker-a", time.Unix(102, 0), 10)
+	if err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	runItem, _ := store.GetRun("tenant-1", "run-1")
+	if runItem.State != StateSuspendedAccounting || runItem.InFlight != 0 || store.LedgerCount() != 0 {
+		t.Fatalf("run=%+v ledger=%d", runItem, store.LedgerCount())
 	}
 }

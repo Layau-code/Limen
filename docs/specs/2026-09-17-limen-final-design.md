@@ -166,7 +166,7 @@ Attempt 在访问 Provider 前持久化为 started，执行结束后变为 succe
 
 ### 4.5 跨实例取消
 
-取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。当前基础实现使用租户隔离事件表和每秒轮询，持有本地 Context 的实例立即取消；后续可增加 LISTEN/NOTIFY 降低延迟，轮询继续作为断线兜底。
+取消操作先以事务更新 Run 并写入 cancellation_event，再通过 PostgreSQL LISTEN/NOTIFY 通知实例。当前基础实现使用租户隔离事件表和每秒轮询；凭据变更已使用独立的 PostgreSQL LISTEN/NOTIFY 监听器刷新 Provider，数据库记录仍是唯一事实来源。取消轮询继续作为断线兜底。
 
 目标是在正常数据库连接下 p95 两秒内把跨实例取消传播到 Provider。即使通知丢失，轮询和截止时间也必须最终停止请求。
 
@@ -424,11 +424,11 @@ DecisionInput 和 ExecutionPlan 持久化后，每次真实网络调用都先插
 正常路径为同步结算，但只能在 SSE 最后一段数据已经 Flush 后等待，最多阻塞 HTTP EOF 五百毫秒：
 
 - 事务在期限内成功：Trailer 和查询 API 返回 complete、partial 或 unavailable。
-- 数据库暂时失败：Trailer 返回 pending，HTTP 结束；本地后台任务按 100ms、500ms、2s、10s 退避重试。
+- 数据库暂时失败：Trailer 返回 pending，HTTP 结束；当前实现先在进程内按 0、100、500 毫秒退避重试，仍失败时写入 `settlement_jobs`，由持久化后台任务继续处理。
 - 重试仍失败或实例退出：数据库中的 executing/settlement_pending 租约过期，由其他实例抢占恢复。
 - Usage、价格或 Provider 对账仍不能确定：Request 变为 abandoned，Run 变为 suspended_accounting。
 
-执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
+执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。当前实现已具备租约扫描、短退避重试和持久化后台结算任务；多实例故障注入测试仍需补齐。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
 
 如果 Provider 支持按 request ID 查询 Usage，则自动对账；否则管理员只能接受未知费用、补记保守金额或取消 Run。处理结果写入新的审计事件，不能覆盖原 Attempt。
 
@@ -628,7 +628,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询取消、Provider 凭据加密与 endpoint 绑定。LISTEN/NOTIFY 和多实例事务测试仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。取消通知仍以轮询为断线兜底，多实例事务测试和持久化后台结算任务仍待完成。阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 
@@ -636,7 +636,7 @@ git diff --check
 
 ### 阶段 D：生产化与 1.0
 
-完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、跨实例凭据变更通知、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标和 Provider 凭据轮换/撤销控制面。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
+完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、网络安全测试、故障注入、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备基础 Prometheus 文本指标、Provider 凭据轮换/撤销控制面和跨实例凭据通知边界。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
 
 ### 1.0 之后
 

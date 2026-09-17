@@ -113,6 +113,15 @@ type LeaseService interface {
 	RecoverExpiredRequests(context.Context, string, time.Time, int) ([]Request, error)
 }
 
+// SettlementRecoveryService 定义结算任务的持久化领取和恢复边界。
+type SettlementRecoveryService interface {
+	Service
+	QueueSettlement(context.Context, string, string, *int64, time.Time) error
+	ClaimSettlementJobs(context.Context, string, string, time.Time, time.Duration, int) ([]SettlementJob, error)
+	CompleteSettlementJob(context.Context, string, string, string) error
+	FailSettlementJob(context.Context, string, string, string, time.Time, string) error
+}
+
 // CancellationService 定义跨执行实例传播 Run 取消事件的边界。
 type CancellationService interface {
 	PollCancellationEvents(context.Context, string, int64, int) ([]CancellationEvent, error)
@@ -181,4 +190,15 @@ type Attempt struct {
 	ProviderRequestID string       `json:"provider_request_id,omitempty"`
 	StartedAt         time.Time    `json:"started_at"`
 	FinishedAt        time.Time    `json:"finished_at,omitempty"`
+}
+
+// SettlementJob 保存一次尚未完成的结算及其执行租约。
+type SettlementJob struct {
+	TenantID       string    `json:"tenant_id"`
+	RequestID      string    `json:"request_id"`
+	CostNanoUSD    *int64    `json:"cost_nano_usd,omitempty"`
+	Attempts       int       `json:"attempts"`
+	NextAttemptAt  time.Time `json:"next_attempt_at"`
+	LeaseOwner     string    `json:"lease_owner,omitempty"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
 }

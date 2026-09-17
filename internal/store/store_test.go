@@ -91,3 +91,16 @@ func TestProviderCredentialMigrationStoresCiphertextAndEndpointBinding(t *testin
 		}
 	}
 }
+
+func TestSettlementJobMigrationDefinesLeaseAndTenantBinding(t *testing.T) {
+	contents, err := os.ReadFile("migrations/006_settlement_jobs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE settlement_jobs", "cost_nano_usd BIGINT", "lease_owner TEXT", "FOREIGN KEY (tenant_id, request_id)", "ENABLE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}

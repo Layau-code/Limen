@@ -97,6 +97,7 @@ func main() {
 	var credentialStore credentialstore.Store
 	var credentialSetters map[string]httpapi.ProviderCredentialSetter
 	var credentialEndpoints map[string]string
+	var credentialListener *store.CredentialChangeListener
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
@@ -167,6 +168,11 @@ func main() {
 			credentialStore = credentials
 			credentialSetters = map[string]httpapi.ProviderCredentialSetter{"openai": openAI, "anthropic": anthropic}
 			credentialEndpoints = map[string]string{"openai": openAIEndpointID, "anthropic": anthropicEndpointID}
+			credentialListener, err = store.NewCredentialChangeListener(cfg.DatabaseURL)
+			if err != nil {
+				logger.Warn("credential change listener unavailable", "error", err)
+				credentialListener = nil
+			}
 			credentialContext, cancelCredentials := context.WithTimeout(context.Background(), 3*time.Second)
 			openAIStored, openAIError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "openai", openAIEndpointID, openAI)
 			anthropicStored, anthropicError := loadStoredCredential(credentialContext, credentials, cfg.TenantID, "anthropic", anthropicEndpointID, anthropic)
@@ -210,8 +216,15 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if credentialListener != nil {
+		defer credentialListener.Close()
+		go watchCredentialChanges(ctx, credentialListener, cfg.TenantID, credentialStore, credentialSetters, credentialEndpoints, logger)
+	}
 	if leaseService, ok := runService.(run.LeaseService); ok {
 		go recoverExpiredRequests(ctx, leaseService, cfg.TenantID, logger)
+	}
+	if settlementService, ok := runService.(run.SettlementRecoveryService); ok {
+		go recoverPendingSettlements(ctx, settlementService, cfg.TenantID, newSettlementWorkerOwner(), logger)
 	}
 	go func() {
 		<-ctx.Done()
@@ -228,6 +241,45 @@ func main() {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// watchCredentialChanges 监听凭据变更并刷新当前租户的 Provider 密钥。
+func watchCredentialChanges(ctx context.Context, listener *store.CredentialChangeListener, tenantID string, credentials credentialstore.Store, setters map[string]httpapi.ProviderCredentialSetter, endpoints map[string]string, logger *slog.Logger) {
+	err := listener.Run(ctx, func(change store.CredentialChange) {
+		if change.TenantID != tenantID || credentials == nil || endpoints[change.Provider] != change.EndpointID {
+			return
+		}
+		setter := setters[change.Provider]
+		if setter == nil {
+			return
+		}
+		if change.Revoked {
+			setter.ClearAPIKey()
+			return
+		}
+		refreshContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+		loaded, loadErr := loadStoredCredential(refreshContext, credentials, tenantID, change.Provider, change.EndpointID, setter)
+		cancel()
+		if loadErr != nil {
+			logger.Error("provider credential refresh failed", "provider", change.Provider, "error", loadErr)
+			return
+		}
+		if !loaded {
+			setter.ClearAPIKey()
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		logger.Error("credential change listener stopped", "error", err)
+	}
+}
+
+// newSettlementWorkerOwner 为后台结算任务生成不含业务正文的执行实例标识。
+func newSettlementWorkerOwner() string {
+	owner, err := run.NewID("settlement-worker")
+	if err != nil {
+		return "settlement-worker-local"
+	}
+	return owner
 }
 
 // validateRuntimeProviderKeys 在数据库配置生效后按当前目录校验环境密钥。
@@ -293,6 +345,29 @@ func recoverExpiredRequests(ctx context.Context, service run.LeaseService, tenan
 			}
 			if len(requests) > 0 {
 				logger.Warn("expired requests recovered", "count", len(requests))
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// recoverPendingSettlements 定期领取并恢复未完成的结算任务。
+func recoverPendingSettlements(ctx context.Context, service run.SettlementRecoveryService, tenantID, owner string, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			recoveryContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			processed, err := run.ProcessSettlementJobs(recoveryContext, service, tenantID, owner, time.Now().UTC(), 100)
+			cancel()
+			if err != nil {
+				logger.Error("pending settlement recovery failed", "error", err)
+				continue
+			}
+			if processed > 0 {
+				logger.Info("pending settlements recovered", "count", processed)
 			}
 		case <-ctx.Done():
 			return

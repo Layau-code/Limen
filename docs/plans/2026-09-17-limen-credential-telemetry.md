@@ -14,4 +14,4 @@
 
 ## 后续
 
-Secret Manager 接入、跨实例凭据变更通知、OpenTelemetry Trace/Exporter 和多实例 PostgreSQL 故障注入测试仍留在 1.0 生产化阶段。
+Secret Manager 接入、结算后台任务和 OpenTelemetry Trace/Exporter、多实例 PostgreSQL 故障注入测试仍留在 1.0 生产化阶段；跨实例凭据变更已使用 PostgreSQL `NOTIFY`，仍需补充真实多实例故障测试。

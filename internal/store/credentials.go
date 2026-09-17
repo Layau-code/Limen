@@ -51,6 +51,9 @@ func (store *PostgresCredentialStore) Rotate(ctx context.Context, tenantID, prov
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provider_credentials (tenant_id,credential_id,provider,endpoint_id,key_version,ciphertext,active,created_at) VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7)`, tenantID, id, provider, endpointID, id, sealed, now); err != nil {
 		return credentialstore.Record{}, err
 	}
+	if err := notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID}); err != nil {
+		return credentialstore.Record{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return credentialstore.Record{}, err
 	}
@@ -107,6 +110,9 @@ func (store *PostgresCredentialStore) Revoke(ctx context.Context, tenantID, prov
 	count, _ := result.RowsAffected()
 	if count == 0 {
 		return credentialstore.ErrNotFound
+	}
+	if err := notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID, Revoked: true}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

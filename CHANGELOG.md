@@ -7,6 +7,7 @@
 - 租户隔离的不可变配置版本、配置发布 API、Router 原子快照切换和配置版本恢复。
 - AES-GCM Provider 凭据存储边界、endpoint 绑定和并发安全密钥轮换。
 - `admin` Scope 保护的 Provider 凭据轮换和撤销 API，响应只返回安全元数据。
+- 持久化 `settlement_jobs`、带租约的后台结算恢复和跨实例凭据 `NOTIFY` 刷新边界。
 - 需要 `admin` Scope 的基础 Prometheus 文本指标和有界标签。
 
 ### 限制

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,6 +99,31 @@ func TestScopesRejectOperationWithoutPermission(t *testing.T) {
 	handler.ServeHTTP(chatResponse, chat)
 	if chatResponse.Code != http.StatusForbidden || !strings.Contains(chatResponse.Body.String(), "insufficient_scope") {
 		t.Fatalf("chat status=%d body=%s", chatResponse.Code, chatResponse.Body.String())
+	}
+}
+
+func TestRetrySettlementRetriesTemporaryStoreError(t *testing.T) {
+	attempts := 0
+	err := retrySettlementWithDelays(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("temporary store error")
+		}
+		return nil
+	}, []time.Duration{0, 0, 0})
+	if err != nil || attempts != 3 {
+		t.Fatalf("err=%v attempts=%d", err, attempts)
+	}
+}
+
+func TestRetrySettlementStopsAccountingUnknown(t *testing.T) {
+	attempts := 0
+	err := retrySettlementWithDelays(context.Background(), func() error {
+		attempts++
+		return run.ErrAccountingSuspended
+	}, []time.Duration{0, 0, 0})
+	if !errors.Is(err, run.ErrAccountingSuspended) || attempts != 1 {
+		t.Fatalf("err=%v attempts=%d", err, attempts)
 	}
 }
 

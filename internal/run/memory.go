@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -8,16 +9,17 @@ import (
 )
 
 type MemoryStore struct {
-	mu        sync.Mutex
-	runs      map[string]Run
-	requests  map[string]Request
-	attempts  map[string]Attempt
-	idem      map[string]string
-	ledger    map[string]int64
-	mutations map[string]mutationResult
-	events    []CancellationEvent
-	eventID   int64
-	sequence  uint64
+	mu          sync.Mutex
+	runs        map[string]Run
+	requests    map[string]Request
+	attempts    map[string]Attempt
+	idem        map[string]string
+	ledger      map[string]int64
+	settlements map[string]SettlementJob
+	mutations   map[string]mutationResult
+	events      []CancellationEvent
+	eventID     int64
+	sequence    uint64
 }
 
 type mutationResult struct {
@@ -28,12 +30,13 @@ type mutationResult struct {
 // NewMemoryStore 创建用于本地开发和并发测试的强一致内存 Store。
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		runs:      make(map[string]Run),
-		requests:  make(map[string]Request),
-		attempts:  make(map[string]Attempt),
-		idem:      make(map[string]string),
-		ledger:    make(map[string]int64),
-		mutations: make(map[string]mutationResult),
+		runs:        make(map[string]Run),
+		requests:    make(map[string]Request),
+		attempts:    make(map[string]Attempt),
+		idem:        make(map[string]string),
+		ledger:      make(map[string]int64),
+		settlements: make(map[string]SettlementJob),
+		mutations:   make(map[string]mutationResult),
 	}
 }
 
@@ -281,6 +284,104 @@ func (store *MemoryStore) SettleRequest(tenantID, requestID string, costNanoUSD 
 	return request, nil
 }
 
+// QueueSettlement 保存或更新一条待处理结算任务，重复入队不会产生重复任务。
+func (store *MemoryStore) QueueSettlement(ctx context.Context, tenantID, requestID string, costNanoUSD *int64, nextAttemptAt time.Time) error {
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, ok := store.requests[resourceKey(tenantID, requestID)]; !ok {
+		return ErrResourceNotFound
+	}
+	key := resourceKey(tenantID, requestID)
+	job := store.settlements[key]
+	job.TenantID, job.RequestID = tenantID, requestID
+	if costNanoUSD != nil {
+		value := *costNanoUSD
+		job.CostNanoUSD = &value
+	}
+	if job.NextAttemptAt.IsZero() || nextAttemptAt.Before(job.NextAttemptAt) {
+		job.NextAttemptAt = nextAttemptAt
+	}
+	store.settlements[key] = job
+	return nil
+}
+
+// ClaimSettlementJobs 原子领取到期结算任务并写入执行租约。
+func (store *MemoryStore) ClaimSettlementJobs(ctx context.Context, tenantID, owner string, now time.Time, leaseTTL time.Duration, limit int) ([]SettlementJob, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	if owner == "" {
+		return nil, ErrLeaseUnavailable
+	}
+	if leaseTTL <= 0 {
+		leaseTTL = RequestLeaseDuration
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	jobs := make([]SettlementJob, 0, limit)
+	for key, job := range store.settlements {
+		if job.TenantID != tenantID || len(jobs) >= limit || now.Before(job.NextAttemptAt) {
+			continue
+		}
+		if job.LeaseOwner != "" && now.Before(job.LeaseExpiresAt) {
+			continue
+		}
+		job.Attempts++
+		job.LeaseOwner = owner
+		job.LeaseExpiresAt = now.Add(leaseTTL)
+		store.settlements[key] = job
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
+// CompleteSettlementJob 删除已成功或已安全转为未知费用的结算任务。
+func (store *MemoryStore) CompleteSettlementJob(ctx context.Context, tenantID, requestID, owner string) error {
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, requestID)
+	job, ok := store.settlements[key]
+	if !ok {
+		return ErrResourceNotFound
+	}
+	if job.LeaseOwner != owner {
+		return ErrLeaseLost
+	}
+	delete(store.settlements, key)
+	return nil
+}
+
+// FailSettlementJob 释放任务租约并安排下一次有界退避重试。
+func (store *MemoryStore) FailSettlementJob(ctx context.Context, tenantID, requestID, owner string, nextAttemptAt time.Time, _ string) error {
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := resourceKey(tenantID, requestID)
+	job, ok := store.settlements[key]
+	if !ok {
+		return ErrResourceNotFound
+	}
+	if job.LeaseOwner != owner {
+		return ErrLeaseLost
+	}
+	job.LeaseOwner = ""
+	job.LeaseExpiresAt = time.Time{}
+	job.NextAttemptAt = nextAttemptAt
+	store.settlements[key] = job
+	return nil
+}
+
 // GetRun 返回指定租户的 Run 副本，避免调用方绕过 Store 修改状态。
 func (store *MemoryStore) GetRun(tenantID, runID string) (Run, bool) {
 	store.mu.Lock()
@@ -447,6 +548,14 @@ func validateMutation(mutation Mutation) error {
 		return ErrIdempotencyKeyRequired
 	}
 	return nil
+}
+
+// contextError 返回已取消的上下文原因，兼容测试中的 nil Context。
+func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
 }
 
 func mutationKey(tenantID, operation, key string) string {

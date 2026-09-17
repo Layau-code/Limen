@@ -22,6 +22,9 @@ var configVersionsMigration string
 //go:embed migrations/005_provider_credentials.sql
 var providerCredentialsMigration string
 
+//go:embed migrations/006_settlement_jobs.sql
+var settlementJobsMigration string
+
 // ApplyMigrations 以版本表和单事务方式执行内置 PostgreSQL 迁移。
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	if db == nil {
@@ -44,6 +47,7 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 		{version: "003_api_keys", source: apiKeysMigration},
 		{version: "004_config_versions", source: configVersionsMigration},
 		{version: "005_provider_credentials", source: providerCredentialsMigration},
+		{version: "006_settlement_jobs", source: settlementJobsMigration},
 	} {
 		var applied bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM limen_schema_migrations WHERE version=$1)`, migration.version).Scan(&applied); err != nil {
