@@ -507,7 +507,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | 创建和发布配置 | configs:write |
 | 轮换和撤销 Provider 凭据 | admin |
 
-Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通知和 Secret Manager 仍后置。
+Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
 
 ### 9.4 Explain、Dry Run、Replay
 
