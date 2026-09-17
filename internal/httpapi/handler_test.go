@@ -226,6 +226,33 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	}
 }
 
+func TestRunStrategyCannotBeOverriddenByChatRequest(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := run.NewMemoryService(nil)
+	handler := NewWithRuns("limen-secret", newTestRouter(nil, nil, registry), runs)
+	create := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1,"strategy":"economy"}`))
+	create.Header.Set("Authorization", "Bearer limen-secret")
+	create.Header.Set("Idempotency-Key", "strategy-run-create")
+	createdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createdResponse, create)
+	var created run.Run
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}],"limen":{"strategy":"balanced"}}`))
+	chat.Header.Set("Authorization", "Bearer limen-secret")
+	chat.Header.Set("X-Limen-Run-ID", created.ID)
+	chat.Header.Set("Idempotency-Key", "strategy-request")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, chat)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "strategy_conflict") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAttemptStateUsesProviderClassification(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -248,8 +275,8 @@ func TestAttemptStateUsesProviderClassification(t *testing.T) {
 
 func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{
-		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary"},
-		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup"},
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1},
 	}}})
 	if err != nil {
 		t.Fatal(err)

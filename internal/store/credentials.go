@@ -51,9 +51,8 @@ func (store *PostgresCredentialStore) Rotate(ctx context.Context, tenantID, prov
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provider_credentials (tenant_id,credential_id,provider,endpoint_id,key_version,ciphertext,active,created_at) VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7)`, tenantID, id, provider, endpointID, id, sealed, now); err != nil {
 		return credentialstore.Record{}, err
 	}
-	if err := notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID}); err != nil {
-		return credentialstore.Record{}, err
-	}
+	// 通知只用于加速刷新，数据库提交仍是凭据变更的唯一事实来源。
+	_ = notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID})
 	if err := tx.Commit(); err != nil {
 		return credentialstore.Record{}, err
 	}
@@ -111,9 +110,8 @@ func (store *PostgresCredentialStore) Revoke(ctx context.Context, tenantID, prov
 	if count == 0 {
 		return credentialstore.ErrNotFound
 	}
-	if err := notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID, Revoked: true}); err != nil {
-		return err
-	}
+	// 通知失败不回滚撤销；其他实例可在重启时从数据库重新加载。
+	_ = notifyCredentialChange(ctx, tx, CredentialChange{TenantID: tenantID, Provider: provider, EndpointID: endpointID, Revoked: true})
 	return tx.Commit()
 }
 

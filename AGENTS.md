@@ -34,7 +34,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 1. 核心数据面只使用 Go 标准库；PostgreSQL 允许使用成熟的单一驱动，接口由真实替换需求或测试需求驱动。
 2. `context.Context` 必须贯穿 HTTP、Router 和 Provider；客户端断开要取消上游。
 3. 一次请求只创建一个总预算；每个目标最多调用一次；SSE 返回成功后不切换。
-4. 只有固定瞬时状态（408、409、429、500、502、503、504、529）和传输错误触发 Fallback；确定性错误直接返回。
+4. 只有 Provider 归一化为 `retryable_transient` 的响应和传输错误触发 Fallback；认证、配额和确定性错误直接返回。
 5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥。
 6. 优先整理和复用旧实现，保持文件职责单一，删除已失效代码。
 7. 金额使用十进制定点整数；缺失用量或价格时省略费用，不把未知值写成零。
@@ -42,6 +42,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 9. 生产出站请求必须经安全 Client：HTTPS allowlist、无环境代理、无自动重定向，并拒绝 loopback、私网、链路本地和元数据地址。
 10. Run 的 soft budget 只在结算后影响后续准入；不得在 Provider 调用中途按预计费用截断当前响应，也不得把未知费用写成零。
 11. 所有受治理 Store 方法必须显式接收 tenant_id；跨租户资源不能只依赖单列 ID，账本以 `(tenant_id, request_id)` 幂等。
+12. Run 创建后固定 `strategy` 和 `config_version`；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 
 ## Provider 与路由
 
@@ -55,7 +56,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
 - Provider 密钥通过 `SetAPIKey` 原子替换；加密存储只能返回短暂明文给对应适配器，禁止写入日志、决策快照或 HTTP 响应。
-- 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新，数据库记录仍是唯一事实来源。
+- 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新且失败不得回滚事务，数据库记录仍是唯一事实来源。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 

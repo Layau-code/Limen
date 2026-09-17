@@ -562,6 +562,9 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", code)
 		return
 	}
+	if !h.applyRunContract(w, r, &envelope) {
+		return
+	}
 	h.metrics.Inc(telemetry.RequestsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: envelope.Request.Model})
 	if h.router == nil {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
@@ -575,6 +578,26 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseLease()
 	h.forward(w, r, envelope.Request, envelope.Contract, requestID)
+}
+
+// applyRunContract 将 Run 固定策略注入请求，并拒绝客户端覆盖治理边界。
+func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envelope *parsedChatRequest) bool {
+	runID := strings.TrimSpace(r.Header.Get("X-Limen-Run-ID"))
+	if runID == "" || h.runs == nil {
+		return true
+	}
+	runItem, err := h.runs.GetRun(r.Context(), h.requestTenantID(r), runID)
+	if err != nil {
+		writeRunLookupError(w, err)
+		return false
+	}
+	if envelope.Contract.Strategy != "" && envelope.Contract.Strategy != runItem.Strategy {
+		writeError(w, http.StatusBadRequest, "request strategy conflicts with Run strategy", "invalid_request_error", "strategy_conflict")
+		return false
+	}
+	envelope.Contract.Strategy = runItem.Strategy
+	envelope.Contract.Active = true
+	return true
 }
 
 // watchRunCancellation 轮询租户取消事件，并取消当前请求的 Provider Context。
