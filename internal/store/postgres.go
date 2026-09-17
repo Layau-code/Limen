@@ -868,11 +868,15 @@ func getRunTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run,
 // getRequestTx 在已有事务内读取不含正文的 Request。
 func getRequestTx(ctx context.Context, tx *sql.Tx, tenantID, requestID string) (run.Request, error) {
 	var item run.Request
+	var decisionID sql.NullString
 	var leaseOwner sql.NullString
 	var leaseExpiresAt sql.NullTime
-	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &item.DecisionID, &item.LedgerRecorded, &leaseOwner, &leaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,run_id,endpoint,idempotency_key,request_hash,state,settlement_status,decision_id,ledger_recorded,lease_owner,lease_expires_at,created_at,updated_at FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&item.ID, &item.TenantID, &item.RunID, &item.Endpoint, &item.IdempotencyKey, &item.RequestHash, &item.State, &item.SettlementStatus, &decisionID, &item.LedgerRecorded, &leaseOwner, &leaseExpiresAt, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run.Request{}, run.ErrResourceNotFound
+	}
+	if decisionID.Valid {
+		item.DecisionID = decisionID.String
 	}
 	if leaseOwner.Valid {
 		item.LeaseOwner = leaseOwner.String

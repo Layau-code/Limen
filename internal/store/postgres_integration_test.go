@@ -1,0 +1,464 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/huz/limen/internal/run"
+	"github.com/lib/pq"
+)
+
+var (
+	integrationSetupOnce sync.Once
+	integrationAdminDB   *sql.DB
+	integrationAppDB     *sql.DB
+	integrationSetupErr  error
+	integrationSequence  atomic.Uint64
+)
+
+// TestPostgresIntegrationRLSUsesDatabasePolicy 验证受限角色无法绕过租户行策略。
+func TestPostgresIntegrationRLSUsesDatabasePolicy(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantA, tenantB := integrationID("tenant-a"), integrationID("tenant-b")
+	ensureIntegrationTenant(t, adminDB, tenantA)
+	ensureIntegrationTenant(t, adminDB, tenantB)
+
+	store := NewPostgresStore(appDB)
+	runA := integrationRun(integrationID("run-a"), 1)
+	runB := integrationRun(integrationID("run-b"), 1)
+	if err := store.CreateRun(ctx, tenantA, runA); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRun(ctx, tenantB, runB); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := appDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantA); err != nil {
+		t.Fatal(err)
+	}
+	var visible int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM runs WHERE id=$1`, runB.ID).Scan(&visible); err != nil {
+		t.Fatal(err)
+	}
+	if visible != 0 {
+		t.Fatalf("cross-tenant rows visible = %d", visible)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE runs SET strategy='economy' WHERE id=$1`, runB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated != 0 {
+		t.Fatalf("cross-tenant rows updated = %d", updated)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := store.GetRun(ctx, tenantB, runB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Strategy != "balanced" {
+		t.Fatalf("cross-tenant update changed strategy = %q", stored.Strategy)
+	}
+}
+
+// TestPostgresIntegrationConcurrentAdmissionBound 验证数据库行锁严格限制 Run 并发名额。
+func TestPostgresIntegrationConcurrentAdmissionBound(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-admission")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-admission"), 8)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errorsFound := make(chan error, 100)
+	var admitted atomic.Int64
+	var rejected atomic.Int64
+	var group sync.WaitGroup
+	for index := range 100 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			key := fmt.Sprintf("request-%d", index)
+			_, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+				Request: run.Request{ID: integrationID(key), Endpoint: "/v1/chat/completions", IdempotencyKey: key, RequestHash: "hash-" + key},
+				Now:     time.Now().UTC(),
+			})
+			switch {
+			case err == nil:
+				admitted.Add(1)
+			case errors.Is(err, run.ErrRunConcurrencyExceeded):
+				rejected.Add(1)
+			default:
+				errorsFound <- err
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		t.Fatalf("unexpected admission error: %v", err)
+	}
+	if admitted.Load() != 8 || rejected.Load() != 92 {
+		t.Fatalf("admitted=%d rejected=%d", admitted.Load(), rejected.Load())
+	}
+	stored, err := store.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.InFlight != 8 {
+		t.Fatalf("in_flight = %d", stored.InFlight)
+	}
+}
+
+// TestPostgresIntegrationConcurrentIdempotency 验证并发重试只创建一个 Request。
+func TestPostgresIntegrationConcurrentIdempotency(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-idempotency")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-idempotency"), 100)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errorsFound := make(chan error, 100)
+	var admitted atomic.Int64
+	var duplicate atomic.Int64
+	var group sync.WaitGroup
+	for index := range 100 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+				Request: run.Request{ID: integrationID(fmt.Sprintf("duplicate-%d", index)), Endpoint: "/v1/chat/completions", IdempotencyKey: "same-key", RequestHash: "same-hash"},
+				Now:     time.Now().UTC(),
+			})
+			switch {
+			case err == nil:
+				admitted.Add(1)
+			case errors.Is(err, run.ErrRequestInProgress):
+				duplicate.Add(1)
+			default:
+				errorsFound <- err
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		t.Fatalf("unexpected idempotency error: %v", err)
+	}
+	if admitted.Load() != 1 || duplicate.Load() != 99 {
+		t.Fatalf("admitted=%d duplicate=%d", admitted.Load(), duplicate.Load())
+	}
+	if count := tenantRowCount(t, appDB, tenantID, `SELECT count(*) FROM run_requests WHERE endpoint=$1 AND idempotency_key=$2`, "/v1/chat/completions", "same-key"); count != 1 {
+		t.Fatalf("request rows = %d", count)
+	}
+	_, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request: run.Request{ID: integrationID("conflict"), Endpoint: "/v1/chat/completions", IdempotencyKey: "same-key", RequestHash: "different-hash"},
+		Now:     time.Now().UTC(),
+	})
+	if !errors.Is(err, run.ErrIdempotencyConflict) {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
+// TestPostgresIntegrationConcurrentSettlement 验证同一费用只能进入账本一次。
+func TestPostgresIntegrationConcurrentSettlement(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-settlement")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-settlement"), 1)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	request, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request: run.Request{ID: integrationID("request-settlement"), Endpoint: "/v1/chat/completions", IdempotencyKey: "settlement-key", RequestHash: "settlement-hash"},
+		Now:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement(ctx, tenantID, request.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	cost := int64(125_000)
+	start := make(chan struct{})
+	errorsFound := make(chan error, 100)
+	var group sync.WaitGroup
+	for range 100 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			if _, err := store.SettleRequest(ctx, tenantID, request.ID, &cost, time.Now().UTC()); err != nil {
+				errorsFound <- err
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		t.Fatalf("unexpected settlement error: %v", err)
+	}
+	if count := tenantRowCount(t, appDB, tenantID, `SELECT count(*) FROM ledger_entries WHERE request_id=$1`, request.ID); count != 1 {
+		t.Fatalf("ledger rows = %d", count)
+	}
+	stored, err := store.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SettledCostNanoUSD != cost || stored.InFlight != 0 {
+		t.Fatalf("settled_cost=%d in_flight=%d", stored.SettledCostNanoUSD, stored.InFlight)
+	}
+}
+
+// TestPostgresIntegrationLeaseRecoveryCompetition 验证多个实例不会重复恢复同一过期请求。
+func TestPostgresIntegrationLeaseRecoveryCompetition(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-recovery")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	first := NewPostgresStore(appDB)
+	secondDB, err := sql.Open("postgres", appURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+	second := NewPostgresStore(secondDB)
+	item := integrationRun(integrationID("run-recovery"), 1)
+	if err := first.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Minute)
+	request, err := first.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request:    run.Request{ID: integrationID("request-recovery"), Endpoint: "/v1/chat/completions", IdempotencyKey: "recovery-key", RequestHash: "recovery-hash"},
+		Now:        base,
+		LeaseOwner: "instance-a",
+		LeaseTTL:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	counts := make(chan int, 2)
+	errorsFound := make(chan error, 2)
+	var group sync.WaitGroup
+	for _, current := range []*PostgresStore{first, second} {
+		group.Add(1)
+		go func(candidate *PostgresStore) {
+			defer group.Done()
+			<-start
+			recovered, err := candidate.RecoverExpiredRequests(ctx, tenantID, time.Now().UTC(), 10)
+			if err != nil {
+				errorsFound <- err
+				return
+			}
+			counts <- len(recovered)
+		}(current)
+	}
+	close(start)
+	group.Wait()
+	close(counts)
+	close(errorsFound)
+	for err := range errorsFound {
+		t.Fatalf("unexpected recovery error: %v", err)
+	}
+	total := 0
+	for count := range counts {
+		total += count
+	}
+	if total != 1 {
+		t.Fatalf("recovered requests = %d", total)
+	}
+	storedRequest, err := first.GetRequest(ctx, tenantID, request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedRun, err := first.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRequest.State != run.RequestAbandoned || storedRequest.SettlementStatus != "pending" {
+		t.Fatalf("request state=%s settlement=%s", storedRequest.State, storedRequest.SettlementStatus)
+	}
+	if storedRun.State != run.StateSuspendedAccounting || storedRun.InFlight != 0 {
+		t.Fatalf("run state=%s in_flight=%d", storedRun.State, storedRun.InFlight)
+	}
+}
+
+// TestPostgresIntegrationCancellationNotificationAndPolling 验证通知和事件表形成快慢两条取消路径。
+func TestPostgresIntegrationCancellationNotificationAndPolling(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-cancel")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-cancel"), 1)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+
+	listener := pq.NewListener(appURL, 100*time.Millisecond, time.Second, nil)
+	defer listener.Close()
+	if err := listener.Listen(cancellationEventChannel); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CancelRunWithMutation(ctx, tenantID, item.ID, run.Mutation{Key: "cancel-key", Hash: "cancel-hash"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case notification := <-listener.Notify:
+		if notification == nil {
+			t.Fatal("received empty cancellation notification")
+		}
+		event, err := parseCancellationEvent(notification.Extra)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.TenantID != tenantID || event.RunID != item.ID {
+			t.Fatalf("notification = %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancellation notification timed out")
+	}
+	events, err := store.PollCancellationEvents(ctx, tenantID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].RunID != item.ID {
+		t.Fatalf("polled events = %+v", events)
+	}
+}
+
+// postgresIntegrationDatabases 初始化一次迁移，并返回管理员与受限应用连接。
+func postgresIntegrationDatabases(t *testing.T) (*sql.DB, *sql.DB, string) {
+	t.Helper()
+	adminURL := os.Getenv("LIMEN_TEST_DATABASE_ADMIN_URL")
+	appURL := os.Getenv("LIMEN_TEST_DATABASE_URL")
+	role := os.Getenv("LIMEN_TEST_DATABASE_ROLE")
+	if adminURL == "" || appURL == "" || role == "" {
+		t.Skip("PostgreSQL integration environment is not configured")
+	}
+	integrationSetupOnce.Do(func() {
+		if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(role) {
+			integrationSetupErr = fmt.Errorf("invalid integration role %q", role)
+			return
+		}
+		integrationAdminDB, integrationSetupErr = sql.Open("postgres", adminURL)
+		if integrationSetupErr != nil {
+			return
+		}
+		if integrationSetupErr = integrationAdminDB.Ping(); integrationSetupErr != nil {
+			return
+		}
+		integrationAdminDB.SetMaxOpenConns(4)
+		if integrationSetupErr = ApplyMigrations(context.Background(), integrationAdminDB); integrationSetupErr != nil {
+			return
+		}
+		quotedRole := pq.QuoteIdentifier(role)
+		for _, statement := range []string{
+			"GRANT USAGE ON SCHEMA public TO " + quotedRole,
+			"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + quotedRole,
+			"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO " + quotedRole,
+		} {
+			if _, integrationSetupErr = integrationAdminDB.Exec(statement); integrationSetupErr != nil {
+				return
+			}
+		}
+		integrationAppDB, integrationSetupErr = sql.Open("postgres", appURL)
+		if integrationSetupErr != nil {
+			return
+		}
+		integrationAppDB.SetMaxOpenConns(24)
+		integrationSetupErr = integrationAppDB.Ping()
+	})
+	if integrationSetupErr != nil {
+		t.Fatal(integrationSetupErr)
+	}
+	return integrationAdminDB, integrationAppDB, appURL
+}
+
+// ensureIntegrationTenant 创建测试专用租户。
+func ensureIntegrationTenant(t *testing.T, db *sql.DB, tenantID string) {
+	t.Helper()
+	if err := EnsureTenant(context.Background(), db, tenantID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// integrationRun 创建只含治理测试所需字段的 Run。
+func integrationRun(id string, maxParallelism int) run.Run {
+	now := time.Now().UTC()
+	return run.Run{
+		ID:                id,
+		State:             run.StateActive,
+		SoftBudgetNanoUSD: 10_000_000_000,
+		MaxParallelism:    maxParallelism,
+		Strategy:          "balanced",
+		ConfigVersion:     "integration-v1",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+}
+
+// integrationID 生成不会在共享测试数据库中冲突的标识。
+func integrationID(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), integrationSequence.Add(1))
+}
+
+// tenantRowCount 在真实 RLS 会话中统计指定租户的数据行。
+func tenantRowCount(t *testing.T, db *sql.DB, tenantID, query string, args ...any) int {
+	t.Helper()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(context.Background(), tx, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := tx.QueryRowContext(context.Background(), query, args...).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}

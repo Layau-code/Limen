@@ -430,7 +430,7 @@ DecisionInput 和 ExecutionPlan 持久化后，每次真实网络调用都先插
 - 重试仍失败或实例退出：数据库中的 executing/settlement_pending 租约过期，由其他实例抢占恢复。
 - Usage、价格或 Provider 对账仍不能确定：Request 变为 abandoned，Run 变为 suspended_accounting。
 
-执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。当前实现已具备租约扫描、短退避重试和持久化后台结算任务；多实例故障注入测试仍需补齐。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
+执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。当前实现已具备租约扫描、短退避重试和持久化后台结算任务；真实 PostgreSQL 测试已覆盖两个 Store 竞争恢复同一过期租约，更完整的进程崩溃和数据库断连故障注入仍需补齐。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
 
 如果 Provider 支持按 request ID 查询 Usage，则自动对账；否则管理员通过专用接口接受未知费用、补记保守金额或取消 Run。补记或接受操作写入只含哈希、处置类型和金额的 `accounting_operations` 审计记录，不能覆盖原 Attempt，也不保存 Prompt、Response 或密钥。
 
@@ -637,7 +637,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询与 LISTEN/NOTIFY 取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。多实例事务测试仍待补齐，阶段 B 结束时不能存在崩溃后永久占用的并发名额。
+引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询与 LISTEN/NOTIFY 取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。真实 PostgreSQL 已覆盖 RLS、100 并发准入、同键幂等、并发唯一账本、双 Store 租约恢复竞争和取消通知/轮询；进程级故障注入仍待补齐，阶段 B 结束时不能存在崩溃后永久占用的并发名额。
 
 ### 阶段 C：版本化控制面与 Replay
 

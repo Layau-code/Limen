@@ -10,10 +10,15 @@
 - 未知费用支持管理员幂等补记或明确接受，Run 可从 `suspended_accounting` 恢复；PostgreSQL 保存处置摘要。
 - Provider 返回的非敏感 request ID 会补写到对应 Attempt，保留上游调用证据。
 - PostgreSQL 新增 008 迁移，对所有租户表启用 `FORCE ROW LEVEL SECURITY`。
+- 真实 PostgreSQL 集成测试覆盖非超级用户 RLS、100 并发准入与幂等、唯一账本、双 Store 租约恢复竞争和取消事件双路径。
+
+### 修复
+
+- PostgreSQL Request 读取可正确处理尚未生成 `decision_id` 的准入状态。
 
 ### 限制
 
-- 真实 PostgreSQL 多实例故障测试、旧算法保留窗口与审批审计、Secret Manager 和完整 OpenTelemetry 导出仍待后续生产化阶段。
+- 进程崩溃与数据库断连故障注入、旧算法保留窗口与审批审计、Secret Manager 和完整 OpenTelemetry 导出仍待后续生产化阶段。
 
 ## v0.3.0
 

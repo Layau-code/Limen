@@ -78,7 +78,7 @@ HTTP Principal/Scope 鉴权与解析
 
 当前 HTTP Run 和配置控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移，008 迁移对所有租户表启用 `FORCE ROW LEVEL SECURITY`。未配置数据库时，控制面使用内存实现，仅适合单机开发，不能作为生产账本或配置发布记录。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户和 Scope 从数据库 Key 记录生成。凭据和取消的 `NOTIFY` 都只是低延迟提示，通知失败不回滚已提交事务，轮询或重启负责兜底。
 
-受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。每次真实 Provider 调用前单独写入 Attempt，收到上游非敏感 request ID 后补写，Fallback 后续目标不会覆盖前一个 Attempt 的状态。结算遇到暂时性存储错误时，当前进程按 0、100、500 毫秒退避重试；仍未完成则写入持久化 `settlement_jobs` 并返回 `pending`。后台任务使用独立租约幂等重试已知费用；未知费用只转为 `suspended_accounting`，不重放 Provider。主进程同时扫描当前租户的过期请求；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本。取消 Run 时在同一事务写入租户隔离取消事件，PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 广播，在途 Chat 同时每秒轮询事件作为断线兜底。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
+受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。每次真实 Provider 调用前单独写入 Attempt，收到上游非敏感 request ID 后补写，Fallback 后续目标不会覆盖前一个 Attempt 的状态。结算遇到暂时性存储错误时，当前进程按 0、100、500 毫秒退避重试；仍未完成则写入持久化 `settlement_jobs` 并返回 `pending`。后台任务使用独立租约幂等重试已知费用；未知费用只转为 `suspended_accounting`，不重放 Provider。主进程同时扫描当前租户的过期请求；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本。取消 Run 时在同一事务写入租户隔离取消事件，PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 广播，在途 Chat 同时每秒轮询事件作为断线兜底。真实 PostgreSQL 集成测试使用非超级用户验证 RLS，并以 100 并发准入、并发幂等、唯一账本和两个 Store 的恢复竞争固定这些不变量。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
 未知费用的恢复由管理员显式完成：`POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 使用 `mode=cost` 补记定点金额，或使用 `mode=accept_unknown` 接受无法核实的费用。两种模式都把 Request 置为 `settled`，分别标记 `settlement_status=complete/unknown`；只有补记金额才写入 Ledger。Run 按取消、截止时间、软预算、完成标记的固定优先级恢复为终态、`active` 或 `completing`，已进入终态的 Run 不会被重新打开；同一 Run 的多个未知请求必须全部处置后才恢复准入，并使用控制面幂等键避免重复处置。
 

@@ -1,4 +1,4 @@
-.PHONY: fmt vet test check build image smoke bench run
+.PHONY: fmt vet test check integration build image smoke bench run
 
 fmt:
 	gofmt -w cmd internal
@@ -13,6 +13,9 @@ check:
 	test -z "$$(gofmt -l cmd internal)"
 	go vet ./...
 	go test ./... -race
+
+integration:
+	./scripts/postgres-integration.sh
 
 build:
 	mkdir -p bin
