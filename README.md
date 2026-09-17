@@ -18,7 +18,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库，默认仍使用静态 Key 便于单机开发。
 - Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；Provider 密钥轮换不会打断在途请求。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
-- 仅对明确的瞬时状态和传输错误执行 Fallback；SSE 开始后不重放。
+- 仅对 Provider 归一化的 `retryable_transient` 和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
 - Provider 用量采集与按目标价格的定点成本结算；普通响应和 SSE 都保持实时转发。
 - 只使用 Go 标准库，包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
@@ -142,6 +142,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的一次基准结果为：主路径约 `461.5 ns/op`、17 次分配；Fallback 路径约 `587.2 ns/op`、20 次分配。该数字只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的一次基准结果为：主路径约 `5275 ns/op`、53 次分配；Fallback 路径约 `5228 ns/op`、61 次分配。该数字只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
