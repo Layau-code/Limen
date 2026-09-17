@@ -13,12 +13,14 @@
 - 真实 PostgreSQL 集成测试覆盖非超级用户 RLS、100 并发准入与幂等、唯一账本、双 Store 租约恢复竞争和取消事件双路径。
 - 故障注入会强制终止持有租约的独立进程，并暂停/恢复 PostgreSQL 验证结算任务不会丢失或重复记账。
 - 可选 OTLP/HTTP Trace 将 HTTP、Run 准入、Decision、Fallback Attempt 和 Settlement 串成隐私安全的证据链。
+- Metrics 增加可信模型、状态类别、稳定拒绝码和目标标签，Attempt 计数改为只反映真实 Provider 调用。
 
 ### 修复
 
 - PostgreSQL Request 读取可正确处理尚未生成 `decision_id` 的准入状态。
 - 过期租约恢复会把遗留的 `Attempt started` 标记为 `abandoned`；PostgreSQL 事务连接池设置 5 秒网络 I/O 期限，避免断连时永久阻塞。
 - 客户端提供的 Request ID 先转换为长度固定的不可逆摘要再进入日志与 Trace，避免借标识字段注入敏感正文。
+- 未注册模型不再原样进入 Metrics，熔断跳过也不再被错误统计为 Provider Attempt。
 
 ### 限制
 

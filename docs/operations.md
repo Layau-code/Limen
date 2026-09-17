@@ -26,6 +26,8 @@
 
 Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导出失败只记录不含端点和凭据的通用告警，不影响模型请求。进程关闭时最多等待 5 秒刷新 Trace。
 
+`GET /metrics` 需要 `admin` Scope。排障时，`limen_provider_attempts_total` 表示实际发出的上游调用；`circuit_open` 等未调用步骤只保留在 Decision 和 Trace 中。模型、状态和原因均为归一化低基数标签，不应使用它恢复原始请求内容。
+
 ## 常见排障
 
 1. `401 invalid_api_key`：检查客户端是否发送 `Authorization: Bearer <LIMEN_API_KEY>`。

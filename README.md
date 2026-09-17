@@ -143,7 +143,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 未知费用处置接口需要 `admin`，并且必须携带 `Idempotency-Key`；它只返回 Request 状态，不返回 Prompt、Response 或 Provider 凭据。
 
-`GET /metrics` 需要 `admin`，输出 `limen_chat_requests_total`、`limen_provider_attempts_total` 和 `limen_settlements_total` 三类固定计数器；标签值会截断到有限长度，不包含 Request ID、Run ID、租户 ID、Prompt、Response 或密钥。
+`GET /metrics` 需要 `admin`，输出 `limen_chat_requests_total`、`limen_provider_attempts_total` 和 `limen_settlements_total` 三类固定计数器。模型标签只使用已注册逻辑 ID、`auto` 或 `gpt-*` 等兼容模式，未知输入统一为 `unsupported`；状态只使用 `2xx/4xx/5xx` 等类别，拒绝原因只使用稳定错误码。Attempt 只统计真实 Provider 调用，熔断跳过不会虚增。标签不包含 Request ID、Run ID、租户 ID、Prompt、Response、密钥或原始错误。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 
@@ -158,6 +158,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的当前基准大致为：主路径 `5.8 μs/op`、59 次分配；Fallback 路径 `6.0 μs/op`、70 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5–6 μs/op`、59 次分配；Fallback 路径 `6–8 μs/op`、70 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。

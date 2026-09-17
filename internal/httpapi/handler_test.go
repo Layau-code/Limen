@@ -81,6 +81,78 @@ func TestMetricsRequiresAdminScope(t *testing.T) {
 	}
 }
 
+func TestMetricsUseTrustedModelAndStableErrorLabels(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "known-model", Targets: []gateway.Target{{ID: "primary", Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("secret", newTestRouter(nil, nil, registry))
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"private-model-input","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(httptest.NewRecorder(), chat)
+
+	metrics := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metrics.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, metrics)
+	output := response.Body.String()
+	if strings.Contains(output, "private-model-input") {
+		t.Fatalf("metrics contain rejected model: %s", output)
+	}
+	for _, field := range []string{`model="unsupported"`, `status="4xx"`, `reason="unsupported_model"`} {
+		if !strings.Contains(output, field) {
+			t.Fatalf("metrics missing %s: %s", field, output)
+		}
+	}
+}
+
+func TestAttemptMetricsCountOnlyRealProviderCalls(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openAI := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+	})
+	anthropic := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+	})
+	router := gateway.NewRouter(map[string]provider.Provider{"openai": openAI, "anthropic": anthropic}, registry, gateway.Policy{
+		RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 1, Cooldown: time.Hour,
+	})
+	handler := New("secret", router)
+	for range 2 {
+		chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+		chat.Header.Set("Authorization", "Bearer secret")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, chat)
+		if response.Code != http.StatusOK {
+			t.Fatalf("chat status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	metrics := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metrics.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, metrics)
+	output := response.Body.String()
+	for _, target := range []string{`target="primary"`, `target="backup"`} {
+		if !strings.Contains(output, target) {
+			t.Fatalf("metrics missing %s: %s", target, output)
+		}
+	}
+	for _, result := range []string{`result="retryable_transient"`, `result="success"`} {
+		if !strings.Contains(output, result) {
+			t.Fatalf("metrics missing %s: %s", result, output)
+		}
+	}
+	if strings.Contains(output, `result="circuit_open"`) {
+		t.Fatalf("skipped route step counted as provider attempt: %s", output)
+	}
+}
+
 func TestScopesRejectOperationWithoutPermission(t *testing.T) {
 	handler := NewWithHealthAndRunsForTenantScopes("limen-secret", nil, nil, "tenant-1", []auth.Scope{auth.ScopeInference}, run.NewMemoryService(nil))
 	request := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))

@@ -26,7 +26,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；PostgreSQL 用 `LISTEN/NOTIFY` 加速广播，执行中的 Chat 仍通过事件轮询兜底，不能只修改当前进程的内存映射。
 - 未知费用会暂停 Run；管理员可通过带 `admin` Scope 和幂等键的会计处置接口补记金额或明确接受未知费用。处置必须是事务化、可重复执行且不把未知值写成零。
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
-- `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签，不允许请求 ID、租户 ID、原始错误或正文进入指标。
+- `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签；模型必须来自可信目录或固定归并值，Attempt 只统计真实 Provider 调用，不允许请求 ID、租户 ID、原始错误或正文进入指标。
 - OpenTelemetry Trace 只使用字段白名单串联请求、准入、决策、Attempt 和结算；只传播 `traceparent`，导出失败不得改变模型请求。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
@@ -82,7 +82,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
 - 算法版本测试必须覆盖当前版本解析、未知版本拒绝和重复注册拒绝；配置 diff 测试必须证明只返回稳定路径与变化类型。
-- 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签和 admin 鉴权。
+- 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签、未知模型归并、真实 Attempt 语义和 admin 鉴权。
 - 凭据控制面测试必须覆盖 admin Scope、endpoint 不匹配拒绝、轮换后立即生效、撤销清除内存密钥以及响应不包含明文。
 - 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。
 - 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。

@@ -164,6 +164,19 @@ func (router *Router) ConfigVersion() string {
 	return router.configVersion
 }
 
+// ObservableModelID 将请求模型归一为来自当前目录的安全低基数标识。
+func (router *Router) ObservableModelID(requested string) string {
+	if requested == "auto" {
+		return "auto"
+	}
+	registry, _ := router.registrySnapshot()
+	model, found := registry.Resolve(requested)
+	if !found {
+		return "unsupported"
+	}
+	return model.ID
+}
+
 // Chat 使用默认契约处理一次聊天请求，保留 OpenAI 兼容调用方式。
 func (router *Router) Chat(parent context.Context, request provider.ChatRequest) (Result, error) {
 	return router.ChatWithContract(parent, request, decision.Contract{Active: request.Model == "auto"})

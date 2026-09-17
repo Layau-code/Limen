@@ -637,6 +637,21 @@ func writeRunMutationError(w http.ResponseWriter, err error) {
 
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	metricModel := "unparsed"
+	defer func() {
+		h.metrics.Inc(telemetry.RequestsTotal, telemetry.Labels{
+			Endpoint: "/v1/chat/completions",
+			Status:   metricStatus(recorder.status),
+			Model:    metricModel,
+			Reason:   recorder.errorCode,
+		})
+	}()
+	h.handleChatCompletions(recorder, r, &metricModel)
+}
+
+// handleChatCompletions 执行聊天请求主流程，并只向指标返回可信模型标识。
+func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, metricModel *string) {
 	scopes := []auth.Scope{auth.ScopeInference}
 	if strings.TrimSpace(r.Header.Get("X-Limen-Run-ID")) != "" {
 		scopes = append(scopes, auth.ScopeRunsWrite)
@@ -659,10 +674,14 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", code)
 		return
 	}
+	if h.router == nil {
+		*metricModel = "unavailable"
+	} else {
+		*metricModel = h.router.ObservableModelID(envelope.Request.Model)
+	}
 	if !h.applyRunContract(w, r, &envelope) {
 		return
 	}
-	h.metrics.Inc(telemetry.RequestsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: envelope.Request.Model})
 	if h.router == nil {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
@@ -1054,8 +1073,16 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		return recordErr
 	}, beforeAttempt)
 	attemptReports = result.Attempts
-	for _, step := range result.Decision.Steps {
-		h.metrics.Inc(telemetry.AttemptsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: request.Model, Provider: step.Provider, Result: step.Outcome})
+	metricModel := h.router.ObservableModelID(request.Model)
+	for _, attempt := range result.Attempts {
+		h.metrics.Inc(telemetry.AttemptsTotal, telemetry.Labels{
+			Endpoint: "/v1/chat/completions",
+			Status:   metricStatus(attempt.StatusCode),
+			Model:    metricModel,
+			Provider: attempt.Provider,
+			Target:   attempt.TargetID,
+			Result:   metricAttemptResult(attempt),
+		})
 	}
 	if result.Plan.ConfigVersion != "" {
 		w.Header().Set("X-Limen-Config-Version", result.Plan.ConfigVersion)
@@ -1146,7 +1173,41 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	if result.Settlement != nil {
 		settlementStatus = string(result.Settlement.Summary().Status)
 	}
-	h.metrics.Inc(telemetry.SettlementsTotal, telemetry.Labels{Endpoint: r.URL.Path, Model: request.Model, Provider: result.Decision.Provider, Result: settlementStatus})
+	h.metrics.Inc(telemetry.SettlementsTotal, telemetry.Labels{Endpoint: "/v1/chat/completions", Status: metricStatus(response.StatusCode), Model: metricModel, Provider: result.Decision.Provider, Result: settlementStatus})
+}
+
+// metricStatus 将 HTTP 状态归并为固定类别，避免状态码扩张指标序列。
+func metricStatus(status int) string {
+	if status <= 0 {
+		return "error"
+	}
+	return strconv.Itoa(status/100) + "xx"
+}
+
+// metricAttemptResult 将调用结果归并为成功或稳定 Provider 错误类别。
+func metricAttemptResult(attempt gateway.AttemptReport) string {
+	if attempt.StatusCode >= http.StatusOK && attempt.StatusCode < http.StatusMultipleChoices {
+		return "success"
+	}
+	if attempt.ErrorClass != "" {
+		return string(attempt.ErrorClass)
+	}
+	if attempt.StatusCode > 0 {
+		if class := provider.ClassifyHTTPStatus(attempt.StatusCode); class != "" {
+			return string(class)
+		}
+		return "other_response"
+	}
+	switch attempt.Outcome {
+	case "canceled", "timeout":
+		return string(provider.ErrorClassCancelled)
+	case "request_error":
+		return string(provider.ErrorClassDeterministicRequest)
+	case "transport_error":
+		return string(provider.ErrorClassRetryableTransient)
+	default:
+		return string(provider.ErrorClassInternal)
+	}
 }
 
 // returnRunDecisionError 将计划生成失败映射为安全 API 错误。

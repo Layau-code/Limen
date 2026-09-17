@@ -55,20 +55,39 @@ func logHeaderKey(name string) string {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
+	errorCode   string
 }
 
 // WriteHeader 记录响应状态，并将状态写入底层 ResponseWriter。
 func (w *statusRecorder) WriteHeader(status int) {
-	if w.status != http.StatusOK {
+	if w.wroteHeader {
 		return
 	}
 	w.status = status
+	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Write 记录隐式的成功状态后写入响应体。
+func (w *statusRecorder) Write(data []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+// SetErrorCode 保存由网关生成的稳定错误码，供低基数指标使用。
+func (w *statusRecorder) SetErrorCode(code string) {
+	w.errorCode = code
 }
 
 // Flush 将已写入的数据刷新给客户端，保持流式响应的及时性。
 func (w *statusRecorder) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
