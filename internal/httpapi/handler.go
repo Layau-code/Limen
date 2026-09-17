@@ -157,6 +157,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/complete", handler.completeRun)
 	mux.HandleFunc("POST /v1/limen/runs/{run_id}/cancel", handler.cancelRun)
 	mux.HandleFunc("GET /v1/limen/runs/{run_id}/requests/{request_id}", handler.getRunRequest)
+	mux.HandleFunc("POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting", handler.resolveAccounting)
 	mux.HandleFunc("GET /v1/models", handler.models)
 	mux.HandleFunc("GET /metrics", handler.metricsEndpoint)
 	mux.HandleFunc("GET /livez", health.Live)
@@ -469,6 +470,99 @@ func (h *Handler) getRunRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+type accountingResolutionRequest struct {
+	Mode    string `json:"mode"`
+	CostUSD string `json:"cost_usd"`
+}
+
+// resolveAccounting 由管理员完成未知费用的补记或明确接受未知费用。
+func (h *Handler) resolveAccounting(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeAdmin) {
+		return
+	}
+	service, ok := h.runs.(run.AccountingService)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "accounting control is unavailable", "api_error", "accounting_control_unavailable")
+		return
+	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required", "invalid_request_error", "idempotency_key_required")
+		return
+	}
+	body, err := readRequestBody(w, r)
+	if err != nil {
+		return
+	}
+	var incoming accountingResolutionRequest
+	if err := decodeStrictJSON(body, &incoming); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid accounting resolution", "invalid_request_error", "invalid_accounting_resolution")
+		return
+	}
+	resolution, err := parseAccountingResolution(incoming)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "invalid_accounting_resolution")
+		return
+	}
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return
+	}
+	request, err := service.ResolveAccountingWithMutation(r.Context(), tenantID, r.PathValue("run_id"), r.PathValue("request_id"), resolution, run.Mutation{Key: key, Hash: hash}, time.Now().UTC())
+	if err != nil {
+		writeAccountingResolutionError(w, err, r.PathValue("request_id"))
+		return
+	}
+	writeJSON(w, http.StatusOK, request)
+}
+
+// parseAccountingResolution 将管理员请求转换为纳美元定点处置参数。
+func parseAccountingResolution(incoming accountingResolutionRequest) (run.AccountingResolution, error) {
+	switch strings.TrimSpace(incoming.Mode) {
+	case "accept_unknown":
+		if incoming.CostUSD != "" {
+			return run.AccountingResolution{}, errors.New("cost_usd is not allowed when mode is accept_unknown")
+		}
+		return run.AccountingResolution{AcceptUnknown: true}, nil
+	case "cost":
+		if strings.TrimSpace(incoming.CostUSD) == "" {
+			return run.AccountingResolution{}, errors.New("cost_usd is required when mode is cost")
+		}
+		value, err := cost.ParseUSD(incoming.CostUSD)
+		if err != nil {
+			return run.AccountingResolution{}, errors.New("cost_usd must be a non-negative decimal")
+		}
+		return run.AccountingResolution{CostNanoUSD: &value}, nil
+	default:
+		return run.AccountingResolution{}, errors.New("mode must be cost or accept_unknown")
+	}
+}
+
+// writeAccountingResolutionError 将未知费用处置错误映射为稳定 API 错误。
+func writeAccountingResolutionError(w http.ResponseWriter, err error, requestID string) {
+	if requestID != "" {
+		w.Header().Set("X-Limen-Request-ID", requestID)
+	}
+	switch {
+	case errors.Is(err, run.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
+	case errors.Is(err, run.ErrRequestAlreadyProcessed):
+		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
+	case errors.Is(err, run.ErrRequestNotSettleable):
+		writeError(w, http.StatusConflict, "request is not awaiting accounting resolution", "invalid_request_error", "request_not_settleable")
+	case errors.Is(err, run.ErrAccountingSuspended):
+		writeError(w, http.StatusConflict, "Run is not awaiting accounting resolution", "invalid_request_error", "run_accounting_not_suspended")
+	case errors.Is(err, run.ErrResourceNotFound):
+		writeError(w, http.StatusNotFound, "run request not found", "invalid_request_error", "run_request_not_found")
+	case errors.Is(err, run.ErrInvalidAccountingResolution):
+		writeError(w, http.StatusBadRequest, "invalid accounting resolution", "invalid_request_error", "invalid_accounting_resolution")
+	default:
+		writeError(w, http.StatusBadGateway, "accounting control unavailable", "api_error", "accounting_control_error")
+	}
 }
 
 // idempotencyKey 读取并规范化控制面幂等键。

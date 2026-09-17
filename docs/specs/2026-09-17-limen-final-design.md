@@ -133,7 +133,7 @@ active
 
 Run 转移规则：
 
-- complete 命令把 active 改为 completing，停止准入；所有 Request 完成结算后转为 completed。
+- complete 命令把 active 改为 completing，停止准入；所有 Request 完成结算后转为 completed。若 Run 处于 suspended_accounting，则只记录 `complete_requested`，保持暂停，最后一个未知费用处置完成后再转为 completed。
 - cancel 命令把 Run 改为 cancelled，停止准入并尽力取消全部在途 Context。
 - 截止时间到达后改为 deadline_exceeded，并尽力取消在途请求。
 - 已确认累计费用达到 soft_budget_usd 后改为 soft_budget_exhausted；已开始的请求仍可完成。
@@ -398,7 +398,7 @@ attempts
 ledger_entries
 settlement_jobs
 cancellation_events
-audit_events
+accounting_operations
 ~~~
 
 关键约束：
@@ -408,6 +408,7 @@ audit_events
 - 关键租户表启用并强制 PostgreSQL RLS；普通连接在事务内使用 SET LOCAL 设置 tenant_id，系统管理使用独立数据库角色。
 - 配置发布后不可修改，只能创建新版本。
 - ledger_entries.request_id 唯一，结算幂等。
+- accounting_operations 只保存处置哈希、类型和定点金额，作为未知费用处置的幂等审计摘要。
 - attempts 使用本地 attempt_id 唯一，上游 request ID 在获得后补写。
 - 金额使用十进制定点整数。
 - 数据库不保存 Prompt、Response、Tool 正文和明文凭据。
@@ -431,7 +432,7 @@ DecisionInput 和 ExecutionPlan 持久化后，每次真实网络调用都先插
 
 执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。当前实现已具备租约扫描、短退避重试和持久化后台结算任务；多实例故障注入测试仍需补齐。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
 
-如果 Provider 支持按 request ID 查询 Usage，则自动对账；否则管理员只能接受未知费用、补记保守金额或取消 Run。处理结果写入新的审计事件，不能覆盖原 Attempt。
+如果 Provider 支持按 request ID 查询 Usage，则自动对账；否则管理员通过专用接口接受未知费用、补记保守金额或取消 Run。补记或接受操作写入只含哈希、处置类型和金额的 `accounting_operations` 审计记录，不能覆盖原 Attempt，也不保存 Prompt、Response 或密钥。
 
 ### 8.3 强一致范围
 
@@ -456,6 +457,7 @@ GET  /v1/limen/runs/{run_id}
 GET  /v1/limen/runs/{run_id}/requests/{request_id}
 POST /v1/limen/runs/{run_id}/complete
 POST /v1/limen/runs/{run_id}/cancel
+POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting
 
 GET  /v1/limen/decisions/{decision_id}
 POST /v1/limen/decisions/dry-run
@@ -500,6 +502,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | Chat Completions、Models | inference |
 | 创建、结束、取消 Run | runs:write |
 | 查询 Run 和 Request | runs:read |
+| 处置未知费用 | admin |
 | Explain、Replay | decisions:read |
 | Dry Run | inference 与 decisions:read |
 | 读取配置 | configs:read |
@@ -519,16 +522,19 @@ Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本�
 
 当前基础实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数。旧算法实现保留窗口、审批审计和完整差异树仍待补齐。
 
-稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、idempotency_conflict、insufficient_scope、config_version_unavailable 和 algorithm_version_unavailable。
+管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
+
+稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_accounting_not_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、request_not_settleable、run_request_not_found、invalid_accounting_resolution、accounting_control_unavailable、idempotency_conflict、insufficient_scope、config_version_unavailable 和 algorithm_version_unavailable。
 
 | HTTP | 错误码 |
 | ---: | --- |
-| 400 | invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch |
+| 400 | invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、invalid_accounting_resolution |
 | 403 | insufficient_scope |
 | 408 | run_deadline_exceeded |
-| 409 | run_not_active、run_accounting_suspended、request_in_progress、request_already_processed、idempotency_conflict、config_version_unavailable、algorithm_version_unavailable |
+| 404 | run_request_not_found |
+| 409 | run_not_active、run_accounting_suspended、run_accounting_not_suspended、request_in_progress、request_already_processed、request_not_settleable、idempotency_conflict、config_version_unavailable、algorithm_version_unavailable |
 | 429 | run_soft_budget_exhausted、run_concurrency_exceeded |
-| 503 | no_eligible_target |
+| 503 | no_eligible_target、accounting_control_unavailable |
 
 错误继续使用 OpenAI 风格 envelope，并在 code 中保留以上稳定值。错误正文不能包含上游 URL、凭据、原始 Provider 响应或跨租户资源是否存在的信息。
 

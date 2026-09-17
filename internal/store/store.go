@@ -36,6 +36,7 @@ type Store interface {
 	RecordAttemptStarted(context.Context, string, run.Attempt) error
 	BeginSettlement(context.Context, string, string, time.Time) (run.Request, error)
 	SettleRequest(context.Context, string, string, *int64, time.Time) (run.Request, error)
+	ResolveAccounting(context.Context, string, string, run.AccountingResolution, time.Time) (run.Request, error)
 	GetRun(context.Context, string, string) (run.Run, error)
 	GetRequest(context.Context, string, string) (run.Request, error)
 }

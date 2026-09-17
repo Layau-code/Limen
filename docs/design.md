@@ -80,7 +80,9 @@ HTTP Principal/Scope 鉴权与解析
 
 受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。每次真实 Provider 调用前单独写入 Attempt，Fallback 后续目标不会覆盖前一个 Attempt 的状态。结算遇到暂时性存储错误时，当前进程按 0、100、500 毫秒退避重试；仍未完成则写入持久化 `settlement_jobs` 并返回 `pending`。后台任务使用独立租约幂等重试已知费用；未知费用只转为 `suspended_accounting`，不重放 Provider。主进程同时扫描当前租户的过期请求；恢复任务将未知费用请求标记为 `abandoned/pending`，暂停关联 Run 的账本。取消 Run 时在同一事务写入租户隔离取消事件，PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 广播，在途 Chat 同时每秒轮询事件作为断线兜底。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
-开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。
+未知费用的恢复由管理员显式完成：`POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 使用 `mode=cost` 补记定点金额，或使用 `mode=accept_unknown` 接受无法核实的费用。两种模式都把 Request 置为 `settled`，分别标记 `settlement_status=complete/unknown`；只有补记金额才写入 Ledger。Run 按取消、截止时间、软预算、完成标记的固定优先级恢复为终态、`active` 或 `completing`，已进入终态的 Run 不会被重新打开；同一 Run 的多个未知请求必须全部处置后才恢复准入，并使用控制面幂等键避免重复处置。
+
+开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询、未知费用处置和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。管理员可对暂停请求补记确定金额，或明确接受未知费用；处置事务锁定 Request 和 Run，重复幂等键不会重复记账。暂停期间可以先请求完成，Run 会保留 `complete_requested`，不会跳过对账直接完成。
 
 ## 可靠性不变量
 

@@ -119,12 +119,14 @@ func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID,
 	state := run.StateCancelled
 	completeRequested := false
 	if operation == "complete" {
-		if currentState != run.StateActive {
+		if currentState != run.StateActive && currentState != run.StateSuspendedAccounting {
 			return run.Run{}, run.ErrInvalidRunTransition
 		}
 		state = run.StateCompleting
 		completeRequested = true
-		if inFlight == 0 {
+		if currentState == run.StateSuspendedAccounting {
+			state = run.StateSuspendedAccounting
+		} else if inFlight == 0 {
 			state = run.StateCompleted
 		}
 	}
@@ -576,6 +578,182 @@ func (store *PostgresStore) SettleRequest(ctx context.Context, tenantID, request
 	return request, nil
 }
 
+// ResolveAccounting 完成未知费用请求的金额补记或明确接受未知费用。
+func (store *PostgresStore) ResolveAccounting(ctx context.Context, tenantID, requestID string, resolution run.AccountingResolution, now time.Time) (run.Request, error) {
+	if store.db == nil {
+		return run.Request{}, errors.New("postgres database is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	request, err := resolveAccountingTx(ctx, tx, tenantID, requestID, resolution, now)
+	if err != nil {
+		return request, err
+	}
+	if err := tx.Commit(); err != nil {
+		return request, err
+	}
+	return request, nil
+}
+
+// ResolveAccountingWithMutation 幂等执行 PostgreSQL Run 的未知费用处置。
+func (store *PostgresStore) ResolveAccountingWithMutation(ctx context.Context, tenantID, runID, requestID string, resolution run.AccountingResolution, mutation run.Mutation, now time.Time) (run.Request, error) {
+	if store.db == nil {
+		return run.Request{}, errors.New("postgres database is required")
+	}
+	if mutation.Key == "" || mutation.Hash == "" {
+		return run.Request{}, run.ErrIdempotencyKeyRequired
+	}
+	endpoint := "POST /v1/limen/runs/" + runID + "/requests/" + requestID + "/accounting"
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run.Request{}, err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return run.Request{}, err
+	}
+	existingHash, err := findAccountingOperationTx(ctx, tx, tenantID, endpoint, mutation.Key)
+	if err == nil {
+		if existingHash != mutation.Hash {
+			return run.Request{}, run.ErrIdempotencyConflict
+		}
+		request, getErr := getRequestTx(ctx, tx, tenantID, requestID)
+		if getErr != nil {
+			return run.Request{}, getErr
+		}
+		if err := tx.Commit(); err != nil {
+			return run.Request{}, err
+		}
+		return request, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return run.Request{}, err
+	}
+	// 先锁定 Request，再次检查幂等表，避免两个管理员请求同时通过首次查询。
+	var lockedRequestID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM run_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, requestID).Scan(&lockedRequestID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.Request{}, run.ErrResourceNotFound
+		}
+		return run.Request{}, err
+	}
+	existingHash, err = findAccountingOperationTx(ctx, tx, tenantID, endpoint, mutation.Key)
+	if err == nil {
+		if existingHash != mutation.Hash {
+			return run.Request{}, run.ErrIdempotencyConflict
+		}
+		request, getErr := getRequestTx(ctx, tx, tenantID, requestID)
+		if getErr != nil {
+			return run.Request{}, getErr
+		}
+		if err := tx.Commit(); err != nil {
+			return run.Request{}, err
+		}
+		return request, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return run.Request{}, err
+	}
+	request, err := resolveAccountingTx(ctx, tx, tenantID, requestID, resolution, now)
+	if err != nil {
+		return request, err
+	}
+	if request.RunID != runID {
+		return run.Request{}, run.ErrResourceNotFound
+	}
+	resolutionKind := "accept_unknown"
+	if resolution.CostNanoUSD != nil {
+		resolutionKind = "cost"
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO accounting_operations (tenant_id,endpoint,idempotency_key,request_hash,request_id,resolution,cost_nano_usd,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, tenantID, endpoint, mutation.Key, mutation.Hash, requestID, resolutionKind, resolution.CostNanoUSD, now); err != nil {
+		return run.Request{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return run.Request{}, err
+	}
+	return request, nil
+}
+
+// resolveAccountingTx 在事务内锁定 Request 和 Run 并完成未知费用处置。
+func resolveAccountingTx(ctx context.Context, tx *sql.Tx, tenantID, requestID string, resolution run.AccountingResolution, now time.Time) (run.Request, error) {
+	if err := resolution.Validate(); err != nil {
+		return run.Request{}, err
+	}
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM run_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, requestID).Scan(&lockedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.Request{}, run.ErrResourceNotFound
+		}
+		return run.Request{}, err
+	}
+	request, err := getRequestTx(ctx, tx, tenantID, requestID)
+	if err != nil {
+		return run.Request{}, err
+	}
+	if request.State == run.RequestSettled {
+		return request, run.ErrRequestAlreadyProcessed
+	}
+	if request.State != run.RequestSettlementPending && request.State != run.RequestAbandoned {
+		return request, run.ErrRequestNotSettleable
+	}
+	var item run.Run
+	if err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,state,soft_budget_nano_usd,settled_cost_nano_usd,deadline,max_parallelism,in_flight,strategy,config_version,complete_requested,created_at,updated_at FROM runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, request.RunID).Scan(&item.ID, &item.TenantID, &item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight, &item.Strategy, &item.ConfigVersion, &item.CompleteRequested, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return request, run.ErrResourceNotFound
+		}
+		return request, err
+	}
+	if item.State != run.StateSuspendedAccounting && !isTerminalRunState(item.State) {
+		return request, run.ErrAccountingSuspended
+	}
+	ledgerRecorded := false
+	if resolution.CostNanoUSD != nil {
+		var inserted bool
+		err := tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (tenant_id,id,request_id,cost_nano_usd,created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,request_id) DO NOTHING RETURNING true`, tenantID, "ledger-"+requestID, requestID, *resolution.CostNanoUSD, now).Scan(&inserted)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return request, err
+		}
+		ledgerRecorded = inserted || request.LedgerRecorded
+		if inserted {
+			if err := item.ResolveAccounting(resolution, now); err != nil {
+				return request, err
+			}
+		} else {
+			if err := item.ResumeAccounting(now); err != nil {
+				return request, err
+			}
+		}
+	} else if err := item.ResolveAccounting(resolution, now); err != nil {
+		return request, err
+	}
+	var unresolved bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM run_requests WHERE tenant_id=$1 AND run_id=$2 AND id<>$3 AND settlement_status='pending' AND state IN ('settlement_pending','abandoned'))`, tenantID, request.RunID, requestID).Scan(&unresolved); err != nil {
+		return request, err
+	}
+	if unresolved && !isTerminalRunState(item.State) {
+		item.State = run.StateSuspendedAccounting
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=$3, settled_cost_nano_usd=$4, in_flight=$5, updated_at=$6 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, item.State, item.SettledCostNanoUSD, item.InFlight, now); err != nil {
+		return request, err
+	}
+	status := "unknown"
+	if resolution.CostNanoUSD != nil {
+		status = "complete"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE run_requests SET state='settled', settlement_status=$3, ledger_recorded=$4, updated_at=$5 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, status, ledgerRecorded, now); err != nil {
+		return request, err
+	}
+	request.State = run.RequestSettled
+	request.SettlementStatus = status
+	request.LedgerRecorded = ledgerRecorded
+	request.UpdatedAt = now
+	return request, nil
+}
+
 // GetRun 读取带租户条件的 Run 快照。
 func (store *PostgresStore) GetRun(ctx context.Context, tenantID, runID string) (run.Run, error) {
 	if store.db == nil {
@@ -647,6 +825,13 @@ func findOperationTx(ctx context.Context, tx *sql.Tx, tenantID, endpoint, key st
 	return resourceID, requestHash, err
 }
 
+// findAccountingOperationTx 查找未知费用处置的幂等哈希。
+func findAccountingOperationTx(ctx context.Context, tx *sql.Tx, tenantID, endpoint, key string) (string, error) {
+	var requestHash string
+	err := tx.QueryRowContext(ctx, `SELECT request_hash FROM accounting_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, endpoint, key).Scan(&requestHash)
+	return requestHash, err
+}
+
 // getRunTx 在已有事务内读取 Run 快照。
 func getRunTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run, error) {
 	var item run.Run
@@ -685,8 +870,19 @@ func isRequestInProgress(state run.RequestState) bool {
 	}
 }
 
+// isTerminalRunState 判断 PostgreSQL 更新是否不能重新打开 Run。
+func isTerminalRunState(state run.RunState) bool {
+	switch state {
+	case run.StateCompleted, run.StateCancelled, run.StateDeadlineExceeded, run.StateSoftBudgetExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 var _ Store = (*PostgresStore)(nil)
 var _ run.Service = (*PostgresStore)(nil)
 var _ run.ControlService = (*PostgresStore)(nil)
+var _ run.AccountingService = (*PostgresStore)(nil)
 var _ run.LeaseService = (*PostgresStore)(nil)
 var _ run.CancellationService = (*PostgresStore)(nil)

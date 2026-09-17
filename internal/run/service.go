@@ -94,6 +94,16 @@ func (service *MemoryService) SettleRequest(_ context.Context, tenantID, request
 	return service.store.SettleRequest(tenantID, requestID, costNanoUSD, now)
 }
 
+// ResolveAccounting 完成内存请求的未知费用处置。
+func (service *MemoryService) ResolveAccounting(_ context.Context, tenantID, requestID string, resolution AccountingResolution, now time.Time) (Request, error) {
+	return service.store.ResolveAccounting(tenantID, requestID, resolution, now)
+}
+
+// ResolveAccountingWithMutation 幂等执行内存 Run 的未知费用处置。
+func (service *MemoryService) ResolveAccountingWithMutation(_ context.Context, tenantID, runID, requestID string, resolution AccountingResolution, mutation Mutation, now time.Time) (Request, error) {
+	return service.store.ResolveAccountingWithMutation(tenantID, runID, requestID, resolution, mutation, now)
+}
+
 // QueueSettlement 将失败的结算保存为可恢复任务。
 func (service *MemoryService) QueueSettlement(ctx context.Context, tenantID, requestID string, costNanoUSD *int64, nextAttemptAt time.Time) error {
 	return service.store.QueueSettlement(ctx, tenantID, requestID, costNanoUSD, nextAttemptAt)
@@ -134,6 +144,7 @@ func (service *MemoryService) GetRequest(_ context.Context, tenantID, requestID 
 
 var _ Service = (*MemoryService)(nil)
 var _ ControlService = (*MemoryService)(nil)
+var _ AccountingService = (*MemoryService)(nil)
 var _ LeaseService = (*MemoryService)(nil)
 var _ CancellationService = (*MemoryService)(nil)
 var _ SettlementRecoveryService = (*MemoryService)(nil)

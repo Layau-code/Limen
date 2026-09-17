@@ -1,6 +1,9 @@
 package run
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Admit 检查 Run 准入条件并为新请求占用一个并发名额。
 func (run *Run) Admit(now time.Time) error {
@@ -27,10 +30,13 @@ func (run *Run) Admit(now time.Time) error {
 
 // Complete 停止新的准入，并在没有在途请求时完成 Run。
 func (run *Run) Complete() error {
-	if run.State != StateActive {
+	if run.State != StateActive && run.State != StateSuspendedAccounting {
 		return ErrInvalidRunTransition
 	}
 	run.CompleteRequested = true
+	if run.State == StateSuspendedAccounting {
+		return nil
+	}
 	run.State = StateCompleting
 	if run.InFlight == 0 {
 		run.State = StateCompleted
@@ -83,6 +89,9 @@ func (run *Run) Settle(costNanoUSD *int64) error {
 		if *costNanoUSD < 0 {
 			return ErrRequestNotSettleable
 		}
+		if *costNanoUSD > math.MaxInt64-run.SettledCostNanoUSD {
+			return ErrRequestNotSettleable
+		}
 		run.SettledCostNanoUSD += *costNanoUSD
 	} else {
 		run.InFlight--
@@ -94,6 +103,47 @@ func (run *Run) Settle(costNanoUSD *int64) error {
 	run.InFlight--
 	if run.State == StateCompleting && run.InFlight == 0 {
 		run.State = StateCompleted
+	}
+	return nil
+}
+
+// ResolveAccounting 完成未知费用处置，并在非终态时按固定优先级恢复 Run。
+func (run *Run) ResolveAccounting(resolution AccountingResolution, now time.Time) error {
+	if err := resolution.Validate(); err != nil {
+		return err
+	}
+	if run.State != StateSuspendedAccounting && !isTerminal(run.State) {
+		return ErrInvalidRunTransition
+	}
+	if resolution.CostNanoUSD != nil {
+		if *resolution.CostNanoUSD > math.MaxInt64-run.SettledCostNanoUSD {
+			return ErrRequestNotSettleable
+		}
+		run.SettledCostNanoUSD += *resolution.CostNanoUSD
+	}
+	if isTerminal(run.State) {
+		return nil
+	}
+	return run.ResumeAccounting(now)
+}
+
+// ResumeAccounting 按截止时间、软预算和完成标记恢复已暂停的 Run。
+func (run *Run) ResumeAccounting(now time.Time) error {
+	if run.State != StateSuspendedAccounting {
+		return ErrInvalidRunTransition
+	}
+	switch {
+	case !run.Deadline.IsZero() && !now.Before(run.Deadline):
+		run.State = StateDeadlineExceeded
+	case run.SoftBudgetNanoUSD > 0 && run.SettledCostNanoUSD >= run.SoftBudgetNanoUSD:
+		run.State = StateSoftBudgetExhausted
+	case run.CompleteRequested:
+		run.State = StateCompleting
+		if run.InFlight == 0 {
+			run.State = StateCompleted
+		}
+	default:
+		run.State = StateActive
 	}
 	return nil
 }

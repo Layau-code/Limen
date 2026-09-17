@@ -104,3 +104,16 @@ func TestSettlementJobMigrationDefinesLeaseAndTenantBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountingOperationMigrationDefinesIdempotencyAndTenantBinding(t *testing.T) {
+	contents, err := os.ReadFile("migrations/007_accounting_operations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE accounting_operations", "PRIMARY KEY (tenant_id, endpoint, idempotency_key)", "FOREIGN KEY (tenant_id, request_id)", "resolution TEXT NOT NULL", "ENABLE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}

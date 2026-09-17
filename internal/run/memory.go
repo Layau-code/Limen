@@ -18,14 +18,16 @@ type MemoryStore struct {
 	ledger      map[string]int64
 	settlements map[string]SettlementJob
 	mutations   map[string]mutationResult
+	accounting  map[string]mutationResult
 	events      []CancellationEvent
 	eventID     int64
 	sequence    uint64
 }
 
 type mutationResult struct {
-	hash string
-	run  Run
+	hash    string
+	run     Run
+	request Request
 }
 
 // NewMemoryStore 创建用于本地开发和并发测试的强一致内存 Store。
@@ -38,6 +40,7 @@ func NewMemoryStore() *MemoryStore {
 		ledger:      make(map[string]int64),
 		settlements: make(map[string]SettlementJob),
 		mutations:   make(map[string]mutationResult),
+		accounting:  make(map[string]mutationResult),
 	}
 }
 
@@ -299,6 +302,100 @@ func (store *MemoryStore) SettleRequest(tenantID, requestID string, costNanoUSD 
 	request.UpdatedAt = now
 	store.requests[requestKey] = request
 	return request, nil
+}
+
+// ResolveAccounting 完成未知费用请求的金额补记或明确接受未知费用。
+func (store *MemoryStore) ResolveAccounting(tenantID, requestID string, resolution AccountingResolution, now time.Time) (Request, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.resolveAccountingLocked(tenantID, requestID, resolution, now)
+}
+
+// ResolveAccountingWithMutation 幂等执行管理员的未知费用处置。
+func (store *MemoryStore) ResolveAccountingWithMutation(tenantID, runID, requestID string, resolution AccountingResolution, mutation Mutation, now time.Time) (Request, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := validateMutation(mutation); err != nil {
+		return Request{}, err
+	}
+	key := mutationKey(tenantID, "resolve_accounting\x00"+runID+"\x00"+requestID, mutation.Key)
+	if existing, ok := store.accounting[key]; ok {
+		if existing.hash != mutation.Hash {
+			return existing.request, ErrIdempotencyConflict
+		}
+		return existing.request, nil
+	}
+	requestKey := resourceKey(tenantID, requestID)
+	request, ok := store.requests[requestKey]
+	if !ok || request.RunID != runID {
+		return Request{}, ErrResourceNotFound
+	}
+	resolved, err := store.resolveAccountingLocked(tenantID, request.ID, resolution, now)
+	if err != nil {
+		return resolved, err
+	}
+	store.accounting[key] = mutationResult{hash: mutation.Hash, request: resolved}
+	return resolved, nil
+}
+
+// resolveAccountingLocked 在已持有 Store 锁时完成一次未知费用处置。
+func (store *MemoryStore) resolveAccountingLocked(tenantID, requestID string, resolution AccountingResolution, now time.Time) (Request, error) {
+	if err := resolution.Validate(); err != nil {
+		return Request{}, err
+	}
+	requestKey := resourceKey(tenantID, requestID)
+	request, exists := store.requests[requestKey]
+	if !exists {
+		return Request{}, ErrResourceNotFound
+	}
+	if request.State == RequestSettled {
+		return request, ErrRequestAlreadyProcessed
+	}
+	if request.State != RequestSettlementPending && request.State != RequestAbandoned {
+		return request, ErrRequestNotSettleable
+	}
+	runKey := resourceKey(tenantID, request.RunID)
+	item, exists := store.runs[runKey]
+	if !exists {
+		return Request{}, ErrResourceNotFound
+	}
+	if item.State != StateSuspendedAccounting && !isTerminal(item.State) {
+		return request, ErrAccountingSuspended
+	}
+	if resolution.CostNanoUSD != nil {
+		if err := item.ResolveAccounting(resolution, now); err != nil {
+			return request, err
+		}
+		store.ledger[requestKey] = *resolution.CostNanoUSD
+		request.SettlementStatus = "complete"
+		request.LedgerRecorded = true
+	} else {
+		if err := item.ResolveAccounting(resolution, now); err != nil {
+			return request, err
+		}
+		request.SettlementStatus = "unknown"
+	}
+	request.State = RequestSettled
+	request.UpdatedAt = now
+	if !isTerminal(item.State) && store.hasPendingAccountingLocked(tenantID, request.RunID, request.ID) {
+		item.State = StateSuspendedAccounting
+	}
+	store.runs[runKey] = item
+	store.requests[requestKey] = request
+	return request, nil
+}
+
+// hasPendingAccountingLocked 判断同一 Run 是否仍有其他未知费用请求。
+func (store *MemoryStore) hasPendingAccountingLocked(tenantID, runID, resolvedRequestID string) bool {
+	for _, request := range store.requests {
+		if request.TenantID != tenantID || request.RunID != runID || request.ID == resolvedRequestID || request.SettlementStatus != "pending" {
+			continue
+		}
+		if request.State == RequestSettlementPending || request.State == RequestAbandoned {
+			return true
+		}
+	}
+	return false
 }
 
 // QueueSettlement 保存或更新一条待处理结算任务，重复入队不会产生重复任务。

@@ -57,6 +57,8 @@ var (
 	ErrRunConcurrencyExceeded = errors.New("run concurrency exceeded")
 	// ErrAccountingSuspended 表示账本状态不确定，必须先恢复对账。
 	ErrAccountingSuspended = errors.New("run accounting is suspended")
+	// ErrInvalidAccountingResolution 表示结算处置既未确认金额，也未明确接受未知费用。
+	ErrInvalidAccountingResolution = errors.New("invalid accounting resolution")
 	// ErrInvalidRunTransition 表示生命周期状态转换不合法。
 	ErrInvalidRunTransition = errors.New("invalid run state transition")
 	// ErrRequestNotSettleable 表示请求当前不能进入结算。
@@ -100,8 +102,15 @@ type Service interface {
 	FinishAttempt(context.Context, string, string, AttemptState, time.Time) error
 	BeginSettlement(context.Context, string, string, time.Time) (Request, error)
 	SettleRequest(context.Context, string, string, *int64, time.Time) (Request, error)
+	ResolveAccounting(context.Context, string, string, AccountingResolution, time.Time) (Request, error)
 	GetRun(context.Context, string, string) (Run, error)
 	GetRequest(context.Context, string, string) (Request, error)
+}
+
+// AccountingService 定义未知费用的管理员处置边界。
+type AccountingService interface {
+	Service
+	ResolveAccountingWithMutation(context.Context, string, string, string, AccountingResolution, Mutation, time.Time) (Request, error)
 }
 
 // LeaseService 定义跨进程执行租约和过期恢复边界。
@@ -201,4 +210,21 @@ type SettlementJob struct {
 	NextAttemptAt  time.Time `json:"next_attempt_at"`
 	LeaseOwner     string    `json:"lease_owner,omitempty"`
 	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
+}
+
+// AccountingResolution 描述管理员对未知费用的最终处置。
+type AccountingResolution struct {
+	CostNanoUSD   *int64
+	AcceptUnknown bool
+}
+
+// Validate 确认处置只能选择补记金额或接受未知费用中的一种。
+func (resolution AccountingResolution) Validate() error {
+	if resolution.CostNanoUSD == nil && !resolution.AcceptUnknown {
+		return ErrInvalidAccountingResolution
+	}
+	if resolution.CostNanoUSD != nil && (*resolution.CostNanoUSD < 0 || resolution.AcceptUnknown) {
+		return ErrInvalidAccountingResolution
+	}
+	return nil
 }

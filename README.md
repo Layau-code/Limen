@@ -108,6 +108,10 @@ curl http://localhost:8080/v1/chat/completions \
 
 启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。取消 Run 后，在途请求会收到 `409 run_cancelled`，并由租户取消事件传播到其他实例。
 
+未知费用会让 Run 进入 `suspended_accounting`，不会伪造为零成本，也不会自动重放上游请求。管理员可用 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处理：`{"mode":"cost","cost_usd":"0.001"}` 补记确定金额，或 `{"mode":"accept_unknown"}` 明确接受未知费用；接口需要 `admin` Scope 和独立 `Idempotency-Key`，处理后请求进入 `settled`，结算状态分别为 `complete` 或 `unknown`。
+
+暂停期间仍可请求完成 Run；Limen 只记录 `complete_requested`，待同一 Run 的未知费用全部处置后再完成，不会绕过账本状态机。
+
 成功或最终上游响应会带有以下安全摘要：
 
 ```text
@@ -130,6 +134,8 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 
 静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；Dry Run 需要 `inference,decisions:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
 
+未知费用处置接口需要 `admin`，并且必须携带 `Idempotency-Key`；它只返回 Request 状态，不返回 Prompt、Response 或 Provider 凭据。
+
 `GET /metrics` 需要 `admin`，输出 `limen_chat_requests_total`、`limen_provider_attempts_total` 和 `limen_settlements_total` 三类固定计数器；标签值会截断到有限长度，不包含 Request ID、Run ID、租户 ID、Prompt、Response 或密钥。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
@@ -142,6 +148,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的一次基准结果为：主路径约 `5275 ns/op`、53 次分配；Fallback 路径约 `5228 ns/op`、61 次分配。该数字只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的多次基准大致为：主路径 `5–6 μs/op`、53 次分配；Fallback 路径 `5–6 μs/op`、61 次分配。该数字只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
