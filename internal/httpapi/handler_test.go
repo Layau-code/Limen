@@ -1322,6 +1322,22 @@ func TestParseChatRequestReportsUnknownFieldExplicitly(t *testing.T) {
 	}
 }
 
+func TestUnsupportedMessageRoleDoesNotEchoInput(t *testing.T) {
+	const marker = "role-secret-marker"
+	_, err := parseChatRequestEnvelope([]byte(`{"model":"model","messages":[{"role":"` + marker + `","content":"hello"}]}`))
+	if err == nil || strings.Contains(err.Error(), marker) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestUnknownFieldDoesNotEchoInput(t *testing.T) {
+	const marker = "field-secret-marker"
+	_, err := parseChatRequestEnvelope([]byte(`{"model":"model","messages":[{"role":"user","content":"hello"}],"` + marker + `":true}`))
+	if err == nil || strings.Contains(err.Error(), marker) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestParseChatRequestExtractsLimenContract(t *testing.T) {
 	envelope, err := parseChatRequestEnvelope([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}],"limen":{"required_capabilities":["text"],"minimum_quality_tier":3,"required_context_tokens":1000,"data_class":"internal","strategy":"economy"}}`))
 	if err != nil {

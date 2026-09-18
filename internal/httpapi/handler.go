@@ -2093,7 +2093,12 @@ type unsupportedFieldError struct {
 
 // Error 返回明确指出暂不支持字段的请求错误。
 func (err *unsupportedFieldError) Error() string {
-	return err.Field + " is not supported"
+	switch err.Field {
+	case "tools/tool_choice", "response_format", "n", "logprobs", "messages.tool_calls":
+		return err.Field + " is not supported"
+	default:
+		return "unsupported request field"
+	}
 }
 
 // parseChatRequestEnvelope 严格解析请求并提取 Limen 能力契约。
@@ -2154,7 +2159,7 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 			return parsedChatRequest{}, &unsupportedFieldError{Field: "messages.tool_calls"}
 		}
 		if message.Role != "system" && message.Role != "developer" && message.Role != "user" && message.Role != "assistant" {
-			return parsedChatRequest{}, fmt.Errorf("unsupported message role: %s", message.Role)
+			return parsedChatRequest{}, errors.New("unsupported message role")
 		}
 		var content string
 		if err := json.Unmarshal(message.Content, &content); err != nil {

@@ -29,6 +29,7 @@ Limen 兼容的是 OpenAI Chat Completions 的受支持子集，不宣称完整�
 - Provider 的 429、5xx 和传输瞬时错误可按 ExecutionPlan 切换备用目标；已经开始输出的 SSE 不重放。
 - `X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`、`X-Limen-Decision-ID` 和 `X-Limen-Plan-Hash` 是 Limen 扩展响应头；计划摘要可用于关联 Decision Journal 和 Replay。
 - `/v1/chat/completions` 与 `/v1/models` 都要求 Bearer Key；错误使用 OpenAI 风格 `error.type`、`error.code` 和 `error.message`。
+- 不支持的消息角色返回固定错误，不回显客户端提供的角色字符串；未知字段统一返回固定的 `unsupported request field`，公共错误消息不得携带原始用户输入。
 
 ## 不在 1.0 范围
 
