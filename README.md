@@ -30,6 +30,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
+- 配置发布可选启用双人审批：审批绑定配置版本、发布幂等键和请求哈希，批准与发布消费在 PostgreSQL 同一事务内完成，避免未经批准的目录切换。
 
 ## 快速开始
 
@@ -107,6 +108,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 配置版本可以通过控制面创建和发布。`POST /v1/limen/configs` 接收与模型文件相同的严格 JSON，返回由规范内容生成的 `version`；`POST /v1/limen/configs/{version}/publish` 需要 `configs:write` 和 `Idempotency-Key`，同键重试不会重复切换版本，不同版本复用同键会返回 `idempotency_conflict`。发布后当前进程立即使用新目录和路由参数，旧版本保留为 `superseded`。配置发布通过 PostgreSQL `NOTIFY` 加速传播到其他实例，实例仍每 5 秒读取已发布版本作为丢失通知时的兜底；通知只包含租户和版本哈希，不包含配置正文。`GET /v1/limen/configs` 只返回模型和目标摘要，不暴露真实上游模型名；`GET /v1/limen/configs/{version}/diff/{base_version}` 返回只含路径和变化类型的结构化差异。配置 API 未连接 PostgreSQL 时使用内存存储，重启会丢失版本；生产环境应配置 `LIMEN_DATABASE_URL`。
 
+配置发布默认不需要审批。设置 `LIMEN_CONFIG_APPROVAL_REQUIRED=true` 后，发布者先调用 `POST /v1/limen/configs/{version}/approvals` 创建审批（请求体为 `{"publish_idempotency_key":"publish-001"}`），由不同 `actor_id` 调用 `/approve`，再携带 `X-Limen-Approval-ID` 和相同的 `Idempotency-Key` 发布。审批有效期默认 30 分钟，只能消费一次；同一发布键在 Router 激活失败后可以重试修复本地快照，但不能复用于其他版本。审批接口使用 `configs:read`/`configs:write` Scope，操作写入安全审计摘要。静态 Key 的 actor 固定为 `static`，不能完成双人审批；生产启用该开关时应使用 PostgreSQL API Key Store。
+
 管理员可通过 `GET /v1/limen/audit?limit=100` 查询当前租户最近的控制面变更摘要。返回内容包括非敏感的 `actor_id`、动作、资源类型、资源 ID、结果、请求哈希和时间；`actor_id` 是静态 Key 的固定标识或 PostgreSQL Key 的公开前缀，不是密钥本身。
 
 启用 `LIMEN_API_KEY_STORE=postgres` 后，管理员可以使用 `POST /v1/limen/keys` 创建 Key、`GET /v1/limen/keys` 查看元数据、`POST /v1/limen/keys/{public_prefix}/rotate` 原子轮换 Key，以及 `POST /v1/limen/keys/{public_prefix}/revoke` 撤销 Key。创建和轮换请求必须带 `Idempotency-Key` 和明确的 `scopes`；完整 `lmn_live_...` Key 只在首次成功响应返回，重试不会再次返回明文。轮换在一个事务内创建新 Key 并停用旧 Key，旧 Key 在提交后立即失效。数据库只保存 HMAC 摘要，认证查询通过受控函数执行，管理查询受 PostgreSQL RLS 保护。
@@ -142,6 +145,8 @@ Run 预算采用事后软阈值：已开始请求允许完成，结算后达到�
 PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表所有者路径也不能绕过租户策略；需要运维操作时应使用独立的数据库角色。
 
 ## 配置与运维
+
+`LIMEN_CONFIG_APPROVAL_REQUIRED` 只接受 `true` 或 `false`，默认关闭；开启后配置发布必须先完成双人审批，静态 Key 无法满足身份分离。
 
 环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。设置凭据主密钥后，启动会按租户和 endpoint 读取加密 Provider 凭据；未找到时回退到对应 Provider 环境变量。
 

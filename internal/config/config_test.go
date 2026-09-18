@@ -148,6 +148,32 @@ func TestLoadUsesRoutingDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadParsesConfigApprovalFlag(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_CONFIG_APPROVAL_REQUIRED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ConfigApprovalRequired {
+		t.Fatal("expected config approval to be enabled")
+	}
+}
+
+func TestLoadRejectsInvalidConfigApprovalFlag(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+	t.Setenv("LIMEN_CONFIG_APPROVAL_REQUIRED", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid approval flag error")
+	}
+}
+
 func TestLoadModelsFileRequiresOnlyUsedProviderKey(t *testing.T) {
 	modelsFile := filepath.Join(t.TempDir(), "models.json")
 	contents := `{"routing":{"attempt_timeout":"8s","failure_threshold":2,"cooldown":"20s"},"models":[{"id":"fast-model","display_name":"Fast Model","targets":[{"provider":"openai","upstream_model":"gpt-test"}]}]}`

@@ -3,8 +3,10 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/huz/limen/internal/approval"
 	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/config"
@@ -123,7 +125,7 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := h.requestTenantID(r)
-	hash, err := run.HashRequest(tenantID, "POST "+r.URL.Path, key, nil, map[string]string{"x-limen-config-version": r.PathValue("version")})
+	hash, err := configPublishRequestHash(tenantID, r.PathValue("version"), key)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
 		return
@@ -143,8 +145,40 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "config idempotency is unavailable", "api_error", "config_control_unavailable")
 		return
 	}
-	record, err = mutator.PublishWithMutation(r.Context(), tenantID, record.Version, configstore.Mutation{Key: key, Hash: hash})
+	mutation := configstore.Mutation{Key: key, Hash: hash}
+	if h.configApprovalRequired {
+		approvalID := strings.TrimSpace(r.Header.Get("X-Limen-Approval-ID"))
+		if approvalID == "" {
+			writeError(w, http.StatusBadRequest, "X-Limen-Approval-ID is required", "invalid_request_error", "approval_required")
+			return
+		}
+		if h.approvals == nil {
+			writeError(w, http.StatusServiceUnavailable, "approval control is unavailable", "api_error", "approval_control_unavailable")
+			return
+		}
+		binding := approvalBinding(tenantID, record.Version, approvalID, key, hash, requestActorID(r.Context()))
+		if _, err := h.approvals.ValidateForPublish(r.Context(), binding); err != nil {
+			writeApprovalError(w, err)
+			return
+		}
+		if approvalMutator, atomic := mutator.(configstore.ApprovalMutationStore); atomic {
+			record, err = approvalMutator.PublishWithApproval(r.Context(), tenantID, record.Version, mutation, configstore.ApprovalBinding{ApprovalID: approvalID, PublishIdempotencyKey: key, RequestHash: hash, Publisher: requestActorID(r.Context())})
+		} else {
+			// 内存存储没有跨对象事务，先消费审批；同一发布键重试仍可复用 consumed 状态。
+			if _, err = h.approvals.Consume(r.Context(), binding); err == nil {
+				record, err = mutator.PublishWithMutation(r.Context(), tenantID, record.Version, mutation)
+			}
+		}
+	} else {
+		record, err = mutator.PublishWithMutation(r.Context(), tenantID, record.Version, mutation)
+	}
 	if err != nil {
+		if h.configApprovalRequired {
+			if isApprovalStoreError(err) {
+				writeApprovalError(w, err)
+				return
+			}
+		}
 		writeConfigStoreError(w, err)
 		return
 	}
@@ -157,7 +191,25 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.appendAudit(r.Context(), tenantID, audit.ActionConfigPublish, "config", record.Version, "success", hash)
+	if h.configApprovalRequired {
+		h.appendAudit(r.Context(), tenantID, audit.ActionApprovalConsumed, "config_approval", strings.TrimSpace(r.Header.Get("X-Limen-Approval-ID")), "success", hash)
+	}
 	writeJSON(w, http.StatusOK, summarizeConfig(record))
+}
+
+// configPublishRequestHash 生成审批和发布共同使用的配置发布请求哈希。
+func configPublishRequestHash(tenantID, version, key string) (string, error) {
+	return run.HashRequest(tenantID, "POST /v1/limen/configs/"+version+"/publish", key, nil, map[string]string{"x-limen-config-version": version})
+}
+
+// approvalBinding 将 HTTP 发布请求转换为审批状态机绑定。
+func approvalBinding(tenantID, version, approvalID, publishKey, requestHash, publisher string) approval.Binding {
+	return approval.Binding{TenantID: tenantID, ConfigVersion: version, ApprovalID: approvalID, PublishIdempotencyKey: publishKey, RequestHash: requestHash, Publisher: publisher}
+}
+
+// isApprovalStoreError 判断持久化配置发布返回的审批领域错误。
+func isApprovalStoreError(err error) bool {
+	return errors.Is(err, configstore.ErrApprovalNotFound) || errors.Is(err, configstore.ErrApprovalExpired) || errors.Is(err, configstore.ErrApprovalStateConflict) || errors.Is(err, configstore.ErrApprovalBindingConflict) || errors.Is(err, configstore.ErrApprovalActorNotDistinct)
 }
 
 // summarizeConfig 将内部配置转换为不包含真实上游模型名的摘要。
@@ -199,6 +251,26 @@ func writeConfigStoreError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, configstore.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
+		return
+	}
+	if errors.Is(err, configstore.ErrApprovalNotFound) {
+		writeError(w, http.StatusNotFound, "approval not found", "invalid_request_error", "approval_not_found")
+		return
+	}
+	if errors.Is(err, configstore.ErrApprovalExpired) {
+		writeError(w, http.StatusConflict, "approval has expired", "invalid_request_error", "approval_expired")
+		return
+	}
+	if errors.Is(err, configstore.ErrApprovalStateConflict) {
+		writeError(w, http.StatusConflict, "approval state does not allow this operation", "invalid_request_error", "approval_state_conflict")
+		return
+	}
+	if errors.Is(err, configstore.ErrApprovalBindingConflict) {
+		writeError(w, http.StatusConflict, "approval binding conflict", "invalid_request_error", "approval_binding_conflict")
+		return
+	}
+	if errors.Is(err, configstore.ErrApprovalActorNotDistinct) {
+		writeError(w, http.StatusConflict, "approval actor must differ from requester", "invalid_request_error", "approval_actor_not_distinct")
 		return
 	}
 	writeError(w, http.StatusBadGateway, "config store unavailable", "api_error", "config_store_unavailable")

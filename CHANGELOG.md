@@ -26,6 +26,7 @@
 - 将 Gateway Executor 从 Router 计划生成逻辑中拆出；Executor 只按 ExecutionPlan 执行 Provider，不重新选择模型。
 - PostgreSQL API Key Store 新增创建、列表、原子轮换和撤销控制面；明文只在首次创建或轮换响应返回，认证查询使用受控函数，管理操作使用 RLS 和幂等记录。
 - 控制面审计新增非敏感 `actor_id`，可关联静态身份或 API Key 公开前缀，不保存原始凭据。
+- 配置发布新增可选双人审批；审批绑定配置版本、发布幂等键和请求哈希，PostgreSQL 在同一事务内完成审批消费与配置切换，并覆盖过期、并发幂等和 RLS 测试。
 
 ### 修复
 
@@ -37,7 +38,7 @@
 
 ### 限制
 
-- 审计当前记录控制面安全摘要，不提供审批流；Secret Manager 和遥测可视化后端仍待后续生产化阶段。
+- 配置审批默认关闭；静态 Key 无法满足双人身份分离，启用生产审批需使用 PostgreSQL API Key Store。Secret Manager 和遥测可视化后端仍待后续生产化阶段。
 
 ## v0.3.0
 

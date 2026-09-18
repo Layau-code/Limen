@@ -22,6 +22,10 @@ var (
 const (
 	ActionConfigCreate      = "config.create"
 	ActionConfigPublish     = "config.publish"
+	ActionApprovalRequested = "config.approval.requested"
+	ActionApprovalApproved  = "config.approval.approved"
+	ActionApprovalRejected  = "config.approval.rejected"
+	ActionApprovalConsumed  = "config.approval.consumed"
 	ActionAPIKeyCreate      = "api_key.create"
 	ActionAPIKeyRotate      = "api_key.rotate"
 	ActionAPIKeyRevoke      = "api_key.revoke"

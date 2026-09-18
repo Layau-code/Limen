@@ -170,6 +170,19 @@ func TestAPIKeyManagementMigrationDefinesSecureLookupAndRLS(t *testing.T) {
 	}
 }
 
+func TestConfigApprovalMigrationDefinesBindingAndRLS(t *testing.T) {
+	contents, err := os.ReadFile("migrations/013_config_approvals.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE config_approvals", "UNIQUE (tenant_id, config_version, publish_idempotency_key)", "CREATE TABLE config_approval_operations", "PRIMARY KEY (tenant_id, endpoint, idempotency_key)", "FOREIGN KEY (tenant_id, config_version)", "FORCE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
+
 func TestForceRLSPolicyMigrationCoversTenantTables(t *testing.T) {
 	contents, err := os.ReadFile("migrations/008_force_rls.sql")
 	if err != nil {

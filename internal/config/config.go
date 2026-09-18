@@ -54,22 +54,23 @@ func DefaultRouting() Routing {
 
 // Config 保存 Limen 启动后使用的不可变配置。
 type Config struct {
-	Addr                string
-	LimenAPIKey         string
-	APIKeyStore         string
-	APIKeyHMACSecret    string
-	CredentialMasterKey string
-	OpenAIAPIKey        string
-	OpenAIBaseURL       string
-	AnthropicAPIKey     string
-	AnthropicBaseURL    string
-	Models              []Model
-	Routing             Routing
-	RequestTimeout      time.Duration
-	ConfigVersion       string
-	DatabaseURL         string
-	TenantID            string
-	Scopes              []auth.Scope
+	Addr                   string
+	LimenAPIKey            string
+	APIKeyStore            string
+	APIKeyHMACSecret       string
+	CredentialMasterKey    string
+	OpenAIAPIKey           string
+	OpenAIBaseURL          string
+	AnthropicAPIKey        string
+	AnthropicBaseURL       string
+	Models                 []Model
+	Routing                Routing
+	RequestTimeout         time.Duration
+	ConfigVersion          string
+	ConfigApprovalRequired bool
+	DatabaseURL            string
+	TenantID               string
+	Scopes                 []auth.Scope
 }
 
 type modelsDocument struct {
@@ -142,6 +143,13 @@ func Load() (Config, error) {
 		}
 		cfg.RequestTimeout = timeout
 	}
+	if raw := strings.TrimSpace(os.Getenv("LIMEN_CONFIG_APPROVAL_REQUIRED")); raw != "" {
+		approvalRequired, err := parseConfigApprovalFlag(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ConfigApprovalRequired = approvalRequired
+	}
 	modelsFile := os.Getenv("LIMEN_MODELS_FILE")
 	if modelsFile != "" {
 		models, routing, version, err := loadModels(modelsFile, cfg.Routing)
@@ -156,6 +164,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// parseConfigApprovalFlag 只接受明确的 true 或 false，避免启动配置产生歧义。
+func parseConfigApprovalFlag(raw string) (bool, error) {
+	switch raw {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("LIMEN_CONFIG_APPROVAL_REQUIRED must be true or false")
+	}
 }
 
 // parseScopes 解析并校验静态 API Key 的 Scope 列表。

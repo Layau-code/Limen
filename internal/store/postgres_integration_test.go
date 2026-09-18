@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/approval"
 	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
@@ -165,6 +166,102 @@ func TestPostgresIntegrationConfigPublishNotifiesMetadata(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("config notification timed out")
+	}
+}
+
+// TestPostgresIntegrationConfigApprovalAndAtomicPublish 验证审批消费和配置发布位于同一事务边界。
+func TestPostgresIntegrationConfigApprovalAndAtomicPublish(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantA, tenantB := integrationID("tenant-approval-a"), integrationID("tenant-approval-b")
+	ensureIntegrationTenant(t, adminDB, tenantA)
+	ensureIntegrationTenant(t, adminDB, tenantB)
+	configs := NewPostgresConfigStore(appDB)
+	approvals := NewPostgresApprovalStore(appDB)
+	record, err := configs.Create(ctx, tenantA, []byte(`{"models":[{"id":"approval-model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-approval"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := approvals.Create(ctx, tenantA, record.Version, "publish-approval-1", "publish-hash", "actor-a", approval.Mutation{Key: "approval-create-1", Hash: "create-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approvals.Approve(ctx, tenantA, record.Version, created.ID, "actor-a", approval.Mutation{Key: "approve-self", Hash: "self-hash"}); !errors.Is(err, approval.ErrActorNotDistinct) {
+		t.Fatalf("self approval error=%v", err)
+	}
+	if _, err := approvals.Approve(ctx, tenantA, record.Version, created.ID, "actor-b", approval.Mutation{Key: "approve-1", Hash: "approve-hash"}); err != nil {
+		t.Fatal(err)
+	}
+	publishMutation := configstore.Mutation{Key: "publish-approval-1", Hash: "publish-hash"}
+	binding := configstore.ApprovalBinding{ApprovalID: created.ID, PublishIdempotencyKey: publishMutation.Key, RequestHash: publishMutation.Hash, Publisher: "actor-b"}
+	if _, err := configs.PublishWithApproval(ctx, tenantA, record.Version, publishMutation, binding); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := configs.PublishWithApproval(ctx, tenantA, record.Version, publishMutation, binding)
+	if err != nil || repeated.Version != record.Version {
+		t.Fatalf("repeated approved publish=%+v err=%v", repeated, err)
+	}
+	status, err := approvals.Get(ctx, tenantA, record.Version, created.ID)
+	if err != nil || status.State != approval.StateConsumed {
+		t.Fatalf("approval status=%+v err=%v", status, err)
+	}
+	if _, err := approvals.Get(ctx, tenantB, record.Version, created.ID); !errors.Is(err, approval.ErrNotFound) {
+		t.Fatalf("cross-tenant approval lookup=%v", err)
+	}
+	second, err := configs.Create(ctx, tenantA, []byte(`{"models":[{"id":"approval-expiry-model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-expiry"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiring, err := approvals.Create(ctx, tenantA, second.Version, "publish-expiring", "hash-expiring", "actor-a", approval.Mutation{Key: "create-expiring", Hash: "hash-expiring-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := appDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setTenantTx(ctx, tx, tenantA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE config_approvals SET expires_at=$1 WHERE tenant_id=$2 AND approval_id=$3`, time.Now().UTC().Add(-time.Minute), tenantA, expiring.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approvals.Approve(ctx, tenantA, second.Version, expiring.ID, "actor-b", approval.Mutation{Key: "approve-expiring", Hash: "approve-expiring-hash"}); !errors.Is(err, approval.ErrExpired) {
+		t.Fatalf("expired approval error=%v", err)
+	}
+	expired, err := approvals.Get(ctx, tenantA, second.Version, expiring.ID)
+	if err != nil || expired.State != approval.StateExpired {
+		t.Fatalf("expired approval=%+v err=%v", expired, err)
+	}
+
+	third, err := configs.Create(ctx, tenantA, []byte(`{"models":[{"id":"approval-concurrent-model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-concurrent"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := approvals.Create(ctx, tenantA, third.Version, "publish-concurrent", "hash-concurrent", "actor-a", approval.Mutation{Key: "create-concurrent", Hash: "hash-concurrent-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 8
+	errs := make(chan error, workers)
+	var group sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			_, err := approvals.Approve(ctx, tenantA, third.Version, concurrent.ID, "actor-b", approval.Mutation{Key: "approve-concurrent", Hash: "approve-concurrent-hash"})
+			errs <- err
+		}()
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent approval error=%v", err)
+		}
 	}
 }
 

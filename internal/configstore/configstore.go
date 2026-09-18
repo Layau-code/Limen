@@ -28,12 +28,30 @@ var (
 	ErrConflict = errors.New("config version conflict")
 	// ErrIdempotencyConflict 表示发布幂等键对应了不同请求哈希。
 	ErrIdempotencyConflict = errors.New("config publish idempotency conflict")
+	// ErrApprovalNotFound 表示发布引用的审批不存在。
+	ErrApprovalNotFound = errors.New("config approval not found")
+	// ErrApprovalExpired 表示发布引用的审批已经过期。
+	ErrApprovalExpired = errors.New("config approval expired")
+	// ErrApprovalStateConflict 表示审批状态不允许消费。
+	ErrApprovalStateConflict = errors.New("config approval state conflict")
+	// ErrApprovalBindingConflict 表示发布与审批绑定信息不一致。
+	ErrApprovalBindingConflict = errors.New("config approval binding conflict")
+	// ErrApprovalActorNotDistinct 表示发布者与申请者不是两个不同身份。
+	ErrApprovalActorNotDistinct = errors.New("config approval actor is not distinct")
 )
 
 // Mutation 保存配置发布的幂等键和规范请求哈希。
 type Mutation struct {
 	Key  string
 	Hash string
+}
+
+// ApprovalBinding 保存配置发布消费审批时必须匹配的安全摘要。
+type ApprovalBinding struct {
+	ApprovalID            string
+	PublishIdempotencyKey string
+	RequestHash           string
+	Publisher             string
 }
 
 // Record 是配置版本的持久化表示。
@@ -61,6 +79,12 @@ type Store interface {
 type MutationStore interface {
 	Store
 	PublishWithMutation(context.Context, string, string, Mutation) (Record, error)
+}
+
+// ApprovalMutationStore 在同一事务内校验并消费审批后发布配置。
+type ApprovalMutationStore interface {
+	MutationStore
+	PublishWithApproval(context.Context, string, string, Mutation, ApprovalBinding) (Record, error)
 }
 
 // MemoryStore 是开发环境和单元测试使用的进程内配置存储。

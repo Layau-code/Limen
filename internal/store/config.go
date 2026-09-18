@@ -136,6 +136,105 @@ func (store *PostgresConfigStore) PublishWithMutation(ctx context.Context, tenan
 	return store.publish(ctx, tenantID, version, &mutation)
 }
 
+// PublishWithApproval 在同一事务中校验审批、消费批准并切换配置版本。
+func (store *PostgresConfigStore) PublishWithApproval(ctx context.Context, tenantID, version string, mutation configstore.Mutation, binding configstore.ApprovalBinding) (configstore.Record, error) {
+	if strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" || strings.TrimSpace(binding.ApprovalID) == "" || strings.TrimSpace(binding.PublishIdempotencyKey) == "" || strings.TrimSpace(binding.RequestHash) == "" || strings.TrimSpace(binding.Publisher) == "" {
+		return configstore.Record{}, configstore.ErrApprovalBindingConflict
+	}
+	tx, err := store.beginTenantTx(ctx, tenantID)
+	if err != nil {
+		return configstore.Record{}, err
+	}
+	defer tx.Rollback()
+	record, err := getConfigTxForUpdate(ctx, tx, tenantID, version)
+	if err != nil {
+		return configstore.Record{}, err
+	}
+	var existingHash, existingVersion string
+	err = tx.QueryRowContext(ctx, `SELECT request_hash,version FROM config_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, "publish_config", mutation.Key).Scan(&existingHash, &existingVersion)
+	if err == nil {
+		if existingHash != mutation.Hash {
+			return configstore.Record{}, configstore.ErrIdempotencyConflict
+		}
+		record, err = getConfigTx(ctx, tx, tenantID, existingVersion)
+		if err != nil {
+			return configstore.Record{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return configstore.Record{}, err
+		}
+		return record, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return configstore.Record{}, err
+	}
+	var approvalVersion, publishKey, requestHash, requestedBy, state string
+	var expiresAt time.Time
+	err = tx.QueryRowContext(ctx, `SELECT config_version,publish_idempotency_key,request_hash,requested_by,state,expires_at FROM config_approvals WHERE tenant_id=$1 AND approval_id=$2 FOR UPDATE`, tenantID, binding.ApprovalID).Scan(&approvalVersion, &publishKey, &requestHash, &requestedBy, &state, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return configstore.Record{}, configstore.ErrApprovalNotFound
+	}
+	if err != nil {
+		return configstore.Record{}, err
+	}
+	if approvalVersion != version || publishKey != binding.PublishIdempotencyKey || requestHash != binding.RequestHash || binding.PublishIdempotencyKey != mutation.Key {
+		return configstore.Record{}, configstore.ErrApprovalBindingConflict
+	}
+	if requestedBy == binding.Publisher {
+		return configstore.Record{}, configstore.ErrApprovalActorNotDistinct
+	}
+	now := time.Now().UTC()
+	if state == "pending" && !now.Before(expiresAt) {
+		if _, err := tx.ExecContext(ctx, `UPDATE config_approvals SET state=$1,updated_at=$2 WHERE tenant_id=$3 AND approval_id=$4`, "expired", now, tenantID, binding.ApprovalID); err != nil {
+			return configstore.Record{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return configstore.Record{}, err
+		}
+		return configstore.Record{}, configstore.ErrApprovalExpired
+	}
+	if state != "approved" && state != "consumed" {
+		return configstore.Record{}, configstore.ErrApprovalStateConflict
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO config_operations (tenant_id,endpoint,idempotency_key,request_hash,version,created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id,endpoint,idempotency_key) DO NOTHING`, tenantID, "publish_config", mutation.Key, mutation.Hash, version, now); err != nil {
+		return configstore.Record{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT request_hash,version FROM config_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, "publish_config", mutation.Key).Scan(&existingHash, &existingVersion); err != nil {
+		return configstore.Record{}, err
+	}
+	if existingHash != mutation.Hash {
+		return configstore.Record{}, configstore.ErrIdempotencyConflict
+	}
+	if existingVersion != version {
+		record, err = getConfigTx(ctx, tx, tenantID, existingVersion)
+		if err != nil {
+			return configstore.Record{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return configstore.Record{}, err
+		}
+		return record, nil
+	}
+	if state == "approved" {
+		if _, err := tx.ExecContext(ctx, `UPDATE config_approvals SET state=$1,updated_at=$2 WHERE tenant_id=$3 AND approval_id=$4`, "consumed", now, tenantID, binding.ApprovalID); err != nil {
+			return configstore.Record{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE config_versions SET state=$1 WHERE tenant_id=$2 AND state=$3`, configstore.StateSuperseded, tenantID, configstore.StatePublished); err != nil {
+		return configstore.Record{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE config_versions SET state=$1,published_at=$2 WHERE tenant_id=$3 AND version=$4`, configstore.StatePublished, now, tenantID, version); err != nil {
+		return configstore.Record{}, err
+	}
+	record.State = configstore.StatePublished
+	record.PublishedAt = &now
+	_ = notifyConfigChange(ctx, tx, ConfigChange{TenantID: tenantID, Version: record.Version})
+	if err := tx.Commit(); err != nil {
+		return configstore.Record{}, err
+	}
+	return record, nil
+}
+
 // publish 在同一事务中切换配置并保存跨实例幂等记录。
 func (store *PostgresConfigStore) publish(ctx context.Context, tenantID, version string, mutation *configstore.Mutation) (configstore.Record, error) {
 	tx, err := store.beginTenantTx(ctx, tenantID)
@@ -274,3 +373,4 @@ func parseConfig(document []byte) (string, []config.Model, config.Routing, error
 
 var _ configstore.Store = (*PostgresConfigStore)(nil)
 var _ configstore.MutationStore = (*PostgresConfigStore)(nil)
+var _ configstore.ApprovalMutationStore = (*PostgresConfigStore)(nil)

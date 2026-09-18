@@ -24,6 +24,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/store/apikey_manager.go`：在 PostgreSQL 中创建、列出、原子轮换和撤销租户 API Key；首个 admin Key 由部署初始化流程预置，后续明文只返回一次，认证读取通过受控函数，管理操作使用幂等记录和 RLS。
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复；发布通过 `limen_config_changes` 通知加速跨实例 Router 刷新，数据库版本仍是唯一事实来源。
+- `internal/approval`：保存可选配置发布审批状态机；审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 配置发布在同一事务中校验并消费审批。
 - `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码；算法注册表负责 Replay 的版本解析，未知版本不回退。
@@ -91,6 +92,8 @@ HTTP Principal/Scope 鉴权与解析
 开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询、未知费用处置和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。管理员可对暂停请求补记确定金额，或明确接受未知费用；处置事务锁定 Request 和 Run，重复幂等键不会重复记账。暂停期间可以先请求完成，Run 会保留 `complete_requested`，不会跳过对账直接完成。
 
 控制面变更会追加安全审计事件，覆盖配置创建/发布、凭据轮换/撤销、API Key 创建/轮换/撤销、Run 完成/取消和未知费用处置。事件记录非敏感的 `actor_id`，静态模式使用固定标识，PostgreSQL 模式使用 Key 公开前缀；`GET /v1/limen/audit` 只返回当前租户最近摘要，默认最多 100 条，不返回原始 Key。事件 ID 按租户、actor、动作、资源和请求哈希稳定生成，重复重试不会制造重复记录。
+
+配置发布审批默认关闭；启用 `LIMEN_CONFIG_APPROVAL_REQUIRED=true` 后，发布者必须先创建 `config.approval.requested`，由不同 actor 执行批准，再携带 `X-Limen-Approval-ID` 发布。审批状态按 `pending → approved → consumed` 或 `rejected/expired` 迁移，重复操作通过独立幂等记录返回原结果。PostgreSQL 中审批校验、发布幂等记录、审批消费和配置切换共用一个事务；Router 快照替换在提交后执行，失败时同一发布键可以重试本地激活。静态 actor 只能用于演示，生产双人审批需要 PostgreSQL API Key Store。
 
 ## 可靠性不变量
 

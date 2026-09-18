@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/huz/limen/internal/approval"
 	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/configstore"
@@ -42,21 +43,23 @@ var settlementTrailerNames = []string{
 }
 
 type Handler struct {
-	authenticator       auth.Authenticator
-	router              *gateway.Router
-	runs                run.Service
-	tenantID            string
-	leaseOwner          string
-	decisions           journal.Store
-	configs             configstore.Store
-	audit               audit.Store
-	apiKeys             auth.APIKeyManager
-	metrics             *telemetry.Registry
-	credentials         credentialstore.Store
-	credentialSetters   map[string]ProviderCredentialSetter
-	credentialEndpoints map[string]string
-	cancellations       *run.CancellationHub
-	credentialMu        sync.Mutex
+	authenticator          auth.Authenticator
+	router                 *gateway.Router
+	runs                   run.Service
+	tenantID               string
+	leaseOwner             string
+	decisions              journal.Store
+	configs                configstore.Store
+	approvals              approval.Store
+	configApprovalRequired bool
+	audit                  audit.Store
+	apiKeys                auth.APIKeyManager
+	metrics                *telemetry.Registry
+	credentials            credentialstore.Store
+	credentialSetters      map[string]ProviderCredentialSetter
+	credentialEndpoints    map[string]string
+	cancellations          *run.CancellationHub
+	credentialMu           sync.Mutex
 }
 
 const runTenantID = "local"
@@ -126,6 +129,11 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys 创建包含 API Key 控制面的完整处理器。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, apiKeys auth.APIKeyManager, cancellationHubs ...*run.CancellationHub) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval(authenticator, router, health, tenantID, decisions, configs, credentials, setters, endpoints, runs, audits, apiKeys, nil, false, cancellationHubs...)
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval 创建包含可选配置审批控制面的处理器。
+func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, apiKeys auth.APIKeyManager, approvals approval.Store, configApprovalRequired bool, cancellationHubs ...*run.CancellationHub) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -147,20 +155,22 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditA
 		cancellationHub = cancellationHubs[0]
 	}
 	handler := &Handler{
-		authenticator:       authenticator,
-		router:              router,
-		runs:                runs,
-		tenantID:            tenantID,
-		leaseOwner:          newLeaseOwner(),
-		decisions:           decisions,
-		configs:             configs,
-		audit:               audits,
-		apiKeys:             apiKeys,
-		metrics:             telemetry.NewRegistry(),
-		credentials:         credentials,
-		credentialSetters:   setters,
-		credentialEndpoints: endpoints,
-		cancellations:       cancellationHub,
+		authenticator:          authenticator,
+		router:                 router,
+		runs:                   runs,
+		tenantID:               tenantID,
+		leaseOwner:             newLeaseOwner(),
+		decisions:              decisions,
+		configs:                configs,
+		approvals:              approvals,
+		configApprovalRequired: configApprovalRequired,
+		audit:                  audits,
+		apiKeys:                apiKeys,
+		metrics:                telemetry.NewRegistry(),
+		credentials:            credentials,
+		credentialSetters:      setters,
+		credentialEndpoints:    endpoints,
+		cancellations:          cancellationHub,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
@@ -176,6 +186,10 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditA
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/approvals", handler.createApproval)
+	mux.HandleFunc("GET /v1/limen/configs/{version}/approvals/{approval_id}", handler.getApproval)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/approvals/{approval_id}/approve", handler.approveConfig)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/approvals/{approval_id}/reject", handler.rejectConfig)
 	mux.HandleFunc("POST /v1/limen/credentials/{provider}", handler.rotateCredential)
 	mux.HandleFunc("POST /v1/limen/credentials/{provider}/revoke", handler.revokeCredential)
 	mux.HandleFunc("POST /v1/limen/runs", handler.createRun)

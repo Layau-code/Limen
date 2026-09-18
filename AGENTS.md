@@ -18,6 +18,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
 - 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
+- 配置发布可选启用 `LIMEN_CONFIG_APPROVAL_REQUIRED=true`；`internal/approval` 负责双人审批状态机，审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 发布必须在同一事务内消费审批；静态 actor 不能满足身份分离。
 - 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。
 - PostgreSQL Key Store 只按公开前缀查询 HMAC 摘要，使用常量时间比较校验完整 Key；数据库、日志和 Principal 均不得保存或暴露完整 Key。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
@@ -90,6 +91,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
+- 配置审批测试必须覆盖默认关闭回归、批准者身份分离、过期、状态冲突、绑定冲突、并发幂等、Router 激活失败重试和 PostgreSQL RLS；不得把审批校验只放在 HTTP 层而绕过持久化事务。
 - 算法版本测试必须覆盖当前版本解析、未知版本拒绝和重复注册拒绝；配置 diff 测试必须证明只返回稳定路径与变化类型。
 - Replay 算法注册必须支持显式保留截止时间；过期版本返回 `algorithm_version_unavailable`，不得静默回退；新增算法版本必须保留旧版本语义或明确退役窗口。
 - 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签、未知模型归并、真实 Attempt 语义和 admin 鉴权。

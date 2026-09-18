@@ -37,7 +37,7 @@
 | `expires_at` | 审批有效期，默认创建后 30 分钟 |
 | `created_at`、`updated_at` | 审计时间 |
 
-唯一约束为 `(tenant_id, approval_id)`；创建、批准和拒绝操作分别使用租户、endpoint、Idempotency-Key 和请求哈希实现幂等。
+唯一约束为 `(tenant_id, approval_id)` 和 `(tenant_id, config_version, publish_idempotency_key)`；创建、批准和拒绝操作分别使用租户、endpoint、Idempotency-Key 和请求哈希实现幂等。
 
 ## 4. 状态与接口
 
@@ -56,7 +56,7 @@ POST /v1/limen/configs/{version}/approvals/{approval_id}/approve
 POST /v1/limen/configs/{version}/approvals/{approval_id}/reject
 ```
 
-所有接口需要 `admin` Scope，并要求 `Idempotency-Key`（查询接口除外）。创建请求体为：
+创建、批准和拒绝接口需要 `configs:write` Scope，查询接口需要 `configs:read` Scope，并要求 `Idempotency-Key`（查询接口除外）。创建请求体为：
 
 ```json
 {"publish_idempotency_key":"publish-config-001"}
@@ -77,7 +77,7 @@ Idempotency-Key: publish-config-001
 
 ## 5. 错误语义
 
-- 缺少审批头：`409 approval_required`
+- 缺少审批头：`400 approval_required`
 - 审批不存在或跨租户：`404 approval_not_found`
 - 审批已过期：`409 approval_expired`
 - 审批状态不允许当前操作：`409 approval_state_conflict`
