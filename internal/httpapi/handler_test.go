@@ -16,9 +16,11 @@ import (
 
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
+	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
+	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
 )
@@ -95,6 +97,43 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestTenantOutsideInstanceBoundaryIsRejected(t *testing.T) {
+	authenticator := auth.NewStaticAuthenticator("secret", "tenant-b", []auth.Scope{auth.ScopeInference})
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var providerCalls atomic.Int64
+	upstream := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		providerCalls.Add(1)
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+	})
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		authenticator,
+		newTestRouter(upstream, nil, registry),
+		nil,
+		"tenant-a",
+		journal.NewMemoryStore(),
+		configstore.NewMemoryStore(),
+		nil,
+	)
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "tenant_not_served") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer secret")
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chat)
+	if chatResponse.Code != http.StatusForbidden || providerCalls.Load() != 0 {
+		t.Fatalf("chat status=%d calls=%d body=%s", chatResponse.Code, providerCalls.Load(), chatResponse.Body.String())
 	}
 }
 

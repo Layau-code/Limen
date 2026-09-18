@@ -18,10 +18,10 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 崩溃恢复会把遗留的 `Attempt started` 原子标记为 `abandoned`；PostgreSQL 事务连接池具有 5 秒 I/O 期限，网络黑洞不会永久阻塞恢复任务。
 - 每次真实 Provider 调用都保存独立 Attempt；若上游返回 request ID，Limen 会在结算前补写该非敏感标识，便于审计调用是否已经发生。
 - Run 取消会写入租户隔离的取消事件；PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 低延迟广播，在途 Chat 同时保留每秒轮询作为断线兜底。
-- 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。
+- 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。每个进程由 `LIMEN_TENANT_ID` 绑定单一租户，其他租户的 Key 会在 HTTP 入口拒绝；多租户部署使用按租户隔离的多个实例，共享数据库仍由 RLS 保护。
 - 密钥支持环境变量和容器只读文件两种来源；`*_FILE` 只在启动时读取，不能与对应明文变量同时设置，避免把 Secret 挂载误当成普通配置。
 - 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库。启用后管理员可创建、列出、原子轮换和撤销 Key，明文只在创建或轮换首次响应中返回；默认仍使用静态 Key 便于单机开发。
-- Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；启用后每次出站调用按请求租户解析凭据，缺失凭据不会回退到其他租户。
+- Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；启用后每次出站调用按当前实例绑定的租户解析凭据，缺失凭据不会回退到其他租户。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对 Provider 归一化的 `retryable_transient` 和传输错误执行 Fallback；SSE 开始后不重放。
 - 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志；熔断状态按目标共享，但阈值与冷却时间从当前 Run 固定的路由策略读取，配置发布不会把旧策略悄悄带入新请求。
@@ -192,7 +192,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 `LIMEN_CONFIG_APPROVAL_REQUIRED` 只接受 `true` 或 `false`，默认关闭；开启后配置发布必须先完成双人审批，静态 Key 无法满足身份分离。
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY` 或 `OPENAI_API_KEY_FILE`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` 或 `ANTHROPIC_API_KEY_FILE`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并在事务级 advisory lock 下执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，`LIMEN_API_KEY_FILE` 只适用于静态 Key 模式；API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。未启用凭据主密钥时，Provider 使用对应环境变量或文件密钥；启用后，Provider 只使用按请求租户和 endpoint 解析出的加密凭据，默认租户也必须先完成凭据配置。文件密钥会去除首尾空白，空文件、无法读取或同时设置明文和文件来源都会让启动失败。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY` 或 `OPENAI_API_KEY_FILE`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` 或 `ANTHROPIC_API_KEY_FILE`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并在事务级 advisory lock 下执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，`LIMEN_API_KEY_FILE` 只适用于静态 Key 模式；API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。当前进程只服务 `LIMEN_TENANT_ID`，数据库中属于其他租户的 Key 会返回 `tenant_not_served`，不会进入本进程的 Router、配置或 Provider；需要服务多个租户时应为每个租户运行独立实例。未启用凭据主密钥时，Provider 使用对应环境变量或文件密钥；启用后，Provider 只使用当前进程绑定租户和 endpoint 解析出的加密凭据，默认租户也必须先完成凭据配置。文件密钥会去除首尾空白，空文件、无法读取或同时设置明文和文件来源都会让启动失败。
 
 设置标准环境变量 `OTEL_EXPORTER_OTLP_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 即可启用 OTLP/HTTP Trace；认证头可使用 `OTEL_EXPORTER_OTLP_HEADERS`。未配置端点时使用无操作 Provider。导出在后台批量执行，初始化或导出失败只关闭或降级遥测，不改变模型请求响应。
 

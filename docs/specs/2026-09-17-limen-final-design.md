@@ -505,7 +505,7 @@ Run 和 Request 查询使用安全 DTO，不返回 `tenant_id`、幂等键、请
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY` 或启动时读取一次的 `LIMEN_API_KEY_FILE`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；文件密钥与明文变量不能同时设置，空文件或读取失败直接阻止启动。PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal；`LIMEN_API_KEY_FILE` 不适用于该模式。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入、结算和 Provider 出站路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出、原子轮换和撤销 API Key。创建和轮换使用幂等键，明文只在首次响应返回；轮换事务提交后旧 Key 立即失效，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint；每次出站按请求租户解析凭据，缺失时不回退到其他租户或进程共享密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY` 或启动时读取一次的 `LIMEN_API_KEY_FILE`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；文件密钥与明文变量不能同时设置，空文件或读取失败直接阻止启动。PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal；`LIMEN_API_KEY_FILE` 不适用于该模式。HTTP 层在入口校验接口所需 Scope，并先拒绝不等于 `LIMEN_TENANT_ID` 的 Principal，再把已绑定租户传入 Run 哈希、准入、结算和 Provider 出站路径；单个进程只服务一个租户，多租户部署使用按租户隔离的多个实例。首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出、原子轮换和撤销 API Key。创建和轮换使用幂等键，明文只在首次响应返回；轮换事务提交后旧 Key 立即失效，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint；每次出站按当前实例绑定租户解析凭据，缺失时不回退到其他租户或进程共享密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |
@@ -524,7 +524,7 @@ Run 和 Request 查询使用安全 DTO，不返回 `tenant_id`、幂等键、请
 | 查询控制面审计摘要 | admin |
 | 创建、列出、轮换和撤销 API Key | admin |
 
-Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
+Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前单个进程只绑定一个 `LIMEN_TENANT_ID`，多租户通过每租户独立实例复用同一套数据库隔离边界；入口会拒绝其他租户的 Key，避免全局 Router、配置、熔断或出站凭据跨租户共享。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
 
 ### 9.4 Explain、Dry Run、Replay
 

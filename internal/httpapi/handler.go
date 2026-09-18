@@ -1514,6 +1514,10 @@ func (h *Handler) authenticateScopes(w http.ResponseWriter, r *http.Request, sco
 		writeError(w, http.StatusUnauthorized, "invalid API key", "authentication_error", "invalid_api_key")
 		return false
 	}
+	if !h.servesTenant(principal) {
+		writeError(w, http.StatusForbidden, "tenant is not served by this instance", "permission_error", "tenant_not_served")
+		return false
+	}
 	for _, scope := range scopes {
 		if !principal.HasScope(scope) {
 			writeError(w, http.StatusForbidden, "insufficient scope", "permission_error", "insufficient_scope")
@@ -1522,6 +1526,14 @@ func (h *Handler) authenticateScopes(w http.ResponseWriter, r *http.Request, sco
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
 	return true
+}
+
+// servesTenant 限制单个进程只处理启动时绑定的租户，避免共享 Router 或凭据越界。
+func (h *Handler) servesTenant(principal auth.Principal) bool {
+	if principal.TenantID == "" || h.tenantID == "" {
+		return true
+	}
+	return principal.TenantID == h.tenantID
 }
 
 // requestTenantID 返回鉴权 Principal 绑定的租户，兼容未注入身份的内部调用。

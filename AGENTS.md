@@ -24,11 +24,11 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - PostgreSQL 启动迁移必须在同一事务内先获取固定 advisory lock，再检查版本并执行 DDL；多实例并发启动不能依赖应用层互斥或偶然的 DDL 顺序。
 - 主服务必须先成功绑定 `LIMEN_ADDR` 的 TCP socket，再将 Health 标记为 ready；监听失败不得短暂暴露就绪状态，服务使用已绑定的 Listener 调用 `Serve`。
 - 配置发布可选启用 `LIMEN_CONFIG_APPROVAL_REQUIRED=true`；`internal/approval` 负责双人审批状态机，审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 发布必须在同一事务内消费审批；静态 actor 不能满足身份分离。
-- 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。
+- 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。HTTP 入口必须拒绝不等于 `LIMEN_TENANT_ID` 的 Principal；单个进程只服务一个租户，多租户部署使用多个实例。
 - PostgreSQL Key Store 只按公开前缀查询 HMAC 摘要，使用常量时间比较校验完整 Key；数据库、日志和 Principal 均不得保存或暴露完整 Key。
 - `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE` 只读一次启动时的文件密钥；对应明文变量与 `_FILE` 冲突必须拒绝，空文件或读取失败不能静默回退，日志不得输出密钥内容。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
-- `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
+- `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把已通过实例租户边界的 Principal `tenant_id` 传入 Provider，Provider 每次出站按该租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
 - 模型目标可选声明 `endpoint_id`，必须匹配进程配置的 Provider endpoint ID；Router 发布前和 Provider 出站前都要拒绝错绑，熔断键也必须包含 endpoint 绑定。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端传入地址或选择 endpoint。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
