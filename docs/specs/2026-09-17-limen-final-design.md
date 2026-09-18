@@ -367,7 +367,7 @@ Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`�
 | 图片、音频和多模态内容 | 不支持，返回 unsupported_field |
 | n、logprobs 等其他字段 | 未列入矩阵即拒绝，不能静默丢弃 |
 
-兼容测试使用真实 OpenAI SDK 构造请求，但不访问真实 Provider 网络。README 必须链接这份字段矩阵，不能笼统宣称完整 OpenAI 兼容。
+兼容测试使用 Go 标准库 HTTP 客户端按 OpenAI 线协议构造请求，不访问真实 Provider 网络；这样不增加仅用于测试的 SDK 依赖，同时验证 SDK 所依赖的 HTTP 契约。README 必须链接这份字段矩阵，不能笼统宣称完整 OpenAI 兼容。
 
 Provider 只处理一次协议调用和转换：不读取 Run 或软预算，不决定逻辑模型映射，不访问数据库，不依赖 HTTP Handler，负责报告协议级 Usage、上游 request ID 和归一化错误。
 
@@ -614,7 +614,7 @@ livez 只表示进程存活，readyz 表示数据库、配置和接收状态正�
 
 ### 12.4 HTTP 与故障测试
 
-覆盖 OpenAI SDK 兼容矩阵、Chat 普通/SSE、Run 全生命周期、Explain/Dry Run/Replay、Scope、Provider 429/5xx/断流、数据库暂时不可用、进程崩溃、客户端断开、重定向/DNS 重绑定和 Telemetry 失败。
+覆盖 OpenAI 线协议兼容矩阵、Chat 普通/SSE、Run 全生命周期、Explain/Dry Run/Replay、Scope、Provider 429/5xx/断流、数据库暂时不可用、进程崩溃、客户端断开、重定向/DNS 重绑定和 Telemetry 失败。
 
 必须证明：SSE 首段不等待完整响应；已输出成功内容后不 Fallback；未知 Usage 不写成零；结算失败不改写已经确定的模型响应。
 

@@ -74,6 +74,7 @@
 
 ### 修复
 
+- 最终设计文档将兼容性测试描述校正为标准库 HTTP 线协议测试，避免把尚未引入的 OpenAI SDK 测试依赖写成既成事实。
 - OpenAI SSE 观察器现在校验 `[DONE]` 和上游错误事件；截断流会标记读取错误，且不会把 Provider 错误正文放入错误信息。
 - 真实二进制冒烟现在覆盖 `/readyz`、Bearer 鉴权、OpenAI 风格模型列表和未知模型错误隐私，仍不访问真实 Provider。
 - Anthropic SSE 现在会传播上游 `error` 事件，并拒绝在缺少 `message_stop` 时伪造 `[DONE]`，避免截断响应被客户端误判为成功。
