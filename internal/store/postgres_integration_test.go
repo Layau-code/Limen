@@ -177,7 +177,7 @@ func TestPostgresIntegrationAuditTenantIsolation(t *testing.T) {
 	ensureIntegrationTenant(t, adminDB, tenantB)
 	store := NewPostgresAuditStore(appDB)
 	for _, event := range []audit.Event{
-		{ID: audit.EventID(tenantA, audit.ActionConfigPublish, "v1", "hash-a"), TenantID: tenantA, Action: audit.ActionConfigPublish, ResourceType: "config", ResourceID: "v1", Outcome: "success", RequestHash: "hash-a", CreatedAt: time.Now().UTC()},
+		{ID: audit.EventIDWithActor(tenantA, "actor-prefix", audit.ActionConfigPublish, "v1", "hash-a"), TenantID: tenantA, ActorID: "actor-prefix", Action: audit.ActionConfigPublish, ResourceType: "config", ResourceID: "v1", Outcome: "success", RequestHash: "hash-a", CreatedAt: time.Now().UTC()},
 		{ID: audit.EventID(tenantB, audit.ActionConfigPublish, "v2", "hash-b"), TenantID: tenantB, Action: audit.ActionConfigPublish, ResourceType: "config", ResourceID: "v2", Outcome: "success", RequestHash: "hash-b", CreatedAt: time.Now().UTC()},
 	} {
 		if err := store.Append(ctx, event); err != nil {
@@ -185,7 +185,7 @@ func TestPostgresIntegrationAuditTenantIsolation(t *testing.T) {
 		}
 	}
 	items, err := store.List(ctx, tenantA, 10)
-	if err != nil || len(items) != 1 || items[0].TenantID != tenantA {
+	if err != nil || len(items) != 1 || items[0].TenantID != tenantA || items[0].ActorID != "actor-prefix" {
 		t.Fatalf("tenant audit items=%+v err=%v", items, err)
 	}
 	tx, err := appDB.BeginTx(ctx, nil)
@@ -226,7 +226,7 @@ func TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation(t *testing.T) {
 	}
 	authenticator := NewAPIKeyAuthenticator(appDB, "integration-hmac-secret")
 	principal, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+plaintext)
-	if err != nil || !ok || principal.TenantID != tenantA {
+	if err != nil || !ok || principal.TenantID != tenantA || principal.Subject != record.PublicPrefix {
 		t.Fatalf("key authentication principal=%+v ok=%v err=%v", principal, ok, err)
 	}
 	oldRecord, rotated, rotatedPlaintext, err := manager.Rotate(ctx, tenantA, record.PublicPrefix, []auth.Scope{auth.ScopeInference}, authTimePtr(time.Now().UTC().Add(2*time.Hour)), auth.APIKeyMutation{Key: "rotate-1", Hash: "rotate-hash"})

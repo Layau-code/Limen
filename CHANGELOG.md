@@ -25,6 +25,7 @@
 - Algorithm Registry 支持显式 Replay 保留截止时间，过期算法返回 `algorithm_version_unavailable`，不回退到新版本。
 - 将 Gateway Executor 从 Router 计划生成逻辑中拆出；Executor 只按 ExecutionPlan 执行 Provider，不重新选择模型。
 - PostgreSQL API Key Store 新增创建、列表、原子轮换和撤销控制面；明文只在首次创建或轮换响应返回，认证查询使用受控函数，管理操作使用 RLS 和幂等记录。
+- 控制面审计新增非敏感 `actor_id`，可关联静态身份或 API Key 公开前缀，不保存原始凭据。
 
 ### 修复
 

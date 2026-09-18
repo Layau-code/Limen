@@ -36,6 +36,7 @@ const (
 type Event struct {
 	ID           string    `json:"id"`
 	TenantID     string    `json:"-"`
+	ActorID      string    `json:"actor_id,omitempty"`
 	Action       string    `json:"action"`
 	ResourceType string    `json:"resource_type"`
 	ResourceID   string    `json:"resource_id"`
@@ -46,7 +47,12 @@ type Event struct {
 
 // EventID 为同一租户、操作和资源生成稳定 ID，便于控制面重试去重。
 func EventID(tenantID, action, resourceID, requestHash string) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{tenantID, action, resourceID, requestHash}, "\x00")))
+	return EventIDWithActor(tenantID, "", action, resourceID, requestHash)
+}
+
+// EventIDWithActor 为包含执行者身份的审计事件生成稳定 ID。
+func EventIDWithActor(tenantID, actorID, action, resourceID, requestHash string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{tenantID, actorID, action, resourceID, requestHash}, "\x00")))
 	return "audit_" + hex.EncodeToString(sum[:12])
 }
 

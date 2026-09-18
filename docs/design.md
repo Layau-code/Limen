@@ -28,7 +28,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码；算法注册表负责 Replay 的版本解析，未知版本不回退。
 - `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
-- `internal/audit`：保存控制面安全摘要；事件按租户隔离，查询只返回动作、资源、结果、请求哈希和时间。
+- `internal/audit`：保存控制面安全摘要；事件按租户隔离，记录非敏感的凭据身份标识，查询不返回原始 Key，只返回动作、资源、结果、请求哈希和时间。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。
 - `internal/gateway/executor.go`：只消费 ExecutionPlan，管理共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
@@ -82,7 +82,7 @@ HTTP Principal/Scope 鉴权与解析
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
-当前 HTTP Run、配置、API Key 和管理审计控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移，008 迁移对既有租户表启用 `FORCE ROW LEVEL SECURITY`，009 迁移保存配置发布幂等操作，010 迁移保存控制面审计摘要，011 迁移保存 API Key 控制面幂等记录并启用 Key 表 RLS。生产事务连接池统一由 `store.OpenPostgres` 创建，每次 socket 读写具有 5 秒期限，数据库网络黑洞会返回错误而不是永久占住恢复协程；`LISTEN/NOTIFY` 使用可自动重连的专用长连接。配置发布通知只包含租户和版本哈希，接收实例从数据库重新读取配置并原子替换 Router；每 5 秒轮询已发布版本弥补通知丢失。未配置数据库时，控制面使用内存实现，仅适合单机开发，不能作为生产账本或配置发布记录。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户和 Scope 从数据库 Key 记录生成。认证查询通过安全数据库函数按公开前缀读取最小字段，管理查询设置租户上下文并受 RLS 保护。凭据、取消和配置的 `NOTIFY` 都只是低延迟提示，通知失败不回滚已提交事务，轮询或重启负责兜底。
+当前 HTTP Run、配置、API Key 和管理审计控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移，008 迁移对既有租户表启用 `FORCE ROW LEVEL SECURITY`，009 迁移保存配置发布幂等操作，010 迁移保存控制面审计摘要，011 迁移保存 API Key 控制面幂等记录并启用 Key 表 RLS，012 迁移补充审计 actor_id。生产事务连接池统一由 `store.OpenPostgres` 创建，每次 socket 读写具有 5 秒期限，数据库网络黑洞会返回错误而不是永久占住恢复协程；`LISTEN/NOTIFY` 使用可自动重连的专用长连接。配置发布通知只包含租户和版本哈希，接收实例从数据库重新读取配置并原子替换 Router；每 5 秒轮询已发布版本弥补通知丢失。未配置数据库时，控制面使用内存实现，仅适合单机开发，不能作为生产账本或配置发布记录。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户、Subject 和 Scope 从数据库 Key 记录生成。认证查询通过安全数据库函数按公开前缀读取最小字段，管理查询设置租户上下文并受 RLS 保护。凭据、取消和配置的 `NOTIFY` 都只是低延迟提示，通知失败不回滚已提交事务，轮询或重启负责兜底。
 
 受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。每次真实 Provider 调用前单独写入 Attempt，收到上游非敏感 request ID 后补写，Fallback 后续目标不会覆盖前一个 Attempt 的状态。结算遇到暂时性存储错误时，当前进程按 0、100、500 毫秒退避重试；仍未完成则写入持久化 `settlement_jobs` 并返回 `pending`。后台任务使用独立租约幂等重试已知费用；未知费用只转为 `suspended_accounting`，不重放 Provider。主进程同时扫描当前租户的过期请求；恢复事务将 Request 标记为 `abandoned/pending`，把仍为 `started` 的 Attempt 标记为 `abandoned`，并暂停关联 Run 的账本。取消 Run 时在同一事务写入租户隔离取消事件，PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 广播，在途 Chat 同时每秒轮询事件作为断线兜底。真实 PostgreSQL 集成测试使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立进程、数据库暂停/恢复和两个 Store 的恢复竞争。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
 
@@ -90,7 +90,7 @@ HTTP Principal/Scope 鉴权与解析
 
 开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询、未知费用处置和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。管理员可对暂停请求补记确定金额，或明确接受未知费用；处置事务锁定 Request 和 Run，重复幂等键不会重复记账。暂停期间可以先请求完成，Run 会保留 `complete_requested`，不会跳过对账直接完成。
 
-控制面变更会追加安全审计事件，覆盖配置创建/发布、凭据轮换/撤销、API Key 创建/轮换/撤销、Run 完成/取消和未知费用处置。`GET /v1/limen/audit` 只返回当前租户最近摘要，默认最多 100 条；事件 ID 按租户、动作、资源和请求哈希稳定生成，重复重试不会制造重复记录。
+控制面变更会追加安全审计事件，覆盖配置创建/发布、凭据轮换/撤销、API Key 创建/轮换/撤销、Run 完成/取消和未知费用处置。事件记录非敏感的 `actor_id`，静态模式使用固定标识，PostgreSQL 模式使用 Key 公开前缀；`GET /v1/limen/audit` 只返回当前租户最近摘要，默认最多 100 条，不返回原始 Key。事件 ID 按租户、actor、动作、资源和请求哈希稳定生成，重复重试不会制造重复记录。
 
 ## 可靠性不变量
 

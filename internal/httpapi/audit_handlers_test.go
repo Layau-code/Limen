@@ -47,7 +47,7 @@ func TestAuditEndpointRequiresAdminAndHidesConfigValues(t *testing.T) {
 	auditResponse := httptest.NewRecorder()
 	handler.ServeHTTP(auditResponse, auditRequest)
 	body := auditResponse.Body.String()
-	if auditResponse.Code != http.StatusOK || !strings.Contains(body, "config.publish") || strings.Contains(body, "gpt-secret-upstream") {
+	if auditResponse.Code != http.StatusOK || !strings.Contains(body, "config.publish") || !strings.Contains(body, `"actor_id":"static"`) || strings.Contains(body, "gpt-secret-upstream") {
 		t.Fatalf("audit status=%d body=%s", auditResponse.Code, body)
 	}
 

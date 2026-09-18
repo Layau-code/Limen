@@ -20,9 +20,10 @@ const (
 	ScopeAdmin        Scope = "admin"
 )
 
-// Principal 表示已通过鉴权的租户身份，不暴露原始 API Key。
+// Principal 表示已通过鉴权的租户身份，不暴露原始 API Key；Subject 是非敏感的凭据身份标识。
 type Principal struct {
 	TenantID string
+	Subject  string
 	Scopes   map[Scope]struct{}
 }
 
@@ -55,7 +56,7 @@ func NewStaticAuthenticator(apiKey, tenantID string, scopes []Scope) StaticAuthe
 	for _, scope := range scopes {
 		set[scope] = struct{}{}
 	}
-	return StaticAuthenticator{key: []byte(apiKey), principal: Principal{TenantID: tenantID, Scopes: set}}
+	return StaticAuthenticator{key: []byte(apiKey), principal: Principal{TenantID: tenantID, Subject: "static", Scopes: set}}
 }
 
 // Authenticate 校验 Bearer Key，并用常量时间比较避免时序泄露。
@@ -68,7 +69,7 @@ func (authenticator StaticAuthenticator) Authenticate(header string) (Principal,
 	for scope := range authenticator.principal.Scopes {
 		scopes[scope] = struct{}{}
 	}
-	return Principal{TenantID: authenticator.principal.TenantID, Scopes: scopes}, true
+	return Principal{TenantID: authenticator.principal.TenantID, Subject: authenticator.principal.Subject, Scopes: scopes}, true
 }
 
 // AuthenticateContext 适配统一鉴权接口，静态 Key 不访问外部 Store。

@@ -61,7 +61,7 @@ func (authenticator *APIKeyAuthenticator) AuthenticateContext(ctx context.Contex
 		}
 		set[scope] = struct{}{}
 	}
-	return auth.Principal{TenantID: tenantID, Scopes: set}, true, nil
+	return auth.Principal{TenantID: tenantID, Subject: prefix, Scopes: set}, true, nil
 }
 
 // splitAPIKey 提取公开前缀，同时拒绝低熵或非 Limen Key 格式。

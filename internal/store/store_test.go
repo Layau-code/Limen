@@ -144,6 +144,19 @@ func TestAuditMigrationDefinesTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestAuditActorMigrationAddsNonSensitiveIdentity(t *testing.T) {
+	contents, err := os.ReadFile("migrations/012_audit_actor.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"ALTER TABLE audit_events", "ADD COLUMN actor_id TEXT NOT NULL", "DEFAULT 'unknown'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
+
 func TestAPIKeyManagementMigrationDefinesSecureLookupAndRLS(t *testing.T) {
 	contents, err := os.ReadFile("migrations/011_api_key_management.sql")
 	if err != nil {

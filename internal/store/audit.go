@@ -31,7 +31,7 @@ func (store *PostgresAuditStore) Append(ctx context.Context, event audit.Event) 
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (tenant_id,event_id,action,resource_type,resource_id,outcome,request_hash,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (tenant_id,event_id) DO NOTHING`, event.TenantID, event.ID, event.Action, event.ResourceType, event.ResourceID, event.Outcome, nullableString(event.RequestHash), event.CreatedAt.UTC()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (tenant_id,event_id,actor_id,action,resource_type,resource_id,outcome,request_hash,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (tenant_id,event_id) DO NOTHING`, event.TenantID, event.ID, auditActorID(event.ActorID), event.Action, event.ResourceType, event.ResourceID, event.Outcome, nullableString(event.RequestHash), event.CreatedAt.UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -50,7 +50,7 @@ func (store *PostgresAuditStore) List(ctx context.Context, tenantID string, limi
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT event_id,action,resource_type,resource_id,outcome,request_hash,created_at FROM audit_events WHERE tenant_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT $2`, tenantID, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT event_id,actor_id,action,resource_type,resource_id,outcome,request_hash,created_at FROM audit_events WHERE tenant_id=$1 ORDER BY created_at DESC,event_id DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -58,11 +58,15 @@ func (store *PostgresAuditStore) List(ctx context.Context, tenantID string, limi
 	result := make([]audit.Event, 0)
 	for rows.Next() {
 		var event audit.Event
+		var actorID sql.NullString
 		var requestHash sql.NullString
-		if err := rows.Scan(&event.ID, &event.Action, &event.ResourceType, &event.ResourceID, &event.Outcome, &requestHash, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.ID, &actorID, &event.Action, &event.ResourceType, &event.ResourceID, &event.Outcome, &requestHash, &event.CreatedAt); err != nil {
 			return nil, err
 		}
 		event.TenantID = tenantID
+		if actorID.Valid {
+			event.ActorID = actorID.String
+		}
 		if requestHash.Valid {
 			event.RequestHash = requestHash.String
 		}
@@ -81,6 +85,14 @@ func (store *PostgresAuditStore) List(ctx context.Context, tenantID string, limi
 func nullableString(value string) any {
 	if strings.TrimSpace(value) == "" {
 		return nil
+	}
+	return value
+}
+
+// auditActorID 为历史事件和内部调用提供稳定的非敏感执行者值。
+func auditActorID(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
 	}
 	return value
 }

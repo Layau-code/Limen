@@ -29,7 +29,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
-- 控制面变更写入租户隔离的安全审计摘要，`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
+- 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
 
 ## 快速开始
 
@@ -107,7 +107,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 配置版本可以通过控制面创建和发布。`POST /v1/limen/configs` 接收与模型文件相同的严格 JSON，返回由规范内容生成的 `version`；`POST /v1/limen/configs/{version}/publish` 需要 `configs:write` 和 `Idempotency-Key`，同键重试不会重复切换版本，不同版本复用同键会返回 `idempotency_conflict`。发布后当前进程立即使用新目录和路由参数，旧版本保留为 `superseded`。配置发布通过 PostgreSQL `NOTIFY` 加速传播到其他实例，实例仍每 5 秒读取已发布版本作为丢失通知时的兜底；通知只包含租户和版本哈希，不包含配置正文。`GET /v1/limen/configs` 只返回模型和目标摘要，不暴露真实上游模型名；`GET /v1/limen/configs/{version}/diff/{base_version}` 返回只含路径和变化类型的结构化差异。配置 API 未连接 PostgreSQL 时使用内存存储，重启会丢失版本；生产环境应配置 `LIMEN_DATABASE_URL`。
 
-管理员可通过 `GET /v1/limen/audit?limit=100` 查询当前租户最近的控制面变更摘要。返回内容只包括动作、资源类型、资源 ID、结果、请求哈希和时间；`limit` 范围为 1 到 100。
+管理员可通过 `GET /v1/limen/audit?limit=100` 查询当前租户最近的控制面变更摘要。返回内容包括非敏感的 `actor_id`、动作、资源类型、资源 ID、结果、请求哈希和时间；`actor_id` 是静态 Key 的固定标识或 PostgreSQL Key 的公开前缀，不是密钥本身。
 
 启用 `LIMEN_API_KEY_STORE=postgres` 后，管理员可以使用 `POST /v1/limen/keys` 创建 Key、`GET /v1/limen/keys` 查看元数据、`POST /v1/limen/keys/{public_prefix}/rotate` 原子轮换 Key，以及 `POST /v1/limen/keys/{public_prefix}/revoke` 撤销 Key。创建和轮换请求必须带 `Idempotency-Key` 和明确的 `scopes`；完整 `lmn_live_...` Key 只在首次成功响应返回，重试不会再次返回明文。轮换在一个事务内创建新 Key 并停用旧 Key，旧 Key 在提交后立即失效。数据库只保存 HMAC 摘要，认证查询通过受控函数执行，管理查询受 PostgreSQL RLS 保护。
 
