@@ -223,6 +223,66 @@ func TestRouterReplayRejectsUnavailableAlgorithmVersion(t *testing.T) {
 	}
 }
 
+func TestRouterReplayWithRegistryUsesHistoricalInputAndDraftTargets(t *testing.T) {
+	initial, err := NewModelRegistry([]Model{{ID: "smart", Targets: []Target{{ID: "primary", Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, initial)
+	input, original, err := router.Explain(provider.ChatRequest{Model: "smart"}, decision.Contract{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := NewModelRegistry([]Model{{ID: "smart", Targets: []Target{{ID: "primary", Provider: "anthropic", UpstreamModel: "claude-new"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := router.ReplayWithRegistry(input, draft, "sha256:draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ConfigVersion != "sha256:draft" || len(replayed.Targets) != 1 {
+		t.Fatalf("replayed plan = %+v", replayed)
+	}
+	if replayed.Targets[0].Target.Provider != "anthropic" || replayed.Targets[0].Target.UpstreamModel != "claude-new" {
+		t.Fatalf("replayed target = %+v", replayed.Targets[0].Target)
+	}
+	if replayed.InputHash == original.InputHash || replayed.PlanHash == original.PlanHash {
+		t.Fatalf("draft replay reused original hashes: original=%+v replayed=%+v", original, replayed)
+	}
+	if input.Candidates[0].Target.Provider != "openai" || input.Candidates[0].Target.UpstreamModel != "gpt-old" {
+		t.Fatalf("historical input mutated: %+v", input.Candidates[0].Target)
+	}
+}
+
+func TestRouterReplayWithRegistryIgnoresCurrentBreakerState(t *testing.T) {
+	registry, err := NewModelRegistry([]Model{{ID: "smart", Targets: []Target{{ID: "primary", Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			return provider.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+		}),
+	}, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 1, Cooldown: time.Minute})
+	input, _, err := router.Explain(provider.ChatRequest{Model: "smart"}, decision.Contract{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart"})
+	if err != nil || result.Response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("provider response = %+v, err=%v", result.Response, err)
+	}
+	_ = result.Response.Body.Close()
+	replayed, err := router.ReplayWithRegistry(input, registry, "sha256:draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed.Targets) != 1 || replayed.Targets[0].Target.ID != "primary" {
+		t.Fatalf("replay was affected by current breaker: %+v", replayed)
+	}
+}
+
 func TestRouterRegistryReplacementIsConcurrentSafe(t *testing.T) {
 	first, err := NewModelRegistry([]Model{{ID: "first", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-first"}}}})
 	if err != nil {

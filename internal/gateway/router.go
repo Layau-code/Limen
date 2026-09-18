@@ -262,6 +262,22 @@ func (router *Router) Replay(input decision.Input) (decision.ExecutionPlan, erro
 	return engine.Decide(input)
 }
 
+// ReplayWithRegistry 将历史决策输入应用到指定目录，供发布前影响分析使用。
+func (router *Router) ReplayWithRegistry(input decision.Input, registry *ModelRegistry, configVersion string) (decision.ExecutionPlan, error) {
+	if registry == nil {
+		return decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
+	}
+	engine, ok := router.algorithms.Resolve(input.AlgorithmVersion)
+	if !ok {
+		return decision.ExecutionPlan{}, &decision.DecisionError{Code: "algorithm_version_unavailable"}
+	}
+	replayInput, err := router.replayInputWithRegistry(input, registry, configVersion)
+	if err != nil {
+		return decision.ExecutionPlan{}, err
+	}
+	return engine.Decide(replayInput)
+}
+
 // plan 将注册表和熔断器快照组装为确定性的 DecisionInput。
 func (router *Router) plan(request provider.ChatRequest, contract decision.Contract) (decision.ExecutionPlan, error) {
 	_, plan, err := router.planWithInput(request, contract)
@@ -323,6 +339,46 @@ func (router *Router) planWithRegistry(request provider.ChatRequest, contract de
 	}
 	plan, err := router.engine.Decide(input)
 	return input, plan, err
+}
+
+// replayInputWithRegistry 保留历史请求与运行快照，只替换配置候选目标。
+func (router *Router) replayInputWithRegistry(input decision.Input, registry *ModelRegistry, configVersion string) (decision.Input, error) {
+	models := registry.List()
+	if input.Request.Model != "auto" {
+		model, found := registry.Resolve(input.Request.Model)
+		if !found {
+			return decision.Input{}, &UnsupportedModelError{Model: input.Request.Model}
+		}
+		models = []Model{model}
+	} else if registry.IsCompatibility() {
+		return decision.Input{}, &UnsupportedModelError{Model: input.Request.Model}
+	}
+	candidates := make([]decision.Candidate, 0)
+	for _, model := range models {
+		for _, target := range model.Targets {
+			candidates = append(candidates, decision.Candidate{
+				ModelID:         model.ID,
+				Compatibility:   model.Compatibility,
+				Target:          target,
+				Enabled:         true,
+				SecurityAllowed: true,
+				Health:          historicalHealth(input.Candidates, model.ID, target),
+			})
+		}
+	}
+	input.ConfigVersion = strings.TrimSpace(configVersion)
+	input.Candidates = candidates
+	return input, nil
+}
+
+// historicalHealth 只沿用草稿中仍然存在的同一目标健康快照，避免影响分析读取当前熔断状态。
+func historicalHealth(candidates []decision.Candidate, modelID string, target catalog.Target) decision.HealthSnapshot {
+	for _, candidate := range candidates {
+		if candidate.ModelID == modelID && candidate.Target.ID == target.ID && candidate.Target.Provider == target.Provider && candidate.Target.UpstreamModel == target.UpstreamModel {
+			return candidate.Health
+		}
+	}
+	return decision.HealthSnapshot{State: "closed"}
 }
 
 // executePlan 交给只消费 ExecutionPlan 的 Gateway Executor。

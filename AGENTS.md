@@ -14,6 +14,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 决策哈希必须按算法版本解释；`decision.v2` 规范化无序集合但保留显式模型的目标优先级，修改 V1 语义前必须新增版本并保留旧版本 Replay。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动或配置版本发布时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - `POST /v1/limen/configs/{version}/dry-run` 使用租户隔离的指定草稿生成只读计划；不得切换当前 Router、访问 Provider 或改变熔断状态。
+- `POST /v1/limen/configs/{version}/replay` 使用租户隔离的历史 DecisionInput 对指定草稿做影响分析；不得访问 Provider、读取当前熔断状态或改变线上 Router，只返回原计划、草稿计划和安全差异。
 - `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
 - `internal/audit` 只保存控制面非敏感 actor_id、动作、资源摘要、请求哈希和时间；`GET /v1/limen/audit` 需要 `admin` Scope，审计故障不回滚已提交的业务变更，事件必须保持租户隔离。actor_id 只能是静态标识或 Key 公开前缀，不能是原始凭据。
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
@@ -93,6 +94,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
+- 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、已知成本结算和未知成本 `pending`。
 - Run HTTP 返回测试必须证明公共响应不泄露租户标识、幂等键、请求哈希和租约信息。

@@ -11,8 +11,10 @@ import (
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/configstore"
+	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/journal"
+	"github.com/huz/limen/internal/provider"
 )
 
 func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
@@ -80,6 +82,59 @@ func TestConfigDryRunUsesDraftWithoutChangingRouter(t *testing.T) {
 	}
 	if models := router.Models(); len(models) != 1 || models[0].ID != "old" {
 		t.Fatalf("preview changed active router: %+v", models)
+	}
+}
+
+func TestConfigReplayComparesHistoricalDecisionWithDraft(t *testing.T) {
+	initial, err := gateway.NewModelRegistry([]gateway.Model{{ID: "smart", Targets: []gateway.Target{{ID: "primary", Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gateway.NewRouter(nil, initial, gateway.Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 1, Cooldown: time.Second})
+	input, plan, err := router.Explain(provider.ChatRequest{Model: "smart"}, decision.Contract{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions := journal.NewMemoryStore()
+	if err := decisions.Save(nil, journal.Record{ID: "decision-1", TenantID: "tenant-a", Input: input, Plan: plan, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	configs := configstore.NewMemoryStore()
+	record, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"smart","targets":[{"id":"primary","provider":"anthropic","upstream_model":"claude-new"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeDecisions, auth.ScopeConfigsRead}),
+		router, nil, "tenant-a", decisions, configs, nil,
+	)
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+record.Version+"/replay", strings.NewReader(`{"decision_id":"decision-1"}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("X-Limen-Config-Version") != record.Version {
+		t.Fatalf("replay status=%d headers=%v body=%s", response.Code, response.Header(), body)
+	}
+	if strings.Contains(body, "gpt-old") || strings.Contains(body, "claude-new") || !strings.Contains(body, `"match":false`) || !strings.Contains(body, `"provider":"anthropic"`) {
+		t.Fatalf("unsafe or incomplete replay response: %s", body)
+	}
+	if models := router.Models(); len(models) != 1 || models[0].Targets[0].Provider != "openai" {
+		t.Fatalf("draft replay changed active router: %+v", models)
+	}
+}
+
+func TestConfigReplayRequiresConfigReadScope(t *testing.T) {
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeDecisions}),
+		gateway.NewRouter(nil, gateway.NewCompatibilityRegistry(), gateway.Policy{}), nil, "tenant-a", journal.NewMemoryStore(), configstore.NewMemoryStore(), nil,
+	)
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/draft/replay", strings.NewReader(`{"decision_id":"decision-1"}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "insufficient_scope") {
+		t.Fatalf("scope response = %d %s", response.Code, response.Body.String())
 	}
 }
 

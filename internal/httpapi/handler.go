@@ -242,6 +242,7 @@ func NewWithOptions(options HandlerOptions) http.Handler {
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/dry-run", handler.dryRunConfig)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/replay", handler.replayConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/approvals", handler.createApproval)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/approvals/{approval_id}", handler.getApproval)
@@ -290,6 +291,74 @@ func (h *Handler) dryRunConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.dryRunWithRegistry(w, r, registry, record.Version)
+}
+
+type configReplayRequest struct {
+	DecisionID string `json:"decision_id"`
+}
+
+// replayConfig 比较历史决策在指定草稿上的结果，不访问 Provider 或切换线上目录。
+func (h *Handler) replayConfig(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeDecisions, auth.ScopeConfigsRead) {
+		return
+	}
+	if h.configs == nil || h.decisions == nil || h.router == nil {
+		writeError(w, http.StatusServiceUnavailable, "config replay unavailable", "api_error", "config_preview_unavailable")
+		return
+	}
+	body, err := readRequestBody(w, r)
+	if err != nil {
+		return
+	}
+	var incoming configReplayRequest
+	if err := decodeStrictJSON(body, &incoming); err != nil || strings.TrimSpace(incoming.DecisionID) == "" {
+		writeError(w, http.StatusBadRequest, "decision_id is required", "invalid_request_error", "invalid_decision_id")
+		return
+	}
+	record, err := h.configs.Get(r.Context(), h.requestTenantID(r), r.PathValue("version"))
+	if err != nil {
+		writeConfigStoreError(w, err)
+		return
+	}
+	historical, err := h.decisions.Get(r.Context(), h.requestTenantID(r), incoming.DecisionID)
+	if err != nil {
+		writeDecisionLookupError(w, err)
+		return
+	}
+	registry, err := registryFromConfig(record.Models)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid config document", "invalid_request_error", "invalid_config")
+		return
+	}
+	draftPlan, err := h.router.ReplayWithRegistry(historical.Input, registry, record.Version)
+	if err != nil {
+		var unsupported *gateway.UnsupportedModelError
+		if errors.As(err, &unsupported) {
+			writeError(w, http.StatusBadRequest, "unsupported model", "invalid_request_error", "unsupported_model")
+			return
+		}
+		var decisionErr *decision.DecisionError
+		if errors.As(err, &decisionErr) {
+			status := http.StatusBadRequest
+			if decisionErr.Code == "no_eligible_target" {
+				status = http.StatusConflict
+			}
+			writeError(w, status, "unable to replay decision", "invalid_request_error", decisionErr.Code)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "unable to replay decision", "api_error", "decision_replay_error")
+		return
+	}
+	differences := comparePlans(historical.Plan, draftPlan)
+	w.Header().Set("X-Limen-Config-Version", record.Version)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decision_id":    historical.ID,
+		"config_version": record.Version,
+		"original_plan":  publicExecutionPlan(historical.Plan),
+		"draft_plan":     publicExecutionPlan(draftPlan),
+		"match":          len(differences) == 0,
+		"differences":    differences,
+	})
 }
 
 // dryRunWithRegistry 解析请求、记录决策快照并返回安全计划视图。
@@ -606,7 +675,7 @@ func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 
 // safePlanTargetID 返回计划目标的逻辑标识，不暴露真实上游模型名。
 func safePlanTargetID(target decision.PlanTarget) string {
-	return target.ModelID + ":" + publicTargetID(target.Target.ID)
+	return target.ModelID + ":" + target.Target.Provider + ":" + publicTargetID(target.Target.ID)
 }
 
 // publicTargetID 将内部目标标识转换为稳定 opaque 引用，避免配置命名泄露上游模型。

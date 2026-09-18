@@ -468,6 +468,7 @@ GET  /v1/limen/configs
 GET  /v1/limen/configs/{version}/diff/{base_version}
 POST /v1/limen/configs
 POST /v1/limen/configs/{version}/dry-run
+POST /v1/limen/configs/{version}/replay
 POST /v1/limen/configs/{version}/publish   # 需要 Idempotency-Key
 
 POST /v1/limen/credentials/{provider}
@@ -513,6 +514,7 @@ Run 和 Request 查询使用安全 DTO，不返回 `tenant_id`、幂等键、请
 | Explain、Replay | decisions:read |
 | Dry Run | inference 与 decisions:read |
 | 配置版本预演 | inference、decisions:read 与 configs:read |
+| 配置影响分析 | decisions:read 与 configs:read |
 | 读取配置 | configs:read |
 | 比较配置版本 | configs:read |
 | 创建和发布配置 | configs:write |
@@ -528,17 +530,19 @@ Explain、Dry Run 和配置版本预演返回标准化契约、配置/算法版�
 
 Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产生费用。配置版本预演使用指定租户草稿构造临时目录，返回该版本的 `config_version`，不切换当前 Router、不改变熔断状态；它用于配置发布前检查能力过滤、Fallback 顺序和计划哈希。
 
+配置影响分析 `POST /v1/limen/configs/{version}/replay` 接收 `decision_id`，保留历史 DecisionInput 的请求契约、Run 快照和算法版本，只替换候选目录并生成草稿计划。仍存在且映射未变化的目标沿用历史健康快照，新增或映射变化的目标按关闭状态处理；接口不读取当前熔断器、不访问 Provider、不切换 Router，只返回原计划、草稿计划和不含上游模型名的结构化差异。
+
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，差异路径只允许算法/配置版本、策略、目标逻辑 ID、候选原因和哈希等安全字段，不重新调用模型或复现运行时 Attempt。
 
-当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名；算法注册表支持显式 `retainUntil`，到期返回 `algorithm_version_unavailable`，不静默回退。配置版本控制面已提供创建、列表、结构化 diff、草稿预演和发布 API，公共摘要与 diff 路径中的目标引用使用稳定 opaque ID，不暴露默认派生的 `provider:upstream_model`；草稿预演不会切换当前 Router 或访问 Provider，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。控制面已提供租户隔离的安全审计摘要查询、API Key 创建/轮换/撤销生命周期和可选双人配置审批；审批接口只返回生命周期状态，不回显发布幂等键或请求哈希；PostgreSQL 审批校验、消费和配置发布在同一事务内完成。
+当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名；算法注册表支持显式 `retainUntil`，到期返回 `algorithm_version_unavailable`，不静默回退。配置版本控制面已提供创建、列表、结构化 diff、草稿预演、历史决策影响分析和发布 API，公共摘要与 diff 路径中的目标引用使用稳定 opaque ID，不暴露默认派生的 `provider:upstream_model`；草稿预演和影响分析都不会切换当前 Router 或访问 Provider，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。控制面已提供租户隔离的安全审计摘要查询、API Key 创建/轮换/撤销生命周期和可选双人配置审批；审批接口只返回生命周期状态，不回显发布幂等键或请求哈希；PostgreSQL 审批校验、消费和配置发布在同一事务内完成。
 
 管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
 
-稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_accounting_not_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、request_not_settleable、run_request_not_found、invalid_accounting_resolution、accounting_control_unavailable、idempotency_conflict、insufficient_scope、config_not_found、invalid_config、config_preview_unavailable、config_version_unavailable 和 algorithm_version_unavailable。
+稳定错误码包括 invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、no_eligible_target、run_not_active、run_soft_budget_exhausted、run_concurrency_exceeded、run_accounting_suspended、run_accounting_not_suspended、run_deadline_exceeded、request_in_progress、request_already_processed、request_not_settleable、run_request_not_found、invalid_accounting_resolution、invalid_decision_id、accounting_control_unavailable、idempotency_conflict、insufficient_scope、config_not_found、invalid_config、config_preview_unavailable、config_version_unavailable 和 algorithm_version_unavailable。
 
 | HTTP | 错误码 |
 | ---: | --- |
-| 400 | invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、invalid_accounting_resolution |
+| 400 | invalid_capability_contract、unsupported_field、strategy_conflict、capability_mismatch、invalid_accounting_resolution、invalid_decision_id |
 | 403 | insufficient_scope |
 | 408 | run_deadline_exceeded |
 | 404 | run_request_not_found |

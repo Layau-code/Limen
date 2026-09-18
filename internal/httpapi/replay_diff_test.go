@@ -46,3 +46,21 @@ func TestComparePlansReturnsSafeStructuredDifferences(t *testing.T) {
 		}
 	}
 }
+
+func TestComparePlansShowsProviderChangeWithoutUpstreamName(t *testing.T) {
+	original := decision.ExecutionPlan{
+		Targets:  []decision.PlanTarget{{ModelID: "model", Target: catalog.Target{ID: "primary", Provider: "openai", UpstreamModel: "gpt-secret"}}},
+		PlanHash: "sha256:original",
+	}
+	replay := original
+	replay.Targets = []decision.PlanTarget{{ModelID: "model", Target: catalog.Target{ID: "primary", Provider: "anthropic", UpstreamModel: "claude-secret"}}}
+	replay.PlanHash = "sha256:replay"
+	differences := comparePlans(original, replay)
+	encoded, err := json.Marshal(differences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"path":"targets[0]"`) || strings.Contains(string(encoded), "gpt-secret") || strings.Contains(string(encoded), "claude-secret") {
+		t.Fatalf("provider difference = %s", encoded)
+	}
+}
