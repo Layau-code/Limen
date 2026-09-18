@@ -278,6 +278,59 @@ func TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestPostgresIntegrationConcurrentAPIKeyRotation 验证并发轮换只产生一个新 Key 且明文只返回一次。
+func TestPostgresIntegrationConcurrentAPIKeyRotation(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-key-rotate-concurrent")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	manager := NewPostgresAPIKeyManager(appDB, "integration-hmac-secret")
+	old, _, err := manager.Create(ctx, tenantID, []auth.Scope{auth.ScopeInference}, nil, auth.APIKeyMutation{Key: "create-concurrent", Hash: "create-concurrent-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type rotationResult struct {
+		record    auth.APIKeyRecord
+		plaintext string
+		err       error
+	}
+	results := make(chan rotationResult, 20)
+	var wait sync.WaitGroup
+	for index := 0; index < 20; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, record, plaintext, err := manager.Rotate(ctx, tenantID, old.PublicPrefix, []auth.Scope{auth.ScopeInference}, nil, auth.APIKeyMutation{Key: "rotate-concurrent", Hash: "rotate-concurrent-hash"})
+			results <- rotationResult{record: record, plaintext: plaintext, err: err}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	var prefix string
+	plaintextCount := 0
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent rotation error: %v", result.err)
+		}
+		if prefix == "" {
+			prefix = result.record.PublicPrefix
+		}
+		if result.record.PublicPrefix != prefix || !result.record.Active {
+			t.Fatalf("concurrent rotation record=%+v prefix=%s", result.record, prefix)
+		}
+		if result.plaintext != "" {
+			plaintextCount++
+		}
+	}
+	if prefix == "" || plaintextCount != 1 {
+		t.Fatalf("rotation prefix=%q plaintext_count=%d", prefix, plaintextCount)
+	}
+	keys, err := manager.List(ctx, tenantID)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("rotated keys=%+v err=%v", keys, err)
+	}
+}
+
 // authTimePtr 返回 API Key 测试使用的可选过期时间副本。
 func authTimePtr(value time.Time) *time.Time {
 	return &value
