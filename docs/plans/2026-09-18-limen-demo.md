@@ -24,4 +24,4 @@
 make demo
 ```
 
-输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`draft_provider=anthropic`、`impact_detected=true` 和 `provider_calls=2`。
+输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`selection.rejected[0]=basic-model:quality_tier_too_low`、`draft_provider=anthropic`、`impact_detected=true` 和 `provider_calls=2`。

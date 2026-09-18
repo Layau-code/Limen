@@ -65,10 +65,11 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 		ImpactDetected bool   `json:"impact_detected"`
 		ProviderCalls  int    `json:"provider_calls"`
 		Selection      struct {
-			RequestedModel string `json:"requested_model"`
-			SelectedModel  string `json:"selected_model"`
-			DataClass      string `json:"data_class"`
-			MinimumQuality int    `json:"minimum_quality_tier"`
+			RequestedModel string   `json:"requested_model"`
+			SelectedModel  string   `json:"selected_model"`
+			DataClass      string   `json:"data_class"`
+			MinimumQuality int      `json:"minimum_quality_tier"`
+			Rejected       []string `json:"rejected"`
 		} `json:"selection"`
 	}
 	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
@@ -79,6 +80,9 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 	}
 	if result.Selection.RequestedModel != "auto" || result.Selection.SelectedModel != "smart-model" || result.Selection.DataClass != "internal" || result.Selection.MinimumQuality != 3 {
 		t.Fatalf("demo selection = %+v", result.Selection)
+	}
+	if len(result.Selection.Rejected) != 1 || result.Selection.Rejected[0] != "basic-model:quality_tier_too_low" {
+		t.Fatalf("demo rejected candidates = %v", result.Selection.Rejected)
 	}
 	if strings.Contains(stdout.String(), "gpt-") || strings.Contains(stdout.String(), "claude-") {
 		t.Fatalf("demo leaked upstream model: %s", stdout.String())

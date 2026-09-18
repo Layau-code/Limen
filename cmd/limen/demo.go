@@ -35,10 +35,11 @@ type demoResult struct {
 
 // demoSelection 是不暴露上游映射的能力契约选模摘要。
 type demoSelection struct {
-	RequestedModel string `json:"requested_model"`
-	SelectedModel  string `json:"selected_model"`
-	DataClass      string `json:"data_class"`
-	MinimumQuality int    `json:"minimum_quality_tier"`
+	RequestedModel string   `json:"requested_model"`
+	SelectedModel  string   `json:"selected_model"`
+	DataClass      string   `json:"data_class"`
+	MinimumQuality int      `json:"minimum_quality_tier"`
+	Rejected       []string `json:"rejected,omitempty"`
 }
 
 // runDemo 展示一次 Fallback 和配置草稿影响分析，不读取配置或访问外部网络。
@@ -103,11 +104,23 @@ func runDemo(stdout io.Writer) error {
 			SelectedModel:  originalPlan.Targets[0].ModelID,
 			DataClass:      contract.DataClass,
 			MinimumQuality: contract.MinimumQualityTier,
+			Rejected:       rejectedCandidates(originalPlan),
 		},
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(output)
+}
+
+// rejectedCandidates 返回逻辑模型及稳定原因码，不暴露目标内部映射。
+func rejectedCandidates(plan decision.ExecutionPlan) []string {
+	rejected := make([]string, 0)
+	for _, candidate := range plan.Candidates {
+		if !candidate.Accepted {
+			rejected = append(rejected, candidate.ModelID+":"+candidate.Reason)
+		}
+	}
+	return rejected
 }
 
 var _ provider.Provider = demoProvider(nil)
