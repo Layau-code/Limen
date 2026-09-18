@@ -138,7 +138,7 @@ make build
 
 还可以调用 `POST /v1/limen/configs/{version}/replay`，请求体为 `{"decision_id":"decision_..."}`，把历史决策快照重放到指定草稿，返回原计划、草稿计划和安全结构化差异。它不访问 Provider、不改变线上 Router 或熔断状态，适合回答“这次配置发布会影响哪些既有决策”；该接口只需要 `decisions:read` 和 `configs:read`，响应不会返回真实上游模型名。
 
-决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和结构化差异（策略、目标顺序、候选原因和哈希）；差异中不包含真实上游模型名。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；对外快照只包含逻辑模型、能力契约、opaque 目标引用和哈希，不保存 Prompt 或 Response。内部快照仍保留协议转换所需字段，仅供租户隔离的 Replay 使用。
+决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和结构化差异（策略、目标顺序、候选原因、目标映射变化和哈希）；目标映射变化只返回稳定差异码，不包含真实上游模型名或 endpoint。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；对外快照只包含逻辑模型、能力契约、opaque 目标引用和哈希，不保存 Prompt 或 Response。内部快照仍保留协议转换所需字段，仅供租户隔离的 Replay 使用。
 
 `internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。当前新请求使用 `decision.v2`：无序能力集合会排序去重，显式模型的 Fallback 目标优先级保持不变；`decision.v1` 仍注册用于历史 Replay。算法注册表支持为旧版本设置 `retainUntil`，超过保留截止时间后返回 `algorithm_version_unavailable`，不会静默使用新算法。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
 

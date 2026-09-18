@@ -651,6 +651,9 @@ func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 			replayValue = safePlanTargetID(replay.Targets[index])
 		}
 		appendChange(fmt.Sprintf("targets[%d]", index), originalValue, replayValue)
+		if index < len(original.Targets) && index < len(replay.Targets) && targetMappingChanged(original.Targets[index], replay.Targets[index]) {
+			differences = append(differences, planDifference{Path: fmt.Sprintf("targets[%d]/mapping", index), Kind: "changed"})
+		}
 	}
 	maxCandidates := len(original.Candidates)
 	if len(replay.Candidates) > maxCandidates {
@@ -672,6 +675,13 @@ func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 	}
 	appendChange("plan_hash", original.PlanHash, replay.PlanHash)
 	return differences
+}
+
+// targetMappingChanged 判断目标的 Provider、上游模型或 endpoint 绑定是否变化，不返回其原始值。
+func targetMappingChanged(original, replay decision.PlanTarget) bool {
+	return original.Target.Provider != replay.Target.Provider ||
+		original.Target.UpstreamModel != replay.Target.UpstreamModel ||
+		original.Target.EndpointID != replay.Target.EndpointID
 }
 
 // safePlanTargetID 返回计划目标的逻辑标识，不暴露真实上游模型名。
