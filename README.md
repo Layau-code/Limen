@@ -30,6 +30,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统；即使尚无请求，也会输出稳定的 Prometheus `HELP`/`TYPE` 元数据。
 - `limen demo` / `make demo` 提供完全离线的确定性演示，展示一次 Fallback 和配置草稿影响分析，不读取密钥或访问网络。
 - `limen explain` 可读取模型目录和 Chat 请求快照，离线输出候选目标、淘汰原因、策略和 `plan_hash`；输出不包含 Prompt 或真实上游模型名，适合演示和发布前排障。
+- `limen validate` 可在不读取密钥、不访问网络的情况下预检模型目录，输出稳定 `config_version` 和 Provider/目标数量，适合接入发布流水线。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
@@ -134,6 +135,14 @@ make build
 
 该命令复用 Chat 请求和 Decision Engine 的严格规则，使用固定评估时间生成稳定的 `input_hash`/`plan_hash`。即使没有可用目标，也会以 JSON 返回每个候选的淘汰原因；命令不会访问网络或输出请求正文。
 
+发布模型目录前可以先执行离线预检：
+
+```bash
+./bin/limen validate --models /absolute/path/to/models.json
+```
+
+预检复用严格模型配置解析，输出配置版本哈希、模型数、目标数和 Provider 数量；它不会加载 `LIMEN_API_KEY`、Provider Key，也不会发起网络请求。
+
 配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider，并复用 endpoint 绑定校验；因此可以在审批或发布前验证模型能力、Fallback 顺序、计划哈希和出站安全边界。错绑 endpoint 返回 `endpoint_binding_mismatch`。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 
 还可以调用 `POST /v1/limen/configs/{version}/replay`，请求体为 `{"decision_id":"decision_..."}`，把历史决策快照重放到指定草稿，返回原计划、草稿计划和安全结构化差异。它不访问 Provider、不改变线上 Router 或熔断状态，适合回答“这次配置发布会影响哪些既有决策”；该接口只需要 `decisions:read` 和 `configs:read`，响应不会返回真实上游模型名。
@@ -197,6 +206,7 @@ make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
 make smoke   # 真实二进制启动与 API 冒烟
 make bench   # 100 候选决策与 Router 主路径/Fallback 基准
 make demo    # 离线演示 Fallback 与草稿影响分析
+make validate # 离线预检示例模型目录
 ```
 
 `make demo` 输出一行 JSON，包含 `openai:503>anthropic:200` 路由、实际 Attempt 数、草稿 Provider 和影响分析结果；演示不需要数据库、模型密钥或外部网络。

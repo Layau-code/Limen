@@ -51,7 +51,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 配置审批 HTTP 响应必须经过安全 DTO 转换：不返回发布幂等键、请求哈希或租户字段，只返回审批生命周期和非敏感执行者标识。
 - 访问日志的 Path 只能使用固定路由类别，动态或未知路径必须归并，不能把用户输入原样写入日志。
 - 错误响应只返回稳定原因和错误码；未知模型、租户标识或其他用户输入不能直接拼入错误消息。
-- 版本命令、健康检查命令、离线 `explain` 决策解释命令、Docker、冒烟脚本、基准测试和 CI。
+- 版本命令、健康检查命令、离线 `validate` 配置预检、`explain` 决策解释命令、Docker、冒烟脚本、基准测试和 CI。
 - `limen demo` 和 `make demo` 必须保持完全离线、确定性，不读取密钥、不访问网络、不输出 Prompt 或真实上游模型名。
 
 明确不包含：每日额度和超额拦截、模型文件热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、Secret Manager 接入、遥测可视化后端和大型管理后台。
@@ -146,6 +146,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Fallback、超时、取消、熔断或 Provider 错误分类相关改动还必须运行 `make reliability`，并确认不访问真实 Provider 网络。
 - 修改演示场景时还必须运行 `make demo`，并保持输出字段和安全边界稳定。
 - 修改离线 `explain` 命令时必须验证相同模型目录和请求快照得到相同 `plan_hash`，且输出不包含 Prompt、密钥或真实上游模型名。
+- 修改离线 `validate` 命令时必须证明不读取密钥、不访问网络，成功输出只包含 `config_version` 和数量摘要，不泄露 `upstream_model`。
 
 ## 文档同步
 

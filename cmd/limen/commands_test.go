@@ -73,6 +73,54 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 	}
 }
 
+// TestRunCommandValidateModelsWithoutSecrets 验证配置预检不读取密钥或访问 Provider。
+func TestRunCommandValidateModelsWithoutSecrets(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	directory := t.TempDir()
+	modelsPath := filepath.Join(directory, "models.json")
+	if err := os.WriteFile(modelsPath, []byte(`{
+  "models": [{
+    "id": "smart-model",
+    "targets": [{"provider":"openai","upstream_model":"gpt-secret-model"}]
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code, handled := runCommand([]string{"validate", "--models", modelsPath}, &stdout, &stderr); !handled || code != 0 {
+		t.Fatalf("code=%d handled=%t stderr=%q", code, handled, stderr.String())
+	}
+	var result struct {
+		ConfigVersion string         `json:"config_version"`
+		Models        int            `json:"models"`
+		Targets       int            `json:"targets"`
+		Providers     map[string]int `json:"providers"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatalf("validate output = %q: %v", stdout.String(), err)
+	}
+	if result.ConfigVersion == "" || result.Models != 1 || result.Targets != 1 || result.Providers["openai"] != 1 {
+		t.Fatalf("validate result = %+v", result)
+	}
+	if strings.Contains(stdout.String(), "gpt-secret-model") || stderr.Len() != 0 {
+		t.Fatalf("validate leaked data or wrote stderr: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// TestRunCommandValidateRequiresModelsFile 返回清晰的命令参数错误。
+func TestRunCommandValidateRequiresModelsFile(t *testing.T) {
+	var stdout, stderr strings.Builder
+	if code, handled := runCommand([]string{"validate"}, &stdout, &stderr); !handled || code != 1 {
+		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "validate 需要 --models") {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+}
+
 func TestRunCommandExplainIsDeterministicAndHidesPrompt(t *testing.T) {
 	directory := t.TempDir()
 	modelsPath := filepath.Join(directory, "models.json")

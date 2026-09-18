@@ -1,4 +1,4 @@
-.PHONY: fmt vet test generate-check check compatibility reliability integration build image smoke bench demo run
+.PHONY: fmt vet test generate-check check compatibility reliability integration build image smoke bench demo validate run
 
 fmt:
 	gofmt -w cmd internal
@@ -46,6 +46,9 @@ bench:
 
 demo:
 	go run ./cmd/limen demo
+
+validate:
+	go run ./cmd/limen validate --models configs/models.example.json
 
 run:
 	go run ./cmd/limen

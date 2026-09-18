@@ -645,6 +645,7 @@ make reliability
 make integration
 make build
 bin/limen explain --models models.json --request chat-request.json
+bin/limen validate --models models.json
 make smoke
 make bench
 git diff --check

@@ -22,6 +22,8 @@ jobs:
         run: make integration
       - name: 构建二进制
         run: make build
+      - name: 预检示例模型目录
+        run: make validate
       - name: 冒烟测试
         run: make smoke
       - name: 运行决策与路由基准
