@@ -117,6 +117,8 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 生产 Provider Client 使用 HTTPS allowlist，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、链路本地、组播、未指定和云元数据地址。Provider Key 只绑定到对应适配器，不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
 
+Endpoint allowlist 与 endpoint ID 都拒绝 URL 用户信息、查询参数和片段；安全 Client 的测试会在设置环境代理时确认仍直连 allowlist 目标，并单独验证云元数据地址在 Dial 前被拦截。
+
 ## 明确不包含
 
 本版本不实现每日额度和超额拦截、模型文件热加载、远程配置、同目标重试、动态权重、随机负载均衡、成本路由、语义缓存、Prompt 分类、分布式熔断、Secret Manager 接入、遥测可视化后端或大型管理后台；PostgreSQL API Key Store、配置版本存储、Provider 凭据轮换/撤销 API、基础 Prometheus 文本指标和 OTLP Trace 已实现。

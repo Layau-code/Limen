@@ -60,7 +60,7 @@ func NewSecureHTTPClient(options HTTPClientOptions) *http.Client {
 // EndpointForBaseURL 将 Provider 根地址转换为 allowlist 使用的 host:port。
 func EndpointForBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", errors.New("invalid provider base URL")
 	}
 	return normalizeEndpoint(parsed.Scheme + "://" + parsed.Host), nil
