@@ -104,7 +104,7 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model":"smart-model","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-`GET /v1/models` 与聊天接口共用 Bearer Key 鉴权。配置模式的 `owned_by` 为 `limen`；未配置模型文件时进入兼容模式，支持 `gpt-*`、`o1-*`、`o3-*` 和 `claude-*`，并要求两个 Provider Key。
+`GET /v1/models` 与聊天接口共用 Bearer Key 鉴权。配置模式的 `owned_by` 为 `limen`；未配置模型文件时进入兼容模式，支持 `gpt-*`、`o1-*`、`o3-*` 和 `claude-*`，并要求两个 Provider Key。完整字段边界见 [`docs/openai-compatibility.md`](docs/openai-compatibility.md)。
 
 配置版本可以通过控制面创建和发布。`POST /v1/limen/configs` 接收与模型文件相同的严格 JSON，返回由规范内容生成的 `version`；`POST /v1/limen/configs/{version}/publish` 需要 `configs:write` 和 `Idempotency-Key`，同键重试不会重复切换版本，不同版本复用同键会返回 `idempotency_conflict`。发布后当前进程立即使用新目录和路由参数，旧版本保留为 `superseded`。配置发布通过 PostgreSQL `NOTIFY` 加速传播到其他实例，实例仍每 5 秒读取已发布版本作为丢失通知时的兜底；通知只包含租户和版本哈希，不包含配置正文。`GET /v1/limen/configs` 只返回模型和目标摘要，不暴露真实上游模型名；`GET /v1/limen/configs/{version}/diff/{base_version}` 返回只含路径和变化类型的结构化差异。配置 API 未连接 PostgreSQL 时使用内存存储，重启会丢失版本；生产环境应配置 `LIMEN_DATABASE_URL`。
 
