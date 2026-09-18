@@ -178,6 +178,43 @@ func TestSettlementRecoveryProcessesKnownCostOnce(t *testing.T) {
 	}
 }
 
+func TestSettlementRecoveryProcessesKnownCostAfterRequestLeaseExpires(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateRun(testRun()); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := HashRequest("tenant-1", "/v1/chat/completions", "expired-known-cost", []byte(`{"model":"auto"}`), nil)
+	request, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "expired-known-cost", RequestHash: hash}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireRequestLease("tenant-1", request.ID, "worker-a", time.Unix(100, 0), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement("tenant-1", request.ID, time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(42)
+	if err := store.QueueSettlement(context.Background(), "tenant-1", request.ID, &cost, time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if recovered := store.RecoverExpiredRequests("tenant-1", time.Unix(102, 0), 10); len(recovered) != 1 {
+		t.Fatalf("recovered=%+v", recovered)
+	}
+	processed, err := ProcessSettlementJobs(context.Background(), NewMemoryService(store), "tenant-1", "worker-b", time.Unix(102, 0), 10)
+	if err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	settled, ok := store.GetRequest("tenant-1", request.ID)
+	if !ok || settled.State != RequestSettled || store.LedgerCount() != 1 {
+		t.Fatalf("request=%+v found=%v ledger=%d", settled, ok, store.LedgerCount())
+	}
+	runItem, ok := store.GetRun("tenant-1", "run-1")
+	if !ok || runItem.State != StateActive || runItem.InFlight != 0 || runItem.SettledCostNanoUSD != cost {
+		t.Fatalf("run=%+v found=%v", runItem, ok)
+	}
+}
+
 func TestSettlementRecoveryMarksUnknownCostSafely(t *testing.T) {
 	store := NewMemoryStore()
 	if err := store.CreateRun(testRun()); err != nil {
@@ -201,5 +238,45 @@ func TestSettlementRecoveryMarksUnknownCostSafely(t *testing.T) {
 	runItem, _ := store.GetRun("tenant-1", "run-1")
 	if runItem.State != StateSuspendedAccounting || runItem.InFlight != 0 || store.LedgerCount() != 0 {
 		t.Fatalf("run=%+v ledger=%d", runItem, store.LedgerCount())
+	}
+}
+
+func TestSettlementRecoveryDoesNotReleaseOtherInFlightRequests(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateRun(testRun()); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(100, 0)
+	firstHash, _ := HashRequest("tenant-1", "/v1/chat/completions", "expired-unknown", []byte(`{"model":"auto"}`), nil)
+	first, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "expired-unknown", RequestHash: firstHash}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireRequestLease("tenant-1", first.ID, "worker-a", base, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	secondHash, _ := HashRequest("tenant-1", "/v1/chat/completions", "still-running", []byte(`{"model":"auto"}`), nil)
+	second, err := store.AdmitRequest("tenant-1", "run-1", Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "still-running", RequestHash: secondHash}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireRequestLease("tenant-1", second.ID, "worker-b", base, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement("tenant-1", first.ID, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueSettlement(context.Background(), "tenant-1", first.ID, nil, base); err != nil {
+		t.Fatal(err)
+	}
+	if recovered := store.RecoverExpiredRequests("tenant-1", time.Unix(102, 0), 10); len(recovered) != 1 {
+		t.Fatalf("recovered=%+v", recovered)
+	}
+	if processed, err := ProcessSettlementJobs(context.Background(), NewMemoryService(store), "tenant-1", "worker-c", time.Unix(102, 0), 10); err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	runItem, ok := store.GetRun("tenant-1", "run-1")
+	if !ok || runItem.State != StateSuspendedAccounting || runItem.InFlight != 1 {
+		t.Fatalf("run=%+v found=%v", runItem, ok)
 	}
 }

@@ -32,7 +32,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 模型目标可选声明 `endpoint_id`，必须匹配进程配置的 Provider endpoint ID；Router 发布前和 Provider 出站前都要拒绝错绑，熔断键也必须包含 endpoint 绑定。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端传入地址或选择 endpoint。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
-- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须保留原始成本快照，写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复；已知费用不得在延迟清理中降级为未知。没有创建任何 Provider Attempt 的请求必须按零成本结算，不能误进入 `suspended_accounting`。
+- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须保留原始成本快照，写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复；已知费用不得在延迟清理中降级为未知，且请求已被租约恢复为 `abandoned` 后，处理已知费用不能再次减少 `in_flight`，必须恢复 Run 的可准入状态。没有创建任何 Provider Attempt 的请求必须按零成本结算，不能误进入 `suspended_accounting`。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；PostgreSQL 用 `LISTEN/NOTIFY` 加速广播，执行中的 Chat 仍通过事件轮询兜底，不能只修改当前进程的内存映射。
 - 未知费用会暂停 Run；管理员可通过带 `admin` Scope 和幂等键的会计处置接口补记金额或明确接受未知费用。处置必须是事务化、可重复执行且不把未知值写成零。

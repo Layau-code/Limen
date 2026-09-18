@@ -107,6 +107,29 @@ func (run *Run) Settle(costNanoUSD *int64) error {
 	return nil
 }
 
+// SettleRecovered 记入租约恢复后已确认的费用，不重复释放并发名额。
+func (run *Run) SettleRecovered(costNanoUSD *int64, now time.Time) error {
+	if costNanoUSD == nil || *costNanoUSD < 0 || *costNanoUSD > math.MaxInt64-run.SettledCostNanoUSD {
+		return ErrRequestNotSettleable
+	}
+	run.SettledCostNanoUSD += *costNanoUSD
+	switch run.State {
+	case StateSuspendedAccounting:
+		return run.ResumeAccounting(now)
+	case StateCompleting:
+		if run.InFlight == 0 {
+			run.State = StateCompleted
+		}
+	case StateActive:
+		return nil
+	default:
+		if !isTerminal(run.State) {
+			return ErrInvalidRunTransition
+		}
+	}
+	return nil
+}
+
 // ResolveAccounting 完成未知费用处置，并在非终态时按固定优先级恢复 Run。
 func (run *Run) ResolveAccounting(resolution AccountingResolution, now time.Time) error {
 	if err := resolution.Validate(); err != nil {

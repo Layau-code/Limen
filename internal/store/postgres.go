@@ -564,6 +564,16 @@ func (store *PostgresStore) BeginSettlement(ctx context.Context, tenantID, reque
 		return run.Request{}, err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
+		var state run.RequestState
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM run_requests WHERE tenant_id=$1 AND id=$2`, tenantID, requestID).Scan(&state); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return run.Request{}, ErrNotFound
+			}
+			return run.Request{}, err
+		}
+		if state == run.RequestSettled || state == run.RequestFailed || state == run.RequestCancelled || state == run.RequestAbandoned {
+			return run.Request{}, run.ErrRequestAlreadyProcessed
+		}
 		return run.Request{}, run.ErrRequestNotSettleable
 	}
 	request, err := getRequestTx(ctx, tx, tenantID, requestID)
@@ -599,12 +609,12 @@ func (store *PostgresStore) SettleRequest(ctx context.Context, tenantID, request
 	if request.State == run.RequestSettled {
 		return request, nil
 	}
-	if request.State != run.RequestSettlementPending {
+	if request.State != run.RequestSettlementPending && request.State != run.RequestAbandoned {
 		return request, run.ErrRequestNotSettleable
 	}
 	if costNanoUSD == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE run_requests SET settlement_status='pending', updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, now)
-		if err == nil {
+		if err == nil && request.State != run.RequestAbandoned {
 			_, err = tx.ExecContext(ctx, `UPDATE runs SET state=CASE WHEN state IN ('completed','cancelled','deadline_exceeded','soft_budget_exhausted') THEN state ELSE 'suspended_accounting' END, in_flight=GREATEST(in_flight-1,0), updated_at=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, now)
 		}
 		if err != nil {
@@ -619,7 +629,27 @@ func (store *PostgresStore) SettleRequest(ctx context.Context, tenantID, request
 	if err := tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (tenant_id,id,request_id,cost_nano_usd,created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,request_id) DO NOTHING RETURNING true`, tenantID, "ledger-"+requestID, requestID, *costNanoUSD, now).Scan(&inserted); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return request, err
 	}
-	if inserted {
+	if request.State == run.RequestAbandoned {
+		item, runErr := getRunForUpdateTx(ctx, tx, tenantID, request.RunID)
+		if runErr != nil {
+			return request, runErr
+		}
+		if inserted {
+			if runErr := item.SettleRecovered(costNanoUSD, now); runErr != nil {
+				return request, runErr
+			}
+		}
+		var unresolved bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM run_requests WHERE tenant_id=$1 AND run_id=$2 AND id<>$3 AND settlement_status='pending' AND state IN ('settlement_pending','abandoned'))`, tenantID, request.RunID, requestID).Scan(&unresolved); err != nil {
+			return request, err
+		}
+		if unresolved && !isTerminalRunState(item.State) {
+			item.State = run.StateSuspendedAccounting
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE runs SET state=$3, settled_cost_nano_usd=$4, in_flight=$5, updated_at=$6 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, item.State, item.SettledCostNanoUSD, item.InFlight, now); err != nil {
+			return request, err
+		}
+	} else if inserted {
 		if _, err = tx.ExecContext(ctx, `UPDATE runs SET settled_cost_nano_usd=settled_cost_nano_usd+$3, in_flight=GREATEST(in_flight-1,0), updated_at=$4 WHERE tenant_id=$1 AND id=$2`, tenantID, request.RunID, *costNanoUSD, now); err != nil {
 			return request, err
 		}
@@ -893,6 +923,16 @@ func findAccountingOperationTx(ctx context.Context, tx *sql.Tx, tenantID, endpoi
 func getRunTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run, error) {
 	var item run.Run
 	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,state,soft_budget_nano_usd,settled_cost_nano_usd,deadline,max_parallelism,in_flight,strategy,config_version,complete_requested,created_at,updated_at FROM runs WHERE tenant_id=$1 AND id=$2`, tenantID, runID).Scan(&item.ID, &item.TenantID, &item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight, &item.Strategy, &item.ConfigVersion, &item.CompleteRequested, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return run.Run{}, run.ErrResourceNotFound
+	}
+	return item, err
+}
+
+// getRunForUpdateTx 在结算事务中锁定 Run，避免恢复与准入并发改写状态。
+func getRunForUpdateTx(ctx context.Context, tx *sql.Tx, tenantID, runID string) (run.Run, error) {
+	var item run.Run
+	err := tx.QueryRowContext(ctx, `SELECT id,tenant_id,state,soft_budget_nano_usd,settled_cost_nano_usd,deadline,max_parallelism,in_flight,strategy,config_version,complete_requested,created_at,updated_at FROM runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, runID).Scan(&item.ID, &item.TenantID, &item.State, &item.SoftBudgetNanoUSD, &item.SettledCostNanoUSD, &item.Deadline, &item.MaxParallelism, &item.InFlight, &item.Strategy, &item.ConfigVersion, &item.CompleteRequested, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run.Run{}, run.ErrResourceNotFound
 	}

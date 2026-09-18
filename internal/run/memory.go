@@ -309,7 +309,7 @@ func (store *MemoryStore) SettleRequest(tenantID, requestID string, costNanoUSD 
 	if request.State == RequestSettled {
 		return request, nil
 	}
-	if request.State != RequestSettlementPending {
+	if request.State != RequestSettlementPending && request.State != RequestAbandoned {
 		return request, ErrRequestNotSettleable
 	}
 	runKey := resourceKey(tenantID, request.RunID)
@@ -321,15 +321,27 @@ func (store *MemoryStore) SettleRequest(tenantID, requestID string, costNanoUSD 
 		request.SettlementStatus = "pending"
 		request.UpdatedAt = now
 		store.requests[requestKey] = request
+		if request.State == RequestAbandoned {
+			store.runs[runKey] = run
+			return request, ErrAccountingSuspended
+		}
 		_ = run.Settle(nil)
 		store.runs[runKey] = run
 		return request, ErrAccountingSuspended
 	}
 	if _, recorded := store.ledger[requestKey]; !recorded {
-		if err := run.Settle(costNanoUSD); err != nil {
+		if request.State == RequestAbandoned {
+			if err := run.SettleRecovered(costNanoUSD, now); err != nil {
+				return request, err
+			}
+		} else if err := run.Settle(costNanoUSD); err != nil {
 			return request, err
 		}
 		store.ledger[requestKey] = *costNanoUSD
+		store.runs[runKey] = run
+	}
+	if request.State == RequestAbandoned && !isTerminal(run.State) && store.hasPendingAccountingLocked(tenantID, request.RunID, request.ID) {
+		run.State = StateSuspendedAccounting
 		store.runs[runKey] = run
 	}
 	request.State = RequestSettled

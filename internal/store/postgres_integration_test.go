@@ -785,6 +785,117 @@ func TestPostgresIntegrationLeaseRecoveryCompetition(t *testing.T) {
 	}
 }
 
+// TestPostgresIntegrationKnownSettlementSurvivesLeaseRecovery 验证已知费用在租约恢复后仍能结算并恢复 Run。
+func TestPostgresIntegrationKnownSettlementSurvivesLeaseRecovery(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-known-recovery")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	first := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-known-recovery"), 1)
+	if err := first.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Minute)
+	request, err := first.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request:    run.Request{ID: integrationID("request-known-recovery"), Endpoint: "/v1/chat/completions", IdempotencyKey: "known-recovery-key", RequestHash: "known-recovery-hash"},
+		Now:        base,
+		LeaseOwner: "instance-a",
+		LeaseTTL:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.BeginSettlement(ctx, tenantID, request.ID, base); err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(42)
+	if err := first.QueueSettlement(ctx, tenantID, request.ID, &cost, base); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, err := first.RecoverExpiredRequests(ctx, tenantID, time.Now().UTC(), 10); err != nil || len(recovered) != 1 {
+		t.Fatalf("recovered=%+v err=%v", recovered, err)
+	}
+	secondDB, err := OpenPostgres(appURL, 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+	second := NewPostgresStore(secondDB)
+	processed, err := run.ProcessSettlementJobs(ctx, second, tenantID, "instance-b", time.Now().UTC(), 10)
+	if err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	settled, err := first.GetRequest(ctx, tenantID, request.ID)
+	if err != nil || settled.State != run.RequestSettled || !settled.LedgerRecorded {
+		t.Fatalf("request=%+v err=%v", settled, err)
+	}
+	storedRun, err := first.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.State != run.StateActive || storedRun.InFlight != 0 || storedRun.SettledCostNanoUSD != cost {
+		t.Fatalf("run=%+v", storedRun)
+	}
+}
+
+// TestPostgresIntegrationUnknownSettlementKeepsOtherInFlightRequests 验证未知结算不会重复释放其他请求的并发名额。
+func TestPostgresIntegrationUnknownSettlementKeepsOtherInFlightRequests(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-unknown-recovery")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	first := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-unknown-recovery"), 2)
+	if err := first.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Minute)
+	expired, err := first.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request:    run.Request{ID: integrationID("request-expired-unknown"), Endpoint: "/v1/chat/completions", IdempotencyKey: "expired-unknown-key", RequestHash: "expired-unknown-hash"},
+		Now:        base,
+		LeaseOwner: "instance-a",
+		LeaseTTL:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.BeginSettlement(ctx, tenantID, expired.ID, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.QueueSettlement(ctx, tenantID, expired.ID, nil, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request:    run.Request{ID: integrationID("request-still-running"), Endpoint: "/v1/chat/completions", IdempotencyKey: "still-running-key", RequestHash: "still-running-hash"},
+		Now:        base,
+		LeaseOwner: "instance-b",
+		LeaseTTL:   time.Hour,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, err := first.RecoverExpiredRequests(ctx, tenantID, time.Now().UTC(), 10); err != nil || len(recovered) != 1 {
+		t.Fatalf("recovered=%+v err=%v", recovered, err)
+	}
+	secondDB, err := OpenPostgres(appURL, 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+	second := NewPostgresStore(secondDB)
+	processed, err := run.ProcessSettlementJobs(ctx, second, tenantID, "instance-c", time.Now().UTC(), 10)
+	if err != nil || processed != 1 {
+		t.Fatalf("processed=%d err=%v", processed, err)
+	}
+	storedRun, err := first.GetRun(ctx, tenantID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.State != run.StateSuspendedAccounting || storedRun.InFlight != 1 {
+		t.Fatalf("run=%+v", storedRun)
+	}
+}
+
 // TestPostgresIntegrationCrashRecoveryAbandonsAttempt 验证崩溃实例遗留的调用证据会进入明确终态。
 func TestPostgresIntegrationCrashRecoveryAbandonsAttempt(t *testing.T) {
 	adminDB, appDB, appURL := postgresIntegrationDatabases(t)

@@ -430,7 +430,7 @@ DecisionInput 和 ExecutionPlan 持久化后，每次真实网络调用都先插
 
 - 事务在期限内成功：Trailer 和查询 API 返回 complete、partial 或 unavailable。
 - 数据库暂时失败：Trailer 返回 pending，HTTP 结束；当前实现先在进程内按 0、100、500 毫秒退避重试，并始终保留同一份已知成本快照，仍失败时写入 `settlement_jobs`，由持久化后台任务继续处理。
-- 重试仍失败或实例退出：数据库中的 executing/settlement_pending 租约过期，由其他实例抢占恢复。
+- 重试仍失败或实例退出：数据库中的 executing/settlement_pending 租约过期，由其他实例抢占恢复；如果持久化任务已经携带确定费用，恢复结算不得再次减少 `in_flight`，而应恢复 Run 的预算、截止时间和完成标记状态。
 - Usage、价格或已经创建 Attempt 的 Provider 对账仍不能确定：Request 变为 abandoned，Run 变为 suspended_accounting；如果没有创建任何 Attempt，则按已知零成本结算，不暂停 Run。
 
 执行实例每十秒续租，租约三十秒过期。数据库恢复后，待结算请求必须在三十秒内被本地重试或租约扫描重新处理。当前实现已具备租约扫描、短退避重试和持久化后台结算任务；真实 PostgreSQL 测试已强制终止持有租约与 `Attempt started` 的独立进程，并验证数据库暂停期间结算有界失败、恢复后只记账一次。生产事务连接池的 socket 每次读写最多等待 5 秒，避免网络黑洞阻塞恢复循环；`LISTEN/NOTIFY` 继续使用可自动重连的专用长连接。租约恢复、后台结算和幂等状态转换必须与 Run 同在阶段 B 交付，不能后置。
