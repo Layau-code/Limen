@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 新增项目定位与差异化证据文档，明确常规网关能力、Limen 的 Run 治理/决策重放重点以及不宣称的范围。
 - 受治理 Chat 的已处理幂等重试现在返回原 Request ID、Decision ID 和结算状态；决策标识在 Provider 调用前持久化绑定，避免重试丢失审计关联。
 - 新增离线 `limen diff`，在发布审批前比较两个模型目录的安全结构影响；输出配置版本、变化类型和 opaque 目标引用，不访问数据库或 Provider。
 - `limen diff` 新增 `--fail-on` 发布风险门禁，可按稳定变化类别阻止 Provider、endpoint、策略或路由变化，并保留安全 JSON 输出。

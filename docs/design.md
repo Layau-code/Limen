@@ -1,5 +1,7 @@
 # Limen 可靠性网关设计
 
+项目对外定位和差异化证据见 [`docs/positioning.md`](positioning.md)。本文只描述实现架构和关键约束。
+
 ## 目标
 
 Limen 面向 Agent 提供统一的 OpenAI 兼容入口。客户端使用稳定的逻辑模型名，Limen 在启动时或配置版本发布时加载只读注册表，选择 Provider 和真实模型，并在明确的瞬时故障下安全切换备用目标。

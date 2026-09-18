@@ -6,6 +6,8 @@ Limen（拉丁语：门槛、入口）是一个面向 Agent 的 Go AI Gateway。
 Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → Provider → 普通响应 / SSE
 ```
 
+项目定位、对标边界和可验证证据见 [`docs/positioning.md`](docs/positioning.md)。
+
 ## 项目亮点
 
 - 逻辑模型名与真实上游模型解耦，配置版本不可修改；启动文件用于引导，数据库发布版本可在运行中原子切换。
