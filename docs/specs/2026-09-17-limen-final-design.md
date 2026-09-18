@@ -510,6 +510,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | 比较配置版本 | configs:read |
 | 创建和发布配置 | configs:write |
 | 轮换和撤销 Provider 凭据 | admin |
+| 查询控制面审计摘要 | admin |
 
 Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
 
@@ -521,7 +522,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，差异路径只允许算法/配置版本、策略、目标逻辑 ID、候选原因和哈希等安全字段，不重新调用模型或复现运行时 Attempt。
 
-当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。旧算法十二个月保留窗口和审批审计仍待补齐。
+当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名；算法注册表支持显式 `retainUntil`，到期返回 `algorithm_version_unavailable`，不静默回退。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。控制面已提供租户隔离的安全审计摘要查询；审批流仍属于后续生产化能力。
 
 管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
 
@@ -635,7 +636,7 @@ git diff --check
 
 ### 阶段 A：可解释决策核心
 
-先把现有 Router 拆成 Decision Engine 和 Gateway Executor；增加稳定 target_id、只包含 text/streaming 的能力目录、最小能力契约、model=auto、balanced/economy 排序、ExecutionPlan/ExecutionReport、配置内容哈希、DecisionInput 规范序列化、内存 Explain/Dry Run 和 golden replay 测试。同步实现专用安全 HTTP Client，并保持现有 Chat、SSE、熔断、Usage 和安全日志全部回归通过。
+先把现有 Router 拆成 Decision Engine 和 Gateway Executor；增加稳定 target_id、只包含 text/streaming 的能力目录、最小能力契约、model=auto、balanced/economy 排序、ExecutionPlan/ExecutionReport、配置内容哈希、DecisionInput 规范序列化、内存 Explain/Dry Run 和 golden replay 测试。同步实现专用安全 HTTP Client，并保持现有 Chat、SSE、熔断、Usage 和安全日志全部回归通过。当前实现已将计划执行抽到 `internal/gateway/executor.go`。
 
 ### 阶段 B：Run 与可信账本
 
@@ -643,7 +644,7 @@ git diff --check
 
 ### 阶段 C：版本化控制面与 Replay
 
-把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、结构化配置 diff、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面、当前算法注册、结构化路径 diff 和 100 组 golden Replay 量化验收，旧算法保留窗口与审批审计仍待完成。
+把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、结构化配置 diff、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面、租户隔离安全审计、显式 Replay 保留截止时间、结构化路径 diff 和 100 组 golden Replay 量化验收；审批流仍待后续生产化阶段。
 
 ### 阶段 D：生产化与 1.0
 

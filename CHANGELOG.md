@@ -23,6 +23,7 @@
 - Replay 差异从单一哈希错误升级为安全结构化差异，包含策略、逻辑目标顺序、候选原因和哈希，不泄露上游模型名。
 - 新增租户隔离的控制面审计摘要和 `GET /v1/limen/audit`，重复控制操作按稳定事件 ID 去重。
 - Algorithm Registry 支持显式 Replay 保留截止时间，过期算法返回 `algorithm_version_unavailable`，不回退到新版本。
+- 将 Gateway Executor 从 Router 计划生成逻辑中拆出；Executor 只按 ExecutionPlan 执行 Provider，不重新选择模型。
 
 ### 修复
 
