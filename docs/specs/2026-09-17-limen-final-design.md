@@ -480,20 +480,20 @@ POST /v1/limen/keys/{public_prefix}/revoke
 
 成功响应增加 request_id、run_id、decision_id、config_version、provider、attempts 和 route 的安全摘要 Header。公共 API 不返回真实上游模型名称；Explain、Dry Run 和 Replay 只返回逻辑模型、能力依据和稳定 opaque 目标引用。内部完整快照仅供租户隔离的 Replay 和受控运维排障使用。
 
-创建 Run 返回：
+创建 Run 返回（字段使用纳美元整数，避免浮点误差）：
 
 ~~~json
 {
   "id": "run_01...",
   "state": "active",
-  "soft_budget_usd": "1",
-  "settled_cost_usd": "0",
+  "soft_budget_nano_usd": 1000000000,
+  "settled_cost_nano_usd": 0,
   "config_version": "sha256:...",
   "strategy": "balanced"
 }
 ~~~
 
-Request 查询返回执行状态、decision_id 和结算状态，不返回 Prompt 或 Response。settlement_status 为 pending 时，客户端通过该接口观察最终结果，不能依赖 HTTP Trailer 作为账本事实来源。
+Run 和 Request 查询使用安全 DTO，不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt。Request 查询返回执行状态、decision_id 和结算状态，不返回 Prompt 或 Response。`settlement_status` 为 `pending` 时，客户端通过该接口观察最终结果，不能依赖 HTTP Trailer 作为账本事实来源。
 
 ### 9.3 API Key
 

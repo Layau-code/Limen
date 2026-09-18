@@ -235,6 +235,9 @@ func TestRunControlLifecycleAndIdempotency(t *testing.T) {
 	if response.Code != http.StatusCreated || created.ID == "" || created.State != run.StateActive {
 		t.Fatalf("create = %d %+v", response.Code, created)
 	}
+	if strings.Contains(response.Body.String(), "tenant_id") {
+		t.Fatalf("run response exposes tenant internals: %s", response.Body.String())
+	}
 	request = httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer limen-secret")
 	request.Header.Set("Idempotency-Key", "create-run-1")
@@ -300,6 +303,18 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	}
 	if request.State != run.RequestSettled || !request.LedgerRecorded || request.LeaseOwner != "" || !request.LeaseExpiresAt.IsZero() {
 		t.Fatalf("request = %+v", request)
+	}
+	lookup := httptest.NewRequest(http.MethodGet, "/v1/limen/runs/"+created.ID+"/requests/"+requestID, nil)
+	lookup.Header.Set("Authorization", "Bearer limen-secret")
+	lookupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(lookupResponse, lookup)
+	if lookupResponse.Code != http.StatusOK {
+		t.Fatalf("request lookup = %d %s", lookupResponse.Code, lookupResponse.Body.String())
+	}
+	for _, secret := range []string{"tenant_id", "request-1", "request_hash", "lease_owner"} {
+		if strings.Contains(lookupResponse.Body.String(), secret) {
+			t.Fatalf("request lookup exposes %s: %s", secret, lookupResponse.Body.String())
+		}
 	}
 	runState, err := runs.GetRun(context.Background(), runTenantID, created.ID)
 	if err != nil {

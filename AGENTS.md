@@ -36,6 +36,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `statusRecorder` 只在首次写出响应正文时记录 TTFB；日志和 Trace 可记录 `ttfb_ms`，不得把正文、Header 或密钥写入观测字段。
 - `internal/decision/testdata/fixtures.json` 是版本化 Replay 证据；修改决策语义必须先更新生成器和算法版本，`make check` 必须证明生成结果无漂移。
 - Decision Journal 的 HTTP 响应必须经过安全视图转换：不返回 `upstream_model`，目标引用使用稳定 opaque ID；内部完整快照只能用于租户隔离的 Replay。
+- Run 和 Request 的 HTTP 响应必须经过安全 DTO 转换：不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt 字段；客户端只读取生命周期、结算和决策关联状态。
 - 访问日志的 Path 只能使用固定路由类别，动态或未知路径必须归并，不能把用户输入原样写入日志。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
@@ -89,6 +90,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、已知成本结算和未知成本 `pending`。
+- Run HTTP 返回测试必须证明公共响应不泄露租户标识、幂等键、请求哈希和租约信息。
 - 未知费用处置测试必须覆盖补记金额、接受未知、重复幂等键、跨 Run 请求绑定和 `admin` Scope；补记最多产生一条 Ledger。
 - Run 租约测试必须覆盖同一请求的抢占拒绝、续租、响应后释放、过期恢复、`abandoned/pending` 和 Run `suspended_accounting`，并用竞态测试验证后台恢复。
 - 跨实例取消测试必须覆盖取消事件租户隔离、在途 Context 取消、`run_cancelled` 错误和重复取消幂等。

@@ -593,6 +593,66 @@ type createRunRequest struct {
 	Strategy       string `json:"strategy"`
 }
 
+// publicRun 返回不包含租户内部字段的 Run 状态。
+func publicRun(item run.Run) publicRunResponse {
+	return publicRunResponse{
+		ID:                 item.ID,
+		State:              item.State,
+		SoftBudgetNanoUSD:  item.SoftBudgetNanoUSD,
+		SettledCostNanoUSD: item.SettledCostNanoUSD,
+		Deadline:           item.Deadline,
+		MaxParallelism:     item.MaxParallelism,
+		InFlight:           item.InFlight,
+		Strategy:           item.Strategy,
+		ConfigVersion:      item.ConfigVersion,
+		CompleteRequested:  item.CompleteRequested,
+		CreatedAt:          item.CreatedAt,
+		UpdatedAt:          item.UpdatedAt,
+	}
+}
+
+// publicRunRequest 返回请求状态，但不暴露幂等键、哈希和租约信息。
+func publicRunRequest(item run.Request) publicRunRequestResponse {
+	return publicRunRequestResponse{
+		ID:               item.ID,
+		RunID:            item.RunID,
+		Endpoint:         item.Endpoint,
+		State:            item.State,
+		SettlementStatus: item.SettlementStatus,
+		DecisionID:       item.DecisionID,
+		LedgerRecorded:   item.LedgerRecorded,
+		CreatedAt:        item.CreatedAt,
+		UpdatedAt:        item.UpdatedAt,
+	}
+}
+
+type publicRunResponse struct {
+	ID                 string       `json:"id"`
+	State              run.RunState `json:"state"`
+	SoftBudgetNanoUSD  int64        `json:"soft_budget_nano_usd"`
+	SettledCostNanoUSD int64        `json:"settled_cost_nano_usd"`
+	Deadline           time.Time    `json:"deadline"`
+	MaxParallelism     int          `json:"max_parallelism"`
+	InFlight           int          `json:"in_flight"`
+	Strategy           string       `json:"strategy"`
+	ConfigVersion      string       `json:"config_version"`
+	CompleteRequested  bool         `json:"complete_requested"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+}
+
+type publicRunRequestResponse struct {
+	ID               string           `json:"id"`
+	RunID            string           `json:"run_id"`
+	Endpoint         string           `json:"endpoint"`
+	State            run.RequestState `json:"state"`
+	SettlementStatus string           `json:"settlement_status"`
+	DecisionID       string           `json:"decision_id,omitempty"`
+	LedgerRecorded   bool             `json:"ledger_recorded"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+}
+
 // createRun 创建一个带软预算和截止时间的受治理 Run。
 func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticateScopes(w, r, auth.ScopeRunsWrite) {
@@ -663,7 +723,7 @@ func (h *Handler) createRun(w http.ResponseWriter, r *http.Request) {
 		writeRunMutationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, item)
+	writeJSON(w, http.StatusCreated, publicRun(item))
 }
 
 // getRun 返回不含正文的 Run 当前状态。
@@ -680,7 +740,7 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 		writeRunLookupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	writeJSON(w, http.StatusOK, publicRun(item))
 }
 
 // completeRun 请求停止新准入，并在在途请求结束后完成 Run。
@@ -737,7 +797,7 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 		action = audit.ActionRunCancel
 	}
 	h.appendAudit(r.Context(), tenantID, action, "run", item.ID, "success", hash)
-	writeJSON(w, http.StatusOK, item)
+	writeJSON(w, http.StatusOK, publicRun(item))
 }
 
 // getRunRequest 返回请求状态和结算状态，不返回 Prompt 或 Response。
@@ -758,7 +818,7 @@ func (h *Handler) getRunRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "run request not found", "invalid_request_error", "run_request_not_found")
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	writeJSON(w, http.StatusOK, publicRunRequest(item))
 }
 
 type accountingResolutionRequest struct {
@@ -807,7 +867,7 @@ func (h *Handler) resolveAccounting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.appendAudit(r.Context(), tenantID, audit.ActionAccountingResolve, "run_request", request.ID, "success", hash)
-	writeJSON(w, http.StatusOK, request)
+	writeJSON(w, http.StatusOK, publicRunRequest(request))
 }
 
 // parseAccountingResolution 将管理员请求转换为纳美元定点处置参数。
