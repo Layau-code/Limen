@@ -17,3 +17,7 @@
 - 非法观测值不改变计数；序列超过上限时不继续分配。
 - 指标不含 Prompt、Response、Key、Request ID、租户 ID 或动态路径。
 - `make check`、构建、冒烟和 PostgreSQL 集成测试通过。
+
+## 元数据补充
+
+固定指标现在还必须在空 Registry 上输出稳定的 `HELP`/`TYPE` 元数据；这保证 Prometheus 抓取空闲实例时仍能识别完整指标集合。HTTP 和 Registry 测试分别覆盖空样本输出。

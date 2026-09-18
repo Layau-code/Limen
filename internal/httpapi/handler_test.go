@@ -82,6 +82,26 @@ func TestMetricsRequiresAdminScope(t *testing.T) {
 	}
 }
 
+func TestMetricsExposeStableMetadataWithoutChat(t *testing.T) {
+	handler := New("secret", nil)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	for _, want := range []string{
+		"# HELP limen_chat_requests_total",
+		"# TYPE limen_chat_request_duration_seconds histogram",
+		"# TYPE limen_chat_ttfb_seconds histogram",
+	} {
+		if !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("metrics missing %q: %s", want, response.Body.String())
+		}
+	}
+}
+
 func TestMetricsUseTrustedModelAndStableErrorLabels(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "known-model", Targets: []gateway.Target{{ID: "primary", Provider: "openai", UpstreamModel: "gpt-test"}}}})
 	if err != nil {

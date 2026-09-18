@@ -35,6 +35,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签；模型必须来自可信目录或固定归并值，Attempt 只统计真实 Provider 调用，不允许请求 ID、租户 ID、原始错误或正文进入指标。
 - 延迟指标只能使用固定桶和有限基数；请求耗时、TTFB 只记录非负有限值，不能把动态路径、正文或标识放入标签。
+- `/metrics` 的固定指标必须输出稳定的 `HELP`/`TYPE` 元数据，即使当前没有样本；新增指标必须同步帮助文本、类型和契约测试。
 - OpenTelemetry Trace 只使用字段白名单串联请求、准入、决策、Attempt 和结算；只传播 `traceparent`，导出失败不得改变模型请求。
 - `statusRecorder` 只在首次写出响应正文时记录 TTFB；日志和 Trace 可记录 `ttfb_ms`，不得把正文、Header 或密钥写入观测字段。
 - `internal/decision/testdata/fixtures.json` 是版本化 Replay 证据；修改决策语义必须先更新生成器和算法版本，`make check` 必须证明生成结果无漂移。
@@ -116,6 +117,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 算法版本测试必须覆盖当前版本解析、未知版本拒绝和重复注册拒绝；配置 diff 测试必须证明只返回稳定路径与变化类型。
 - Replay 算法注册必须支持显式保留截止时间；过期版本返回 `algorithm_version_unavailable`，不得静默回退；新增算法版本必须保留旧版本语义或明确退役窗口。
 - 凭据存储测试必须覆盖 AES-GCM 解密、租户/Provider/endpoint 绑定、轮换、撤销和密文不包含明文；指标测试必须覆盖固定名称、有界标签、未知模型归并、真实 Attempt 语义和 admin 鉴权。
+- 指标测试还必须覆盖空 Registry 的 `HELP`/`TYPE` 元数据、计数器和 Histogram 的 Prometheus 格式，以及标签序列上限。
 - 凭据控制面测试必须覆盖 admin Scope、endpoint 不匹配拒绝、轮换后立即生效、撤销清除内存密钥以及响应不包含明文。
 - API Key 控制面测试必须覆盖 Scope、幂等冲突、明文只返回一次、轮换后旧 Key 立即失效、新 Key 生效、跨租户前缀猜测、RLS 和数据库摘要不含明文；审计测试还必须证明 actor_id 不包含原始 Key。
 - 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。

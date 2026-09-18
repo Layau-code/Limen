@@ -32,6 +32,20 @@ const (
 
 var histogramBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60}
 
+type metricDefinition struct {
+	name string
+	help string
+	kind string
+}
+
+var metricDefinitions = []metricDefinition{
+	{name: string(RequestsTotal), help: "Total number of parsed chat requests.", kind: "counter"},
+	{name: string(AttemptsTotal), help: "Total number of real provider attempts.", kind: "counter"},
+	{name: string(SettlementsTotal), help: "Total number of request settlements.", kind: "counter"},
+	{name: string(RequestDurationSeconds), help: "Chat request duration in seconds.", kind: "histogram"},
+	{name: string(TimeToFirstByteSeconds), help: "Time to first byte for chat responses in seconds.", kind: "histogram"},
+}
+
 // Labels 是有界的业务标签集合，不包含请求、租户或凭据标识。
 type Labels struct {
 	Endpoint string
@@ -136,19 +150,14 @@ func (registry *Registry) Write(writer io.Writer) (int, error) {
 	}
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
-	metrics := make([]string, 0, len(registry.samples)+len(registry.histograms))
-	for metric := range registry.samples {
-		metrics = append(metrics, string(metric))
-	}
-	for metric := range registry.histograms {
-		metrics = append(metrics, string(metric))
-	}
-	sort.Strings(metrics)
 	written := 0
-	for _, name := range metrics {
+	for _, definition := range metricDefinitions {
+		name := definition.name
+		written += writeString(writer, "# HELP "+name+" "+definition.help+"\n")
+		written += writeString(writer, "# TYPE "+name+" "+definition.kind+"\n")
 		metric := Metric(name)
-		if series := registry.samples[metric]; series != nil {
-			written += writeString(writer, "# TYPE "+name+" counter\n")
+		if definition.kind == "counter" {
+			series := registry.samples[metric]
 			keys := sortedSampleKeys(series)
 			for _, key := range keys {
 				item := series[key]
@@ -156,8 +165,8 @@ func (registry *Registry) Write(writer io.Writer) (int, error) {
 				written += writeString(writer, line)
 			}
 		}
-		if series := registry.histograms[metric]; series != nil {
-			written += writeString(writer, "# TYPE "+name+" histogram\n")
+		if definition.kind == "histogram" {
+			series := registry.histograms[metric]
 			keys := sortedHistogramKeys(series)
 			for _, key := range keys {
 				item := series[key]

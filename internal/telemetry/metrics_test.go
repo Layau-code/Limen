@@ -23,6 +23,35 @@ func TestRegistryWritesBoundedMetrics(t *testing.T) {
 	}
 }
 
+func TestRegistryWritesStableMetadataWithoutSamples(t *testing.T) {
+	var output strings.Builder
+	if _, err := NewRegistry().Write(&output); err != nil {
+		t.Fatal(err)
+	}
+	for _, metric := range []string{
+		"limen_chat_requests_total",
+		"limen_provider_attempts_total",
+		"limen_settlements_total",
+		"limen_chat_request_duration_seconds",
+		"limen_chat_ttfb_seconds",
+	} {
+		if !strings.Contains(output.String(), "# HELP "+metric+" ") {
+			t.Fatalf("missing HELP metadata for %s: %s", metric, output.String())
+		}
+	}
+	for _, want := range []string{
+		"# TYPE limen_chat_requests_total counter",
+		"# TYPE limen_provider_attempts_total counter",
+		"# TYPE limen_settlements_total counter",
+		"# TYPE limen_chat_request_duration_seconds histogram",
+		"# TYPE limen_chat_ttfb_seconds histogram",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing TYPE metadata %q: %s", want, output.String())
+		}
+	}
+}
+
 func TestRegistryCapsSeriesCount(t *testing.T) {
 	registry := NewRegistry()
 	for i := 0; i < maxSeriesPerMetric+1; i++ {

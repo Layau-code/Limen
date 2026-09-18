@@ -10,6 +10,7 @@
 - 新增 `make compatibility` OpenAI Chat 兼容契约测试，自动验证请求字段、错误 envelope 和 SSE 边界。
 - 新增 `make reliability` 离线故障注入契约，集中验证 Fallback、预算、取消、流式不重放和 Provider 错误分类。
 - 密钥配置新增 `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE`，支持容器只读 Secret 挂载并拒绝明文/文件来源冲突。
+- Prometheus 指标在无样本时也输出稳定的 `HELP`/`TYPE` 元数据，保持空闲实例的指标契约不漂移。
 - Decision Journal 读取时新增 `plan_hash` 和持久化摘要列校验，检测 JSONB 证据篡改后拒绝 Replay。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
