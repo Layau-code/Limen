@@ -49,7 +49,7 @@ Limen 当前适合对标的是路由可靠性、审计性、配置安全和 Agen
 ## 最小演示路径
 
 ```bash
-make demo          # 离线展示能力契约选模、Fallback 与配置草稿影响分析
+make demo          # 离线展示能力契约选模、Fallback、Replay 与 Run 结算
 make validate      # 离线验证模型目录和出站 endpoint 绑定
 make compatibility # 验证 OpenAI Chat 兼容边界
 make reliability   # 验证取消、超时、Fallback 和流式不重放

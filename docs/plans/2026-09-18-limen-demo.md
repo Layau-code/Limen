@@ -10,7 +10,8 @@
 2. Decision Engine 选中满足契约的 `smart-model`，排除质量或数据等级不满足的目标。
 3. 第一个 OpenAI 目标返回瞬时 `503`，Router 按计划切换到 Anthropic 目标并成功返回。
 4. 将历史决策快照重放到只保留 Anthropic 的草稿目录。
-5. 输出路由路径、Attempt 数、选中的逻辑模型、草稿 Provider 和影响分析是否发生。
+5. 模拟一次 Run 准入、决策绑定和已知成本结算。
+6. 输出路由路径、Attempt 数、选中的逻辑模型、草稿 Provider、影响分析和 Run 结算摘要。
 
 ## 安全边界
 
@@ -24,4 +25,4 @@
 make demo
 ```
 
-输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`selection.rejected[0]=basic-model:quality_tier_too_low`、`draft_provider=anthropic`、`impact_detected=true` 和 `provider_calls=2`。
+输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`selection.rejected[0]=basic-model:quality_tier_too_low`、`draft_provider=anthropic`、`impact_detected=true`、`provider_calls=2`、`run.state=active`、`run.settlement_status=complete`、`run.in_flight=0` 和 `run.settled_cost_nano_usd=250000`。
