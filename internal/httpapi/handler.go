@@ -289,7 +289,7 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
-			writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "unsupported_model")
+			writeError(w, http.StatusBadRequest, "unsupported model", "invalid_request_error", "unsupported_model")
 			return
 		}
 		var noEligible *gateway.NoEligibleTargetError
@@ -1452,7 +1452,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
-			writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "unsupported_model")
+			writeError(w, http.StatusBadRequest, "unsupported model", "invalid_request_error", "unsupported_model")
 			return
 		}
 		var unavailable *gateway.ProviderUnavailableError

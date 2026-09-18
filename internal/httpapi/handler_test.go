@@ -90,7 +90,11 @@ func TestMetricsUseTrustedModelAndStableErrorLabels(t *testing.T) {
 	handler := New("secret", newTestRouter(nil, nil, registry))
 	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"private-model-input","messages":[{"role":"user","content":"hello"}]}`))
 	chat.Header.Set("Authorization", "Bearer secret")
-	handler.ServeHTTP(httptest.NewRecorder(), chat)
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chat)
+	if strings.Contains(chatResponse.Body.String(), "private-model-input") {
+		t.Fatalf("error response echoes rejected model: %s", chatResponse.Body.String())
+	}
 
 	metrics := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metrics.Header.Set("Authorization", "Bearer secret")
