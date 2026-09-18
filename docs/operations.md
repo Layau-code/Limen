@@ -18,7 +18,7 @@
 
 ## 离线演示
 
-执行 `make demo` 或 `bin/limen demo` 可运行确定性演示。它在进程内使用固定 Provider：第一个目标返回 `503`，第二个目标成功，然后把历史决策重放到草稿目录，输出 Fallback 路径和影响分析摘要。演示不读取环境密钥、不连接数据库、不访问外部网络，适合本地验收和文档截图。
+执行 `make demo` 或 `bin/limen demo` 可运行确定性演示。它先用 `model=auto` 和能力契约选中满足 `internal` 数据等级与质量下限的逻辑模型，再使用固定 Provider：第一个目标返回 `503`，第二个目标成功，最后把历史决策重放到草稿目录，输出选模、Fallback 路径和影响分析摘要。演示不读取环境密钥、不连接数据库、不访问外部网络，适合本地验收和文档截图。
 
 执行 `bin/limen explain --models models.json --request chat-request.json` 可对本地配置和请求快照做离线路由解释。命令使用固定评估时间，连续执行得到相同的计划哈希；输出只包含候选原因、Provider、opaque 目标引用和哈希，不包含 Prompt、密钥或真实上游模型名。没有可用目标时仍返回 `no_eligible_target` 和每个候选的淘汰原因。
 

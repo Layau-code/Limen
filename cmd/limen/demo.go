@@ -24,12 +24,21 @@ func (provider demoProvider) Chat(ctx context.Context, request provider.ChatRequ
 
 // demoResult 是离线演示输出，刻意不包含 Prompt 和真实上游模型名。
 type demoResult struct {
-	Scenario       string `json:"scenario"`
-	Route          string `json:"route"`
-	Attempts       int    `json:"attempts"`
-	DraftProvider  string `json:"draft_provider"`
-	ImpactDetected bool   `json:"impact_detected"`
-	ProviderCalls  int    `json:"provider_calls"`
+	Scenario       string        `json:"scenario"`
+	Route          string        `json:"route"`
+	Attempts       int           `json:"attempts"`
+	DraftProvider  string        `json:"draft_provider"`
+	ImpactDetected bool          `json:"impact_detected"`
+	ProviderCalls  int           `json:"provider_calls"`
+	Selection      demoSelection `json:"selection"`
+}
+
+// demoSelection 是不暴露上游映射的能力契约选模摘要。
+type demoSelection struct {
+	RequestedModel string `json:"requested_model"`
+	SelectedModel  string `json:"selected_model"`
+	DataClass      string `json:"data_class"`
+	MinimumQuality int    `json:"minimum_quality_tier"`
 }
 
 // runDemo 展示一次 Fallback 和配置草稿影响分析，不读取配置或访问外部网络。
@@ -38,9 +47,12 @@ func runDemo(stdout io.Writer) error {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{
 		ID: "smart-model",
 		Targets: []gateway.Target{
-			{ID: "primary", Provider: "openai", UpstreamModel: "gpt-demo-primary"},
-			{ID: "fallback", Provider: "anthropic", UpstreamModel: "claude-demo-fallback"},
+			{ID: "primary", Provider: "openai", UpstreamModel: "gpt-demo-primary", Capabilities: []string{"text"}, QualityTier: 4, CostTier: 1, DataClasses: []string{"internal"}},
+			{ID: "fallback", Provider: "anthropic", UpstreamModel: "claude-demo-fallback", Capabilities: []string{"text"}, QualityTier: 4, CostTier: 2, DataClasses: []string{"internal"}},
 		},
+	}, {
+		ID:      "basic-model",
+		Targets: []gateway.Target{{ID: "basic", Provider: "openai", UpstreamModel: "gpt-demo-basic", Capabilities: []string{"text"}, QualityTier: 1, DataClasses: []string{"public"}}},
 	}})
 	if err != nil {
 		return fmt.Errorf("create demo registry: %w", err)
@@ -55,12 +67,13 @@ func runDemo(stdout io.Writer) error {
 			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 		}),
 	}, registry, gateway.Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Second})
-	request := provider.ChatRequest{Model: "smart-model", Messages: []provider.Message{{Role: "user", Content: "demo"}}}
-	input, originalPlan, err := router.Explain(request, decision.Contract{})
+	request := provider.ChatRequest{Model: "auto", Messages: []provider.Message{{Role: "user", Content: "demo"}}}
+	contract := decision.Contract{RequiredCapabilities: []string{"text"}, MinimumQualityTier: 3, DataClass: "internal", Strategy: decision.StrategyBalanced}
+	input, originalPlan, err := router.Explain(request, contract)
 	if err != nil {
 		return fmt.Errorf("explain demo request: %w", err)
 	}
-	result, err := router.Chat(context.Background(), request)
+	result, err := router.ChatWithContract(context.Background(), request, contract)
 	if err != nil {
 		return fmt.Errorf("execute demo request: %w", err)
 	}
@@ -69,7 +82,7 @@ func runDemo(stdout io.Writer) error {
 	}
 	draft, err := gateway.NewModelRegistry([]gateway.Model{{
 		ID:      "smart-model",
-		Targets: []gateway.Target{{ID: "primary", Provider: "anthropic", UpstreamModel: "claude-demo-draft"}},
+		Targets: []gateway.Target{{ID: "primary", Provider: "anthropic", UpstreamModel: "claude-demo-draft", Capabilities: []string{"text"}, QualityTier: 4, DataClasses: []string{"internal"}}},
 	}})
 	if err != nil {
 		return fmt.Errorf("create demo draft: %w", err)
@@ -85,6 +98,12 @@ func runDemo(stdout io.Writer) error {
 		DraftProvider:  draftPlan.Targets[0].Target.Provider,
 		ImpactDetected: originalPlan.PlanHash != draftPlan.PlanHash,
 		ProviderCalls:  providerCalls,
+		Selection: demoSelection{
+			RequestedModel: request.Model,
+			SelectedModel:  originalPlan.Targets[0].ModelID,
+			DataClass:      contract.DataClass,
+			MinimumQuality: contract.MinimumQualityTier,
+		},
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetEscapeHTML(false)
