@@ -133,7 +133,20 @@ func safeDialer(lookupIP func(context.Context, string) ([]net.IP, error), allowP
 
 // isPrivateAddress 判断 IP 是否属于不应访问的内部或特殊地址范围。
 func isPrivateAddress(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return false
+	}
+	// 运营商级 NAT、保留测试网和文档网段不应成为 Provider 出站目标。
+	return ipv4[0] == 100 && ipv4[1] >= 64 && ipv4[1] <= 127 ||
+		ipv4[0] == 192 && ipv4[1] == 0 ||
+		ipv4[0] == 192 && ipv4[1] == 0 && ipv4[2] == 2 ||
+		ipv4[0] == 198 && (ipv4[1] == 18 || ipv4[1] == 19 || ipv4[1] == 51) ||
+		ipv4[0] == 203 && ipv4[1] == 0 && ipv4[2] == 113 ||
+		ipv4[0] == 255 && ipv4[1] == 255 && ipv4[2] == 255 && ipv4[3] == 255
 }
 
 // normalizeEndpoint 将 URL 或 host:port 规范化为 allowlist 键。

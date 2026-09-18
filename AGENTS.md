@@ -98,7 +98,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 凭据控制面测试必须覆盖 admin Scope、endpoint 不匹配拒绝、轮换后立即生效、撤销清除内存密钥以及响应不包含明文。
 - API Key 控制面测试必须覆盖 Scope、幂等冲突、明文只返回一次、轮换后旧 Key 立即失效、新 Key 生效、跨租户前缀猜测、RLS 和数据库摘要不含明文；审计测试还必须证明 actor_id 不包含原始 Key。
 - 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。
-- 出站安全测试必须覆盖 allowlist、HTTPS、重定向、代理关闭和私网地址拒绝；测试不得真的访问外部 Provider。
+- 出站安全测试必须覆盖配置层 HTTPS、allowlist、重定向、代理关闭、私网/CGNAT/保留测试网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
 - Trace 测试必须覆盖同一 Trace ID 的请求、准入、决策、Fallback Attempt 和结算，并用哨兵值证明正文、密钥和上游模型名不会进入 Span。

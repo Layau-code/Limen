@@ -406,11 +406,11 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 	return duration, nil
 }
 
-// validateBaseURL 校验 Provider 地址能够安全地作为 HTTP API 根地址使用。
+// validateBaseURL 校验 Provider 地址使用 HTTPS 且不携带凭据或动态查询参数。
 func validateBaseURL(name, raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return fmt.Errorf("%s must be an absolute HTTP(S) URL", name)
+	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Scheme != "https" {
+		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
 	}
 	if parsed.User != nil {
 		return fmt.Errorf("%s must not contain credentials", name)

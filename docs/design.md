@@ -124,7 +124,7 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 ## 出站安全
 
-生产 Provider Client 使用 HTTPS allowlist，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、链路本地、组播、未指定和云元数据地址。Provider Key 只绑定到对应适配器，不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
+生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。Provider Key 只绑定到对应适配器，不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
 
 Endpoint allowlist 与 endpoint ID 都拒绝 URL 用户信息、查询参数和片段；安全 Client 的测试会在设置环境代理时确认仍直连 allowlist 目标，并单独验证云元数据地址在 Dial 前被拦截。
 

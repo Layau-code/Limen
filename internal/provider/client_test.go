@@ -86,6 +86,14 @@ func TestSafeDialerRejectsMetadataAddress(t *testing.T) {
 	}
 }
 
+func TestPrivateAddressRejectsReservedAndCarrierGradeRanges(t *testing.T) {
+	for _, raw := range []string{"100.64.0.1", "198.18.0.1", "192.0.2.1", "203.0.113.10", "255.255.255.255"} {
+		if !isPrivateAddress(net.ParseIP(raw)) {
+			t.Fatalf("address %s was allowed", raw)
+		}
+	}
+}
+
 func TestEndpointIDIncludesProviderPath(t *testing.T) {
 	first, err := EndpointIDForBaseURL("https://api.example/v1")
 	if err != nil {
