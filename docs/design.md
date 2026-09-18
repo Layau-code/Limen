@@ -68,7 +68,7 @@ HTTP Principal/Scope 鉴权与解析
 
 `id`、`targets`、目标的 `provider` 和 `upstream_model` 必填；Provider 只能是 `openai` 或 `anthropic`；ID 和目标组合不能重复；文件使用严格未知字段校验。总请求预算由 `LIMEN_REQUEST_TIMEOUT` 控制，单次超时和熔断参数由文件中的 `routing` 控制。
 
-目标可声明 `id`、`capabilities`（当前仅 `text`）、`supports_streaming`、`quality_tier`、`cost_tier`、`context_window` 和 `data_classes`（`public`、`internal`、`confidential`、`restricted`）。旧配置缺少这些字段时补全基础文本默认值；缺少目标 ID 时按 `provider:upstream_model` 派生稳定 ID。
+目标可声明 `id`、`capabilities`（当前仅 `text`）、`supports_streaming`、`quality_tier`、`cost_tier`、`context_window`、`data_classes`（`public`、`internal`、`confidential`、`restricted`）和可选 `endpoint_id`。`endpoint_id` 只能是 `endpoint:` 加 24 位小写十六进制标识，由 `provider.EndpointIDForBaseURL` 根据进程配置的 Provider 地址生成；配置发布和执行时都会校验绑定，留空表示使用该 Provider 的默认 endpoint。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端选择地址。旧配置缺少这些字段时补全基础文本默认值；缺少目标 ID 时按 `provider:upstream_model` 派生稳定 ID。
 
 目标可以增加可选的 `pricing` 对象，包含 `input_per_million_usd` 和 `output_per_million_usd` 两个十进制字符串。Limen 在响应完成后汇总 Provider 报告的用量；SSE 继续实时转发，未知费用不写成零。完整边界见 [`docs/specs/2026-09-16-usage-cost-settlement-design.md`](specs/2026-09-16-usage-cost-settlement-design.md)。
 
@@ -143,7 +143,7 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 ## 出站安全
 
-生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint；Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
+生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。模型目标的 `endpoint_id` 只能匹配进程已配置的 Provider endpoint；启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint。Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
 
 Endpoint allowlist 与 endpoint ID 都拒绝 URL 用户信息、查询参数和片段；安全 Client 的测试会在设置环境代理时确认仍直连 allowlist 目标，并单独验证云元数据地址在 Dial 前被拦截。
 

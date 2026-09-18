@@ -20,6 +20,7 @@ type Target struct {
 	ID                string        `json:"id"`
 	Provider          string        `json:"provider"`
 	UpstreamModel     string        `json:"upstream_model"`
+	EndpointID        string        `json:"endpoint_id,omitempty"`
 	Capabilities      []string      `json:"capabilities"`
 	SupportsStreaming bool          `json:"supports_streaming"`
 	QualityTier       int           `json:"quality_tier"`
@@ -80,7 +81,7 @@ func NewRegistry(models []Model) (*Registry, error) {
 				return nil, fmt.Errorf("model %q contains duplicate target id %q", model.ID, target.ID)
 			}
 			targetIDs[target.ID] = struct{}{}
-			key := target.Provider + "\x00" + target.UpstreamModel
+			key := target.Provider + "\x00" + target.EndpointID + "\x00" + target.UpstreamModel
 			if _, exists := targets[key]; exists {
 				return nil, fmt.Errorf("model %q contains duplicate target", model.ID)
 			}

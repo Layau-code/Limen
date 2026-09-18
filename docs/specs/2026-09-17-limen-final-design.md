@@ -264,7 +264,7 @@ data_class 使用固定等级 public、internal、confidential、restricted；�
 }
 ~~~
 
-1.0 能力目录只允许当前端到端协议真实支持的 text，并单独声明 supports_streaming。context_window 使用数值约束，不再重复声明 long_context。vision、tool_calling 和 structured_output 只有在请求转换、响应转换和契约测试完成后才能加入允许枚举。
+1.0 能力目录只允许当前端到端协议真实支持的 text，并单独声明 supports_streaming。`endpoint_id` 是可选的非敏感 endpoint 绑定标识，必须匹配进程配置的 Provider 地址；当前每个 Provider 只有一个进程级 endpoint，不允许客户端选择地址。context_window 使用数值约束，不再重复声明 long_context。vision、tool_calling 和 structured_output 只有在请求转换、响应转换和契约测试完成后才能加入允许枚举。
 
 对于受治理 Run，缺少完整价格的目标会被标记为 pricing_missing，不能进入候选。无 Run 的兼容请求仍可使用它，并按现有规则处理未知费用。
 
@@ -576,7 +576,7 @@ Trace 包含请求、准入、决策、Attempt 和结算 Span；Telemetry 导出
 
 - 生产只允许 HTTPS；HTTP 只能在显式开发模式使用。
 - 默认拒绝所有重定向，不能把 Authorization 或 x-api-key 带到新地址。
-- endpoint_id 在发布配置时绑定租户、Provider、域名、端口和路径前缀。
+- endpoint_id 在发布配置时绑定目标与进程已配置的 Provider、域名、端口和路径前缀；配置中只能引用已知 endpoint，凭据另外绑定 tenant、Provider 和 endpoint。
 - 域名必须在租户和部署级允许列表中。
 - 自定义 DialContext 在每次连接时解析域名，并拒绝环回、私网、链路本地、组播、未指定地址和云元数据地址；实际连接只能使用已检查的 IP，防止 DNS 重绑定。
 - 默认禁用环境 HTTP_PROXY 和 HTTPS_PROXY；需要代理时只能使用部署级显式配置。

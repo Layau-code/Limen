@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 模型目标新增可选 `endpoint_id` 绑定；Router 发布和 Provider 出站都会校验目标只能访问进程已配置的 endpoint，避免跨 endpoint 复用凭据或熔断状态。
 - 新增配置版本预演接口，可在发布前对指定草稿生成决策计划而不切换 Router 或访问 Provider。
 - 新增配置影响分析接口，可将历史决策重放到指定草稿并返回安全结构化差异，不访问 Provider 或改变线上路由。
 - 新增完全离线的 `limen demo`，展示 Fallback 和配置草稿影响分析，便于重复验收。

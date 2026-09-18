@@ -24,6 +24,7 @@ type Target struct {
 	ID                string   `json:"id"`
 	Provider          string   `json:"provider"`
 	UpstreamModel     string   `json:"upstream_model"`
+	EndpointID        string   `json:"endpoint_id,omitempty"`
 	Capabilities      []string `json:"capabilities"`
 	SupportsStreaming *bool    `json:"supports_streaming"`
 	QualityTier       int      `json:"quality_tier"`
@@ -375,6 +376,9 @@ func validateModels(models []Model) error {
 			if target.Provider != "openai" && target.Provider != "anthropic" {
 				return fmt.Errorf("model %q uses unsupported provider %q", model.ID, target.Provider)
 			}
+			if err := validateEndpointID(target.EndpointID); err != nil {
+				return fmt.Errorf("target %q for model %q: %w", target.ID, model.ID, err)
+			}
 			if target.QualityTier < 0 || target.QualityTier > 5 {
 				return fmt.Errorf("target %q for model %q has invalid quality_tier", target.ID, model.ID)
 			}
@@ -388,7 +392,7 @@ func validateModels(models []Model) error {
 				return fmt.Errorf("model %q contains duplicate target id %q", model.ID, target.ID)
 			}
 			targets[target.ID] = struct{}{}
-			providerKey := target.Provider + "\x00" + target.UpstreamModel
+			providerKey := target.Provider + "\x00" + target.EndpointID + "\x00" + target.UpstreamModel
 			if _, exists := upstreamTargets[providerKey]; exists {
 				return fmt.Errorf("model %q contains duplicate target %q", model.ID, target.UpstreamModel)
 			}
@@ -401,6 +405,22 @@ func validateModels(models []Model) error {
 			return fmt.Errorf("duplicate model id %q", model.ID)
 		}
 		seen[model.ID] = struct{}{}
+	}
+	return nil
+}
+
+// validateEndpointID 校验可选的 Provider endpoint 绑定标识，避免配置携带地址或任意字符串。
+func validateEndpointID(endpointID string) error {
+	if endpointID == "" {
+		return nil
+	}
+	if !strings.HasPrefix(endpointID, "endpoint:") || len(endpointID) != len("endpoint:")+24 {
+		return errors.New("endpoint_id must be endpoint: followed by 24 lowercase hex characters")
+	}
+	for _, char := range endpointID[len("endpoint:"):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return errors.New("endpoint_id must be endpoint: followed by 24 lowercase hex characters")
+		}
 	}
 	return nil
 }

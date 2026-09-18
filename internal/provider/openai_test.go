@@ -41,6 +41,28 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderRejectsMismatchedEndpointBinding(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	client := NewOpenAI(server.Client(), server.URL, "openai-secret")
+	response, err := client.Chat(context.Background(), ChatRequest{
+		EndpointID: "endpoint:fedcba987654321001234567",
+		Model:      "gpt-test",
+		Messages:   []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil || calls != 0 {
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
+		t.Fatalf("err=%v upstream calls=%d", err, calls)
+	}
+}
+
 func TestOpenAIProviderPreservesDeveloperMessageRole(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {

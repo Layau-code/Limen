@@ -109,6 +109,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 `GET /v1/models` 与聊天接口共用 Bearer Key 鉴权。配置模式的 `owned_by` 为 `limen`；未配置模型文件时进入兼容模式，支持 `gpt-*`、`o1-*`、`o3-*` 和 `claude-*`，并要求两个 Provider Key。完整字段边界见 [`docs/openai-compatibility.md`](docs/openai-compatibility.md)。
 
+目标还可以声明可选的 `endpoint_id`。它是由 `provider.EndpointIDForBaseURL` 根据进程配置的 Provider 地址生成的非敏感标识；填写后，发布配置和执行请求都会校验目标只能访问该 endpoint，留空则使用对应 Provider 的默认 endpoint。当前版本每个 Provider 只配置一个进程级 endpoint，不支持从客户端选择地址。
+
 配置版本可以通过控制面创建和发布。`POST /v1/limen/configs` 接收与模型文件相同的严格 JSON，返回由规范内容生成的 `version`；`POST /v1/limen/configs/{version}/publish` 需要 `configs:write` 和 `Idempotency-Key`，同键重试不会重复切换版本，不同版本复用同键会返回 `idempotency_conflict`。发布后当前进程立即使用新目录和路由参数，旧版本保留为 `superseded`；已经创建的 Run 继续按自身固定的 `config_version` 使用旧目录和路由参数，版本缺失时拒绝请求而不静默降级。配置发布通过 PostgreSQL `NOTIFY` 加速传播到其他实例，实例仍每 5 秒读取已发布版本作为丢失通知时的兜底；通知只包含租户和版本哈希，不包含配置正文。`GET /v1/limen/configs` 只返回模型和目标摘要，不暴露真实上游模型名；`GET /v1/limen/configs/{version}/diff/{base_version}` 返回只含路径和变化类型的结构化差异。配置 API 未连接 PostgreSQL 时使用内存存储，重启会丢失版本；生产环境应配置 `LIMEN_DATABASE_URL`。
 
 配置发布默认不需要审批。设置 `LIMEN_CONFIG_APPROVAL_REQUIRED=true` 后，发布者先调用 `POST /v1/limen/configs/{version}/approvals` 创建审批（请求体为 `{"publish_idempotency_key":"publish-001"}`），由不同 `actor_id` 调用 `/approve`，再携带 `X-Limen-Approval-ID` 和相同的 `Idempotency-Key` 发布。审批有效期默认 30 分钟，只能消费一次；同一发布键在 Router 激活失败后可以重试修复本地快照，但不能复用于其他版本。审批接口使用 `configs:read`/`configs:write` Scope，操作写入安全审计摘要。静态 Key 的 actor 固定为 `static`，不能完成双人审批；生产启用该开关时应使用 PostgreSQL API Key Store。

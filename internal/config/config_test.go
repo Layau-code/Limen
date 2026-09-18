@@ -340,6 +340,16 @@ func TestLoadParsesTargetCapabilities(t *testing.T) {
 	}
 }
 
+func TestParseModelsPreservesTargetEndpointBinding(t *testing.T) {
+	models, _, _, err := ParseModels([]byte(`{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"gpt-test","endpoint_id":"endpoint:0123456789abcdef01234567"}]}]}`), DefaultRouting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := models[0].Targets[0].EndpointID; got != "endpoint:0123456789abcdef01234567" {
+		t.Fatalf("endpoint_id = %q", got)
+	}
+}
+
 func TestLoadRejectsUnknownCapabilityAndDataClass(t *testing.T) {
 	tests := []string{
 		`{"models":[{"id":"m","targets":[{"provider":"openai","upstream_model":"gpt","capabilities":["magic"]}]}]}`,
@@ -404,6 +414,7 @@ func TestLoadRejectsInvalidModelsFile(t *testing.T) {
 		{"unknown field", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","extra":true}]}]}`},
 		{"legacy single target", `{"models":[{"id":"model","provider":"openai","upstream_model":"real"}]}`},
 		{"unknown provider", `{"models":[{"id":"model","targets":[{"provider":"other","upstream_model":"real"}]}]}`},
+		{"invalid endpoint id", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real","endpoint_id":"provider.example"}]}]}`},
 		{"duplicate id", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"one"}]},{"id":"model","targets":[{"provider":"openai","upstream_model":"two"}]}]}`},
 		{"missing target field", `{"models":[{"id":"model","targets":[{"provider":"openai"}]}]}`},
 		{"too many targets", `{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"one"},{"provider":"openai","upstream_model":"two"},{"provider":"openai","upstream_model":"three"},{"provider":"openai","upstream_model":"four"},{"provider":"openai","upstream_model":"five"}]}]}`},

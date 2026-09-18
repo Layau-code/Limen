@@ -12,11 +12,12 @@ import (
 
 // OpenAIProvider 将统一聊天请求转发到 OpenAI Chat Completions API。
 type OpenAIProvider struct {
-	client   *http.Client
-	url      string
-	mu       sync.RWMutex
-	apiKey   string
-	resolver CredentialResolver
+	client     *http.Client
+	url        string
+	endpointID string
+	mu         sync.RWMutex
+	apiKey     string
+	resolver   CredentialResolver
 }
 
 // SetAPIKey 原子替换 OpenAI 凭据，供受控轮换流程使用。
@@ -49,15 +50,20 @@ func NewOpenAI(client *http.Client, baseURL, apiKey string) *OpenAIProvider {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	endpointID, _ := EndpointIDForBaseURL(baseURL)
 	return &OpenAIProvider{
-		client: client,
-		url:    strings.TrimRight(baseURL, "/") + "/chat/completions",
-		apiKey: apiKey,
+		client:     client,
+		url:        strings.TrimRight(baseURL, "/") + "/chat/completions",
+		endpointID: endpointID,
+		apiKey:     apiKey,
 	}
 }
 
 // Chat 将标准化请求编码为 OpenAI 请求，并返回上游响应正文。
 func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Response, error) {
+	if request.EndpointID != "" && p.endpointID != "" && request.EndpointID != p.endpointID {
+		return Response{}, &RequestError{Operation: "validate OpenAI endpoint binding", Err: errors.New("provider endpoint binding mismatch")}
+	}
 	upstreamRequest := openAIRequest{
 		Model:               request.Model,
 		Messages:            request.Messages,

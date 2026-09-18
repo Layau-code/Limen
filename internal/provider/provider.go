@@ -19,10 +19,12 @@ type CredentialResolver func(context.Context, string) (string, error)
 
 // ChatRequest 表示经过 API 层校验后的聊天请求。
 type ChatRequest struct {
-	TenantID  string
-	Model     string
-	Messages  []Message
-	MaxTokens int
+	TenantID string
+	Model    string
+	// EndpointID 绑定模型目标与进程配置的 Provider endpoint，不携带地址信息。
+	EndpointID string
+	Messages   []Message
+	MaxTokens  int
 	// MaxCompletionTokens 保留新版 OpenAI 请求的输出上限字段语义。
 	MaxCompletionTokens *int
 	Temperature         *float64

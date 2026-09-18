@@ -26,6 +26,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE` 只读一次启动时的文件密钥；对应明文变量与 `_FILE` 冲突必须拒绝，空文件或读取失败不能静默回退，日志不得输出密钥内容。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
+- 模型目标可选声明 `endpoint_id`，必须匹配进程配置的 Provider endpoint ID；Router 发布前和 Provider 出站前都要拒绝错绑，熔断键也必须包含 endpoint 绑定。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端传入地址或选择 endpoint。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
 - 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
@@ -76,6 +77,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤（包括 `minimum_quality_tier`）、稳定排序、原因码及 `InputHash`/`PlanHash`。受治理请求的 Run 快照必须原样进入 DecisionInput，不能在 HTTP 层或 Provider 层隐藏修改策略。
 - `Router.ChatWithContract` 先生成 ExecutionPlan，再按计划执行；Half-Open 探测权在执行前再次原子获取，竞争失败记录 `skipped_due_to_race`。
 - Provider 映射使用名称到实例的只读映射。Provider 适配层必须把上游状态归一为稳定错误分类，只有 `retryable_transient` 允许 Fallback；新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误分类、超时和取消测试。
+- Provider 的 `ChatRequest` 只携带非敏感 `EndpointID` 绑定标识，不携带 URL；新增或修改目标映射时必须测试 endpoint ID 传播、发布阶段错绑拒绝和 Provider 调用前错绑拒绝。
 - `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，并保留仍存在目标的熔断状态。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。

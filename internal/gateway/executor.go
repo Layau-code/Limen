@@ -116,6 +116,7 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 		}
 		upstreamRequest := request
 		upstreamRequest.Model = target.UpstreamModel
+		upstreamRequest.EndpointID = target.EndpointID
 		response, err := traceProviderChat(attempt, upstream, upstreamRequest, planned)
 		decision.Attempts++
 		decision.Provider = target.Provider

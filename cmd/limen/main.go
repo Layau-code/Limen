@@ -95,6 +95,10 @@ func main() {
 		EconomyThresholdPercent: cfg.Routing.EconomyThresholdPercent,
 		MinimumAttemptWindow:    cfg.Routing.MinimumAttemptWindow,
 	})
+	if err := router.SetProviderEndpointIDs(map[string]string{"openai": openAIEndpointID, "anthropic": anthropicEndpointID}); err != nil {
+		logger.Error("invalid provider endpoint binding", "error", err)
+		os.Exit(1)
+	}
 	router.SetConfigVersion(cfg.ConfigVersion)
 	health := httpapi.NewHealth()
 	var runService run.Service
@@ -559,6 +563,7 @@ func gatewayTarget(target config.Target) gateway.Target {
 		ID:                target.ID,
 		Provider:          target.Provider,
 		UpstreamModel:     target.UpstreamModel,
+		EndpointID:        target.EndpointID,
 		Capabilities:      append([]string(nil), target.Capabilities...),
 		SupportsStreaming: streaming,
 		QualityTier:       target.QualityTier,

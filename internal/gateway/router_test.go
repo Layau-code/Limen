@@ -166,6 +166,39 @@ func TestRouterMapsLogicalModelToUpstreamModel(t *testing.T) {
 	}
 }
 
+func TestRouterPropagatesTargetEndpointID(t *testing.T) {
+	const endpointID = "endpoint:0123456789abcdef01234567"
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-test", EndpointID: endpointID}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotEndpointID string
+	router := newTestRouter(providerFunc(func(_ context.Context, request provider.ChatRequest) (provider.Response, error) {
+		gotEndpointID = request.EndpointID
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}), nil, registry)
+	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = result.Response.Body.Close()
+	if gotEndpointID != endpointID {
+		t.Fatalf("endpoint_id = %q, want %q", gotEndpointID, endpointID)
+	}
+}
+
+func TestRouterRejectsRegistryWithMismatchedProviderEndpoint(t *testing.T) {
+	const endpointID = "endpoint:0123456789abcdef01234567"
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-test", EndpointID: endpointID}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, registry)
+	if err := router.SetProviderEndpointIDs(map[string]string{"openai": "endpoint:fedcba987654321001234567"}); err == nil {
+		t.Fatal("expected provider endpoint binding mismatch")
+	}
+}
+
 func TestRouterReportsEachProviderAttempt(t *testing.T) {
 	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{
 		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary"},

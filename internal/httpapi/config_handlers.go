@@ -265,7 +265,7 @@ func registryFromConfig(models []config.Model) (*gateway.ModelRegistry, error) {
 			if target.SupportsStreaming != nil {
 				streaming = *target.SupportsStreaming
 			}
-			targets = append(targets, gateway.Target{ID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Capabilities: append([]string(nil), target.Capabilities...), SupportsStreaming: streaming, QualityTier: target.QualityTier, CostTier: target.CostTier, ContextWindow: target.ContextWindow, DataClasses: append([]string(nil), target.DataClasses...), Pricing: target.Pricing})
+			targets = append(targets, gateway.Target{ID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, EndpointID: target.EndpointID, Capabilities: append([]string(nil), target.Capabilities...), SupportsStreaming: streaming, QualityTier: target.QualityTier, CostTier: target.CostTier, ContextWindow: target.ContextWindow, DataClasses: append([]string(nil), target.DataClasses...), Pricing: target.Pricing})
 		}
 		converted = append(converted, gateway.Model{ID: model.ID, DisplayName: model.DisplayName, Targets: targets})
 	}

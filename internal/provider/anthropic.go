@@ -18,11 +18,12 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicProvider 将统一聊天请求转换为 Anthropic Messages API 请求。
 type AnthropicProvider struct {
-	client   *http.Client
-	url      string
-	mu       sync.RWMutex
-	apiKey   string
-	resolver CredentialResolver
+	client     *http.Client
+	url        string
+	endpointID string
+	mu         sync.RWMutex
+	apiKey     string
+	resolver   CredentialResolver
 }
 
 // SetAPIKey 原子替换 Anthropic 凭据，供受控轮换流程使用。
@@ -55,15 +56,20 @@ func NewAnthropic(client *http.Client, baseURL, apiKey string) *AnthropicProvide
 	if client == nil {
 		client = http.DefaultClient
 	}
+	endpointID, _ := EndpointIDForBaseURL(baseURL)
 	return &AnthropicProvider{
-		client: client,
-		url:    strings.TrimRight(baseURL, "/") + "/v1/messages",
-		apiKey: apiKey,
+		client:     client,
+		url:        strings.TrimRight(baseURL, "/") + "/v1/messages",
+		endpointID: endpointID,
+		apiKey:     apiKey,
 	}
 }
 
 // Chat 调用 Anthropic Messages API，并将响应转换为 OpenAI 兼容格式。
 func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (Response, error) {
+	if request.EndpointID != "" && p.endpointID != "" && request.EndpointID != p.endpointID {
+		return Response{}, &RequestError{Operation: "validate Anthropic endpoint binding", Err: errors.New("provider endpoint binding mismatch")}
+	}
 	body, err := marshalAnthropicRequest(request)
 	if err != nil {
 		return Response{}, &RequestError{Operation: "encode Anthropic request", Err: err}

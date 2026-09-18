@@ -29,15 +29,16 @@ type Policy struct {
 
 // Router 按模型注册表执行预算感知的 Provider 路由。
 type Router struct {
-	registryMu    sync.RWMutex
-	registry      *ModelRegistry
-	configVersion string
-	policy        Policy
-	breakers      map[string]*circuitBreaker
-	engine        decision.Engine
-	algorithms    *decision.AlgorithmRegistry
-	now           func() time.Time
-	executor      *Executor
+	registryMu        sync.RWMutex
+	registry          *ModelRegistry
+	configVersion     string
+	policy            Policy
+	providerEndpoints map[string]string
+	breakers          map[string]*circuitBreaker
+	engine            decision.Engine
+	algorithms        *decision.AlgorithmRegistry
+	now               func() time.Time
+	executor          *Executor
 }
 
 // Result 同时返回上游响应和不含业务正文的路由决策。
@@ -105,11 +106,12 @@ func NewRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, policy Policy, now func() time.Time) *Router {
 	policy = normalizePolicy(policy)
 	router := &Router{
-		registry:   registry,
-		policy:     policy,
-		breakers:   make(map[string]*circuitBreaker),
-		now:        now,
-		algorithms: decision.NewAlgorithmRegistry(),
+		registry:          registry,
+		policy:            policy,
+		providerEndpoints: make(map[string]string),
+		breakers:          make(map[string]*circuitBreaker),
+		now:               now,
+		algorithms:        decision.NewAlgorithmRegistry(),
 	}
 	providerSet := make(map[string]provider.Provider, len(providers))
 	for name, upstream := range providers {
@@ -151,6 +153,9 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	policy = normalizePolicy(policy)
 	router.registryMu.Lock()
 	defer router.registryMu.Unlock()
+	if err := validateEndpointBindings(registry, router.providerEndpoints); err != nil {
+		return err
+	}
 	nextBreakers := make(map[string]*circuitBreaker, len(router.breakers)+len(registry.List()))
 	// 保留历史目标的熔断器，供仍在执行旧配置版本的 Run 使用。
 	for key, breaker := range router.breakers {
@@ -170,6 +175,40 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	router.breakers = nextBreakers
 	router.policy = policy
 	router.configVersion = strings.TrimSpace(version)
+	return nil
+}
+
+// SetProviderEndpointIDs 设置各 Provider 的进程级 endpoint 绑定，并校验当前模型目录。
+func (router *Router) SetProviderEndpointIDs(endpoints map[string]string) error {
+	cloned := make(map[string]string, len(endpoints))
+	for providerName, endpointID := range endpoints {
+		cloned[strings.TrimSpace(providerName)] = strings.TrimSpace(endpointID)
+	}
+	router.registryMu.Lock()
+	defer router.registryMu.Unlock()
+	if err := validateEndpointBindings(router.registry, cloned); err != nil {
+		return err
+	}
+	router.providerEndpoints = cloned
+	return nil
+}
+
+// validateEndpointBindings 确保模型目标只能绑定当前进程已知的 Provider endpoint。
+func validateEndpointBindings(registry *ModelRegistry, endpoints map[string]string) error {
+	if registry == nil {
+		return errors.New("model registry is required")
+	}
+	for _, model := range registry.List() {
+		for _, target := range model.Targets {
+			if target.EndpointID == "" {
+				continue
+			}
+			endpointID := endpoints[target.Provider]
+			if endpointID == "" || endpointID != target.EndpointID {
+				return fmt.Errorf("model %q target %q has provider endpoint binding mismatch", model.ID, target.ID)
+			}
+		}
+	}
 	return nil
 }
 
@@ -566,7 +605,7 @@ func targetKey(model Model, target Target) string {
 	if model.Compatibility {
 		upstreamModel = model.ID
 	}
-	return model.ID + "\x00" + target.Provider + "\x00" + upstreamModel
+	return model.ID + "\x00" + target.Provider + "\x00" + target.EndpointID + "\x00" + upstreamModel
 }
 
 // firstContextError 优先返回调用方取消原因，否则返回总预算原因。
