@@ -100,9 +100,13 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 		return Response{}, &TransportError{Operation: "send OpenAI request", Err: err}
 	}
 	recorder := newUsageRecorder()
-	bodyReader := observeJSON(response.Body, recorder)
-	if request.Stream {
-		bodyReader = observeOpenAISSE(response.Body, recorder)
+	bodySource := response.Body
+	if response.StatusCode >= http.StatusBadRequest {
+		bodySource = limitProviderErrorBody(bodySource)
+	}
+	bodyReader := observeJSON(bodySource, recorder)
+	if request.Stream && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		bodyReader = observeOpenAISSE(bodySource, recorder)
 	}
 	return Response{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Body: bodyReader, Usage: recorder, ErrorClass: ClassifyHTTPStatus(response.StatusCode), ProviderRequestID: providerRequestID(response.Header)}, nil
 }

@@ -10,7 +10,31 @@ import (
 const (
 	maxObservedResponseBytes = 1 << 20
 	maxObservedSSEBytes      = 1 << 20
+	maxProviderErrorBytes    = 64 << 10
 )
+
+type boundedBody struct {
+	source io.ReadCloser
+	reader *io.LimitedReader
+	once   sync.Once
+	err    error
+}
+
+// limitProviderErrorBody 限制错误正文的透传大小，并保留关闭上游连接的能力。
+func limitProviderErrorBody(source io.ReadCloser) io.ReadCloser {
+	return &boundedBody{source: source, reader: &io.LimitedReader{R: source, N: maxProviderErrorBytes}}
+}
+
+// Read 读取不超过 Provider 错误正文上限的数据。
+func (body *boundedBody) Read(buffer []byte) (int, error) {
+	return body.reader.Read(buffer)
+}
+
+// Close 只关闭一次被包装的上游响应体。
+func (body *boundedBody) Close() error {
+	body.once.Do(func() { body.err = body.source.Close() })
+	return body.err
+}
 
 type usageRecorder struct {
 	mu        sync.RWMutex

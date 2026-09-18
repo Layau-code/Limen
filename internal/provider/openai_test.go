@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,31 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+// TestOpenAIChatBoundsErrorBody 防止异常上游错误正文被完整透传。
+func TestOpenAIChatBoundsErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", (64<<10)+1))
+	}))
+	defer server.Close()
+
+	response, err := NewOpenAI(server.Client(), server.URL, "openai-secret").Chat(context.Background(), ChatRequest{
+		Model:    "gpt-test",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > 64<<10 {
+		t.Fatalf("error body length = %d, want at most %d", len(body), 64<<10)
 	}
 }
 

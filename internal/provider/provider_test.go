@@ -91,6 +91,31 @@ func TestAnthropicChatRejectsOversizedJSONResponse(t *testing.T) {
 	}
 }
 
+// TestAnthropicChatBoundsErrorBody 限制 Anthropic 错误正文的透传大小。
+func TestAnthropicChatBoundsErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", maxProviderErrorBytes+1))
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > maxProviderErrorBytes {
+		t.Fatalf("error body length = %d, want at most %d", len(body), maxProviderErrorBytes)
+	}
+}
+
 func TestAnthropicChatMapsModernCompletionTokenLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
