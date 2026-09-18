@@ -31,6 +31,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - `limen demo` / `make demo` 提供完全离线的确定性演示，展示一次 Fallback 和配置草稿影响分析，不读取密钥或访问网络。
 - `limen explain` 可读取模型目录和 Chat 请求快照，离线输出候选目标、淘汰原因、策略和 `plan_hash`；输出不包含 Prompt 或真实上游模型名，适合演示和发布前排障。
 - `limen validate` 可在不读取密钥、不访问网络的情况下预检模型目录，输出稳定 `config_version` 和 Provider/目标数量，适合接入发布流水线。
+- `limen diff` 可在不读取密钥、不访问网络的情况下比较基线与候选模型目录，只输出配置版本和安全结构差异，适合接入发布审批前的影响检查。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
@@ -142,6 +143,16 @@ make build
 ```
 
 预检复用严格模型配置解析和启动阶段的 endpoint 绑定校验，输出配置版本哈希、模型数、目标数和 Provider 数量；它不会加载 `LIMEN_API_KEY`、Provider Key，也不会发起网络请求。`--openai-base-url` 与 `--anthropic-base-url` 默认读取对应环境变量，未设置时使用生产默认地址；endpoint 错绑会返回非零退出码。
+
+比较发布前影响时可以执行：
+
+```bash
+./bin/limen diff \
+  --base /absolute/path/to/models.current.json \
+  --candidate /absolute/path/to/models.next.json
+```
+
+命令复用严格模型配置解析和控制面结构 diff，输出 `base_version`、`candidate_version`、`changed` 以及按路径排序的 `added`、`removed`、`changed`；目标路径使用 opaque 引用，不返回 `upstream_model`、endpoint 原值、密钥或请求内容。解析失败返回非零退出码，命令不会访问数据库或 Provider。
 
 配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider，并复用 endpoint 绑定校验；因此可以在审批或发布前验证模型能力、Fallback 顺序、计划哈希和出站安全边界。错绑 endpoint 返回 `endpoint_binding_mismatch`。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 

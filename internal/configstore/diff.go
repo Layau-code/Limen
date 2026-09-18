@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
+	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/config"
 )
 
@@ -45,6 +47,31 @@ func Diff(before, after Record) []Change {
 		return changes[i].Path < changes[j].Path
 	})
 	return changes
+}
+
+// PublicDiff 返回隐藏内部目标标识后的安全结构差异，供控制面和离线工具复用。
+func PublicDiff(before, after Record) []Change {
+	changes := Diff(before, after)
+	for index := range changes {
+		changes[index].Path = publicPath(changes[index].Path)
+	}
+	return changes
+}
+
+// publicPath 将目标标识替换为稳定 opaque 引用，避免暴露上游命名。
+func publicPath(path string) string {
+	const marker = ".targets["
+	start := strings.Index(path, marker)
+	if start < 0 {
+		return path
+	}
+	valueStart := start + len(marker)
+	close := strings.LastIndex(path[valueStart:], "]")
+	if close < 0 {
+		return path
+	}
+	close += valueStart
+	return path[:valueStart] + catalog.OpaqueTargetID(path[valueStart:close]) + path[close:]
 }
 
 // diffTargets 比较同一逻辑模型下的目标集合和目标字段。

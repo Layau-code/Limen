@@ -57,6 +57,12 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 			return 1, true
 		}
 		return 0, true
+	case "diff":
+		if err := runDiff(args[1:], stdout, stderr); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1, true
+		}
+		return 0, true
 	case "explain":
 		if err := runExplain(args[1:], stdout, stderr); err != nil {
 			_, _ = fmt.Fprintln(stderr, err)

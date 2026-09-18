@@ -149,6 +149,47 @@ func TestRunCommandValidateRejectsEndpointMismatch(t *testing.T) {
 	}
 }
 
+// TestRunCommandDiffReportsSafeConfigImpact 验证离线 diff 只输出结构变化和 opaque 目标引用。
+func TestRunCommandDiffReportsSafeConfigImpact(t *testing.T) {
+	directory := t.TempDir()
+	basePath := filepath.Join(directory, "base.json")
+	candidatePath := filepath.Join(directory, "candidate.json")
+	base := []byte(`{"models":[{"id":"smart","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-secret-old"}]}]}`)
+	candidate := []byte(`{"models":[{"id":"smart","targets":[{"id":"target","provider":"anthropic","upstream_model":"claude-secret-new"}]}]}`)
+	if err := os.WriteFile(basePath, base, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidatePath, candidate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	if code, handled := runCommand([]string{"diff", "--base", basePath, "--candidate", candidatePath}, &stdout, &stderr); !handled || code != 0 {
+		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
+	}
+	var result struct {
+		BaseVersion      string `json:"base_version"`
+		CandidateVersion string `json:"candidate_version"`
+		Changed          bool   `json:"changed"`
+		Changes          []struct {
+			Path string `json:"path"`
+			Kind string `json:"kind"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatalf("diff output = %q: %v", stdout.String(), err)
+	}
+	if result.BaseVersion == "" || result.CandidateVersion == "" || !result.Changed || len(result.Changes) != 2 {
+		t.Fatalf("diff result = %+v", result)
+	}
+	if !strings.Contains(result.Changes[0].Path, "target-") || result.Changes[0].Kind != "changed" {
+		t.Fatalf("diff changes = %+v", result.Changes)
+	}
+	if strings.Contains(stdout.String(), "gpt-secret-old") || strings.Contains(stdout.String(), "claude-secret-new") || stderr.Len() != 0 {
+		t.Fatalf("diff leaked data or wrote stderr: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 func TestRunCommandExplainIsDeterministicAndHidesPrompt(t *testing.T) {
 	directory := t.TempDir()
 	modelsPath := filepath.Join(directory, "models.json")

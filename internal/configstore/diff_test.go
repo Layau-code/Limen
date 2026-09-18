@@ -1,6 +1,7 @@
 package configstore
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/huz/limen/internal/config"
@@ -26,5 +27,16 @@ func TestDiffReportsEndpointBindingChanges(t *testing.T) {
 	changes := Diff(before, after)
 	if len(changes) != 1 || changes[0].Path != "models[model].targets[target].endpoint_id" || changes[0].Kind != "changed" {
 		t.Fatalf("changes = %+v", changes)
+	}
+}
+
+func TestPublicDiffHidesTargetIDWithClosingBracket(t *testing.T) {
+	before := Record{Models: []config.Model{{ID: "model", Targets: []config.Target{{ID: "target]secret", Provider: "openai", UpstreamModel: "gpt-old"}}}}}
+	after := Record{Models: []config.Model{{ID: "model", Targets: []config.Target{{ID: "target]secret", Provider: "anthropic", UpstreamModel: "claude-new"}}}}}
+	changes := PublicDiff(before, after)
+	for _, change := range changes {
+		if strings.Contains(change.Path, "target]secret") || strings.Contains(change.Path, "gpt-old") || strings.Contains(change.Path, "claude-new") {
+			t.Fatalf("public diff leaked target value: %+v", change)
+		}
 	}
 }

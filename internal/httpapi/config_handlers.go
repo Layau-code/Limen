@@ -81,7 +81,7 @@ func (h *Handler) diffConfig(w http.ResponseWriter, r *http.Request) {
 		"object":       "config_diff",
 		"base_version": before.Version,
 		"version":      after.Version,
-		"changes":      publicConfigChanges(configstore.Diff(before, after)),
+		"changes":      configstore.PublicDiff(before, after),
 	})
 }
 
@@ -227,32 +227,6 @@ func summarizeConfig(record configstore.Record) configSummary {
 		result.Models = append(result.Models, summary)
 	}
 	return result
-}
-
-// publicConfigChanges 将配置 diff 中的内部目标标识转换为 opaque 引用。
-func publicConfigChanges(changes []configstore.Change) []configstore.Change {
-	result := make([]configstore.Change, len(changes))
-	for index, change := range changes {
-		change.Path = publicConfigPath(change.Path)
-		result[index] = change
-	}
-	return result
-}
-
-// publicConfigPath 隐藏 diff 路径中可能由上游模型派生的目标 ID。
-func publicConfigPath(path string) string {
-	const marker = ".targets["
-	start := strings.Index(path, marker)
-	if start < 0 {
-		return path
-	}
-	valueStart := start + len(marker)
-	close := strings.LastIndex(path[valueStart:], "]")
-	if close < 0 {
-		return path
-	}
-	close += valueStart
-	return path[:valueStart] + catalog.OpaqueTargetID(path[valueStart:close]) + path[close:]
 }
 
 // registryFromConfig 将已校验的配置模型转换为只读 Router 目录。

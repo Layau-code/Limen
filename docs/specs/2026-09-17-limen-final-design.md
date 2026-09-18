@@ -646,6 +646,7 @@ make integration
 make build
 bin/limen explain --models models.json --request chat-request.json
 bin/limen validate --models models.json
+bin/limen diff --base models.current.json --candidate models.next.json
 make smoke
 make bench
 git diff --check
@@ -667,7 +668,7 @@ git diff --check
 
 ### 阶段 D：生产化与 1.0
 
-完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、网络安全测试、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备隐私安全的 OTLP Trace、基础 Prometheus 文本指标、Provider 凭据轮换/撤销控制面、跨实例凭据通知、数据库故障注入边界、离线 `make reliability` 故障注入契约、`limen validate` 配置预检和完全离线的 `limen demo`；遥测可视化后端、完整指标和 Secret Manager 仍待完成。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
+完成 OpenTelemetry/Exporter、完整 Prometheus 指标、Secret Manager 接入、网络安全测试、量化性能验收、部署迁移备份文档，以及端到端演示。当前实现已具备隐私安全的 OTLP Trace、基础 Prometheus 文本指标、Provider 凭据轮换/撤销控制面、跨实例凭据通知、数据库故障注入边界、离线 `make reliability` 故障注入契约、`limen validate` 配置预检、`limen diff` 配置影响分析和完全离线的 `limen demo`；遥测可视化后端、完整指标和 Secret Manager 仍待完成。1.0 仍只承诺 OpenAI/Anthropic 文本 Chat 子集。
 
 ### 1.0 之后
 
