@@ -289,11 +289,75 @@ func (h *Handler) replayDecision(w http.ResponseWriter, r *http.Request) {
 }
 
 // comparePlans 返回 Replay 与原计划之间的稳定差异码。
-func comparePlans(original, replay decision.ExecutionPlan) []string {
+type planDifference struct {
+	Path     string `json:"path"`
+	Kind     string `json:"kind"`
+	Original string `json:"original,omitempty"`
+	Replay   string `json:"replay,omitempty"`
+}
+
+// comparePlans 返回不包含上游模型名的结构化计划差异。
+func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 	if original.PlanHash == replay.PlanHash {
 		return nil
 	}
-	return []string{"plan_hash_mismatch"}
+	differences := make([]planDifference, 0)
+	appendChange := func(path, originalValue, replayValue string) {
+		if originalValue == replayValue {
+			return
+		}
+		kind := "changed"
+		switch {
+		case originalValue == "":
+			kind = "added"
+		case replayValue == "":
+			kind = "removed"
+		}
+		differences = append(differences, planDifference{Path: path, Kind: kind, Original: originalValue, Replay: replayValue})
+	}
+	appendChange("algorithm_version", original.AlgorithmVersion, replay.AlgorithmVersion)
+	appendChange("config_version", original.ConfigVersion, replay.ConfigVersion)
+	appendChange("effective_strategy", original.EffectiveStrategy, replay.EffectiveStrategy)
+	appendChange("input_hash", original.InputHash, replay.InputHash)
+	maxTargets := len(original.Targets)
+	if len(replay.Targets) > maxTargets {
+		maxTargets = len(replay.Targets)
+	}
+	for index := 0; index < maxTargets; index++ {
+		originalValue, replayValue := "", ""
+		if index < len(original.Targets) {
+			originalValue = safePlanTargetID(original.Targets[index])
+		}
+		if index < len(replay.Targets) {
+			replayValue = safePlanTargetID(replay.Targets[index])
+		}
+		appendChange(fmt.Sprintf("targets[%d]", index), originalValue, replayValue)
+	}
+	maxCandidates := len(original.Candidates)
+	if len(replay.Candidates) > maxCandidates {
+		maxCandidates = len(replay.Candidates)
+	}
+	for index := 0; index < maxCandidates; index++ {
+		originalValue, replayValue := "", ""
+		originalAccepted, replayAccepted := "", ""
+		if index < len(original.Candidates) {
+			originalValue = original.Candidates[index].Reason
+			originalAccepted = strconv.FormatBool(original.Candidates[index].Accepted)
+		}
+		if index < len(replay.Candidates) {
+			replayValue = replay.Candidates[index].Reason
+			replayAccepted = strconv.FormatBool(replay.Candidates[index].Accepted)
+		}
+		appendChange(fmt.Sprintf("candidates[%d]/reason", index), originalValue, replayValue)
+		appendChange(fmt.Sprintf("candidates[%d]/accepted", index), originalAccepted, replayAccepted)
+	}
+	appendChange("plan_hash", original.PlanHash, replay.PlanHash)
+	return differences
+}
+
+// safePlanTargetID 返回计划目标的逻辑标识，不暴露真实上游模型名。
+func safePlanTargetID(target decision.PlanTarget) string {
+	return target.ModelID + ":" + target.Target.ID
 }
 
 // writeDecisionLookupError 将决策日志查询错误映射为稳定 API 错误。
