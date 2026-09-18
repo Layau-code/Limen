@@ -229,6 +229,6 @@ make validate # 离线预检示例模型目录
 
 `make demo` 输出一行 JSON，包含 `model=auto` 的能力契约选模结果、被排除目标的稳定原因码、`openai:503>anthropic:200` 路由、实际 Attempt 数、草稿 Provider、影响分析、Decision 绑定和 Run 结算摘要；演示不需要数据库、模型密钥或外部网络。
 
-本机 Apple M5、darwin/arm64 的本次实测基准大致为：100 个候选目标的完整决策路径 `约 219 μs/op`、约 562 KB 和 1962 次分配；Router 主路径 `约 6.5 μs/op`、约 10.6 KB 和 91 次分配；Fallback 路径 `约 6.9 μs/op`、约 11.3 KB 和 102 次分配。决策基准包含候选过滤、稳定排序、计划复制和哈希计算；这些数字只用于描述测量环境，不构成性能承诺。基准不访问网络或数据库。
+本机 Apple M5、darwin/arm64 的本次实测基准大致为：100 个候选目标的完整决策路径 `约 365 μs/op`、约 562 KB 和 1962 次分配；Router 主路径 `约 7.6 μs/op`、约 10.6 KB 和 91 次分配；Fallback 路径 `约 16.2 μs/op`、约 11.3 KB 和 102 次分配。决策基准包含候选过滤、稳定排序、计划复制和哈希计算；这些数字只用于描述测量环境，不构成性能承诺。基准不访问网络或数据库。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
