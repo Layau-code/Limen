@@ -16,15 +16,16 @@ type Executor struct {
 	providers  map[string]provider.Provider
 	policy     func() Policy
 	breakerFor func(string) *circuitBreaker
+	acquire    func(decision.ExecutionPlan, Policy) func()
 }
 
 // newExecutor 创建与 Router 状态读取边界相连的计划执行器。
-func newExecutor(providers map[string]provider.Provider, policy func() Policy, breakerFor func(string) *circuitBreaker) *Executor {
+func newExecutor(providers map[string]provider.Provider, policy func() Policy, breakerFor func(string) *circuitBreaker, acquire func(decision.ExecutionPlan, Policy) func()) *Executor {
 	cloned := make(map[string]provider.Provider, len(providers))
 	for name, upstream := range providers {
 		cloned[name] = upstream
 	}
-	return &Executor{providers: cloned, policy: policy, breakerFor: breakerFor}
+	return &Executor{providers: cloned, policy: policy, breakerFor: breakerFor, acquire: acquire}
 }
 
 // Execute 按计划顺序调用 Provider，不解析逻辑模型或修改决策策略。
@@ -39,6 +40,11 @@ func (executor *Executor) ExecuteWithPolicy(parent context.Context, request prov
 
 // execute 按给定执行策略顺序调用 Provider，并保持总预算不重置。
 func (executor *Executor) execute(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, policy Policy, beforeAttempt AttemptStartHook) (Result, error) {
+	releaseBreakers := func() {}
+	if executor.acquire != nil {
+		releaseBreakers = executor.acquire(plan, policy)
+	}
+	defer releaseBreakers()
 	budget, cancelBudget := context.WithTimeout(parent, policy.RequestTimeout)
 	decision := Decision{}
 	attemptReports := make([]AttemptReport, 0, len(plan.Targets))

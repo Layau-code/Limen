@@ -82,7 +82,7 @@ HTTP Principal/Scope 鉴权与解析
 
 确定性验收提交 100 组完整 DecisionInput 和预期 `plan_hash`，覆盖契约、流式、上下文、数据等级、健康、定点价格、Run 预算和两种策略。测试重新构造 Engine 后比较规范 ExecutionPlan JSON 字节与已提交哈希；生成器必须重复产生完全相同的 fixture 文件。价格在配置和 Decision 快照中统一使用可逆的美元字符串 JSON，内存仍使用纳美元整数，保证 PostgreSQL Journal 读取后可 Replay。
 
-`Router` 是计划执行器而不是策略实现者：它在执行前再次原子获取熔断探测权，若 Half-Open 被并发请求占用则记录 `skipped_due_to_race` 并继续下一个计划目标。Provider 负责协议转换和错误分类（`retryable_transient`、`deterministic_request`、`authentication`、`quota`、`internal`），Router 只根据归一化分类决定是否 Fallback，不读取能力契约或模型映射。
+`Router` 是计划执行器而不是策略实现者：它在执行前再次原子获取熔断探测权，若 Half-Open 被并发请求占用则记录 `skipped_due_to_race` 并继续下一个计划目标。配置替换时只保留当前目录和仍有执行引用的历史熔断器；Executor 在消费计划前获取引用、返回后释放，防止长期配置发布造成无界内存增长，同时保证旧 Run 在执行期间不丢失熔断状态。Provider 负责协议转换和错误分类（`retryable_transient`、`deterministic_request`、`authentication`、`quota`、`internal`），Router 只根据归一化分类决定是否 Fallback，不读取能力契约或模型映射。
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
 

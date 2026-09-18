@@ -35,6 +35,7 @@ type Router struct {
 	policy            Policy
 	providerEndpoints map[string]string
 	breakers          map[string]*circuitBreaker
+	breakerRefs       map[string]int
 	engine            decision.Engine
 	algorithms        *decision.AlgorithmRegistry
 	now               func() time.Time
@@ -110,6 +111,7 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 		policy:            policy,
 		providerEndpoints: make(map[string]string),
 		breakers:          make(map[string]*circuitBreaker),
+		breakerRefs:       make(map[string]int),
 		now:               now,
 		algorithms:        decision.NewAlgorithmRegistry(),
 	}
@@ -125,7 +127,7 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 			}
 		}
 	}
-	router.executor = newExecutor(providerSet, router.Policy, router.breakerFor)
+	router.executor = newExecutor(providerSet, router.Policy, router.breakerFor, router.acquireBreakers)
 	return router
 }
 
@@ -156,11 +158,7 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	if err := validateEndpointBindings(registry, router.providerEndpoints); err != nil {
 		return err
 	}
-	nextBreakers := make(map[string]*circuitBreaker, len(router.breakers)+len(registry.List()))
-	// 保留历史目标的熔断器，供仍在执行旧配置版本的 Run 使用。
-	for key, breaker := range router.breakers {
-		nextBreakers[key] = breaker
-	}
+	nextBreakers := make(map[string]*circuitBreaker, len(registry.List())+len(router.breakerRefs))
 	for _, model := range registry.List() {
 		for _, target := range model.Targets {
 			key := targetKey(model, target)
@@ -169,6 +167,14 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 				continue
 			}
 			nextBreakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, router.now)
+		}
+	}
+	// 只保留仍有执行引用的历史目标，避免配置发布次数导致熔断器无界增长。
+	for key, refs := range router.breakerRefs {
+		if refs > 0 {
+			if breaker, ok := router.breakers[key]; ok {
+				nextBreakers[key] = breaker
+			}
 		}
 	}
 	router.registry = registry
@@ -617,6 +623,58 @@ func (router *Router) breakerFor(key string) *circuitBreaker {
 	router.registryMu.RLock()
 	defer router.registryMu.RUnlock()
 	return router.breakers[key]
+}
+
+// acquireBreakers 为一次执行保留目标熔断器，执行结束后释放历史目标引用。
+func (router *Router) acquireBreakers(plan decision.ExecutionPlan, policy Policy) func() {
+	keys := make([]string, 0, len(plan.Targets))
+	seen := make(map[string]struct{}, len(plan.Targets))
+	router.registryMu.Lock()
+	for _, planned := range plan.Targets {
+		model := Model{ID: planned.ModelID, Compatibility: planned.Compatibility}
+		key := targetKey(model, planned.Target)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+		if _, ok := router.breakers[key]; !ok {
+			router.breakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, router.now)
+		}
+		router.breakerRefs[key]++
+	}
+	router.registryMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			router.registryMu.Lock()
+			defer router.registryMu.Unlock()
+			for _, key := range keys {
+				refs := router.breakerRefs[key] - 1
+				if refs <= 0 {
+					delete(router.breakerRefs, key)
+					if !router.breakerInRegistryLocked(key) {
+						delete(router.breakers, key)
+					}
+					continue
+				}
+				router.breakerRefs[key] = refs
+			}
+		})
+	}
+}
+
+// breakerInRegistryLocked 判断目标是否仍属于当前目录；调用方必须持有写锁。
+func (router *Router) breakerInRegistryLocked(key string) bool {
+	for _, model := range router.registry.List() {
+		for _, target := range model.Targets {
+			if targetKey(model, target) == key {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // targetKey 返回显式目标或兼容模式前缀使用的稳定熔断标识。

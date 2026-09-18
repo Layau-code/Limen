@@ -310,6 +310,57 @@ func TestRouterReplacesRegistryAndRecordsConfigVersion(t *testing.T) {
 	}
 }
 
+func TestRouterDoesNotRetainInactiveHistoricalBreakers(t *testing.T) {
+	initial, err := NewModelRegistry([]Model{{ID: "model-0", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-0"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, initial)
+	for index := 1; index <= 20; index++ {
+		next, err := NewModelRegistry([]Model{{ID: "model-" + strconv.Itoa(index), Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-" + strconv.Itoa(index)}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := router.ReplaceRegistry(next, "version-"+strconv.Itoa(index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(router.breakers); got != 1 {
+		t.Fatalf("historical breaker count = %d, want only current target", got)
+	}
+}
+
+func TestRouterKeepsHistoricalBreakerWhileExecutionIsActive(t *testing.T) {
+	initial, err := NewModelRegistry([]Model{{ID: "old", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, initial)
+	oldTarget := initial.List()[0].Targets[0]
+	plan := decision.ExecutionPlan{Targets: []decision.PlanTarget{{ModelID: "old", Target: oldTarget}}}
+	release := router.acquireBreakers(plan, router.Policy())
+	defer release()
+
+	next, err := NewModelRegistry([]Model{{ID: "new", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-new"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.ReplaceRegistry(next, "version-new"); err != nil {
+		t.Fatal(err)
+	}
+	oldKey := targetKey(Model{ID: "old"}, oldTarget)
+	if _, ok := router.breakers[oldKey]; !ok {
+		t.Fatal("active historical breaker was removed")
+	}
+	release()
+	if err := router.ReplaceRegistry(next, "version-new-again"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := router.breakers[oldKey]; ok {
+		t.Fatal("inactive historical breaker was retained")
+	}
+}
+
 func TestRouterReplayRejectsUnavailableAlgorithmVersion(t *testing.T) {
 	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
 	if err != nil {
