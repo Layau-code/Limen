@@ -29,7 +29,16 @@ func newExecutor(providers map[string]provider.Provider, policy func() Policy, b
 
 // Execute 按计划顺序调用 Provider，不解析逻辑模型或修改决策策略。
 func (executor *Executor) Execute(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, beforeAttempt AttemptStartHook) (Result, error) {
-	policy := executor.policy()
+	return executor.execute(parent, request, plan, executor.policy(), beforeAttempt)
+}
+
+// ExecuteWithPolicy 使用固定配置版本的执行参数运行计划。
+func (executor *Executor) ExecuteWithPolicy(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, policy Policy, beforeAttempt AttemptStartHook) (Result, error) {
+	return executor.execute(parent, request, plan, policy, beforeAttempt)
+}
+
+// execute 按给定执行策略顺序调用 Provider，并保持总预算不重置。
+func (executor *Executor) execute(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, policy Policy, beforeAttempt AttemptStartHook) (Result, error) {
 	budget, cancelBudget := context.WithTimeout(parent, policy.RequestTimeout)
 	decision := Decision{}
 	attemptReports := make([]AttemptReport, 0, len(plan.Targets))

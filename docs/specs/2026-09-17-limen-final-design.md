@@ -114,7 +114,7 @@ Idempotency-Key: create-agent-run-001
 
 聊天请求通过 X-Limen-Run-ID Header 关联。受治理请求必须同时携带 Idempotency-Key；无 Run 请求可以选择携带。准入后的 Chat 会把当前 Run 的已结算金额、软预算、剩余截止时间、经济阈值和固定策略写入 DecisionInput，Replay 使用该快照而不是重新读取当前 Run。相同幂等键在请求执行期间重试返回 `409 request_in_progress`、原 Request ID 和 `Retry-After: 1`；请求完成后重试返回 `409 request_already_processed`；请求哈希不同返回 `409 idempotency_conflict`。这些分支都不会再次调用 Provider，客户端应通过 Request 查询接口读取最终结算状态。
 
-Run 创建时固定模型目录版本、策略版本和价格版本。模型实时健康状态不固定，但每次决策保存实际使用的健康快照。全局模型封禁、密钥撤销和安全策略可以覆盖 Run 的固定配置。
+Run 创建时固定模型目录版本、策略版本和价格版本；每次受治理 Chat 都按该 `config_version` 重新加载不可变目录和路由参数，版本缺失时返回 `config_version_unavailable`，不会静默使用当前版本。模型实时健康状态不固定，但每次决策保存实际使用的健康快照。全局模型封禁、密钥撤销和安全策略可以覆盖 Run 的固定配置。
 
 soft_budget_usd 是事后停用阈值，不是严格消费上限；设置为 0 表示不启用软预算。系统不预留预计费用，也不设置单请求金额上限，因此单个请求的金额超支没有固定上界；max_parallelism 只能限制同时在途请求数量。这一语义是项目已确定的取舍，API、日志和文档不得把它描述为硬预算。
 

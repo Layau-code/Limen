@@ -64,7 +64,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 9. 生产出站请求必须经安全 Client：HTTPS allowlist、无环境代理、无自动重定向，并拒绝 loopback、私网、链路本地和元数据地址。
 10. Run 的 soft budget 只在结算后影响后续准入；不得在 Provider 调用中途按预计费用截断当前响应，也不得把未知费用写成零。
 11. 所有受治理 Store 方法必须显式接收 tenant_id；跨租户资源不能只依赖单列 ID，账本以 `(tenant_id, request_id)` 幂等。
-12. Run 创建后固定 `strategy` 和 `config_version`；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
+12. Run 创建后固定 `strategy` 和 `config_version`；每次受治理 Chat 必须按该版本加载目录和路由参数，不能因线上发布切换配置；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 13. `suspended_accounting` 期间允许记录 `complete_requested` 但不得直接完成；所有未知费用处置完毕后才按固定优先级恢复或进入 `completed`。
 14. 生产 PostgreSQL 事务连接池必须通过 `store.OpenPostgres` 设置有限 I/O 期限；`LISTEN/NOTIFY` 专用监听器除外，禁止为业务 Store 重新使用裸 `sql.Open("postgres", ...)`。
 15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。Metrics、Trace 和日志中的目标标识必须使用 `catalog.OpaqueTargetID`；内部 Attempt/结算记录可保留真实映射，但观测字段不能通过派生 `target_id` 间接泄露上游模型名。
@@ -111,6 +111,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
+- Run 配置版本测试必须证明发布新版本后，已有 Run 仍使用创建时的目录、价格和路由参数；版本缺失时返回 `config_version_unavailable`，不得静默降级到当前目录。
 - 配置测试必须覆盖环境密钥、`*_FILE` 文件密钥、来源冲突、空文件、读取失败和 PostgreSQL Key Store 对静态 Key 文件的拒绝；测试错误不得包含密钥内容。
 - 配置控制面安全视图测试必须证明摘要和 diff 不泄露由上游模型派生的目标标识。
 - 配置审批测试必须证明响应不泄露发布幂等键、请求哈希和租户字段。

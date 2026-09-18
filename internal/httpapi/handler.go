@@ -1153,7 +1153,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer releaseLease()
-	h.forward(w, r, envelope.Request, envelope.Contract, envelope.Run, requestID)
+	h.forward(w, r, envelope.Request, envelope.Contract, envelope.Run, envelope.Registry, envelope.ConfigVersion, envelope.Policy, requestID)
 }
 
 // applyRunContract 将 Run 固定策略注入请求，并拒绝客户端覆盖治理边界。
@@ -1184,6 +1184,33 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 			remainingDeadline = 0
 		}
 	}
+	if configVersion := strings.TrimSpace(runItem.ConfigVersion); configVersion != "" && configVersion != "runtime" && h.router != nil && configVersion != h.router.ConfigVersion() {
+		if h.configs == nil {
+			writeError(w, http.StatusConflict, "Run configuration version is unavailable", "invalid_request_error", "config_version_unavailable")
+			return false
+		}
+		record, configErr := h.configs.Get(r.Context(), h.requestTenantID(r), configVersion)
+		if configErr != nil {
+			if errors.Is(configErr, configstore.ErrNotFound) {
+				writeError(w, http.StatusConflict, "Run configuration version is unavailable", "invalid_request_error", "config_version_unavailable")
+				return false
+			}
+			writeError(w, http.StatusServiceUnavailable, "Run configuration is unavailable", "api_error", "config_version_unavailable")
+			return false
+		}
+		registry, registryErr := registryFromConfig(record.Models)
+		if registryErr != nil {
+			writeError(w, http.StatusConflict, "Run configuration version is invalid", "invalid_request_error", "config_version_unavailable")
+			return false
+		}
+		envelope.Registry = registry
+		envelope.ConfigVersion = record.Version
+		policy.AttemptTimeout = record.Routing.AttemptTimeout
+		policy.FailureThreshold = record.Routing.FailureThreshold
+		policy.Cooldown = record.Routing.Cooldown
+		policy.EconomyThresholdPercent = record.Routing.EconomyThresholdPercent
+		policy.MinimumAttemptWindow = record.Routing.MinimumAttemptWindow
+	}
 	envelope.Run = decision.RunSnapshot{
 		Governed:                true,
 		SettledCostNanoUSD:      runItem.SettledCostNanoUSD,
@@ -1192,6 +1219,7 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 		RemainingDeadline:       remainingDeadline,
 		MinimumAttemptWindow:    policy.MinimumAttemptWindow,
 	}
+	envelope.Policy = &policy
 	return true
 }
 
@@ -1516,7 +1544,7 @@ func attemptState(report gateway.AttemptReport) run.AttemptState {
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, runRequestID string) {
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, registry *gateway.ModelRegistry, configVersion string, policy *gateway.Policy, runRequestID string) {
 	tenantID := h.requestTenantID(r)
 	// 仅传递租户标识，Provider 再按绑定的 endpoint 解析实际密钥。
 	request.TenantID = tenantID
@@ -1549,11 +1577,18 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 	}
 	decisionID := ""
-	result, err := h.router.ChatWithContractHooksAndRun(r.Context(), request, contract, runSnapshot, func(input decision.Input, plan decision.ExecutionPlan) error {
-		id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
-		decisionID = id
-		return recordErr
-	}, beforeAttempt)
+	result, err := h.router.ChatWithOptions(r.Context(), request, contract, gateway.ChatOptions{
+		Run:           runSnapshot,
+		Registry:      registry,
+		ConfigVersion: configVersion,
+		Policy:        policy,
+		BeforeExecute: func(input decision.Input, plan decision.ExecutionPlan) error {
+			id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
+			decisionID = id
+			return recordErr
+		},
+		BeforeAttempt: beforeAttempt,
+	})
 	attemptReports = result.Attempts
 	metricModel := h.router.ObservableModelID(request.Model)
 	for _, attempt := range result.Attempts {
@@ -1948,9 +1983,12 @@ func ParseChatRequest(body []byte) (provider.ChatRequest, decision.Contract, err
 }
 
 type parsedChatRequest struct {
-	Request  provider.ChatRequest
-	Contract decision.Contract
-	Run      decision.RunSnapshot
+	Request       provider.ChatRequest
+	Contract      decision.Contract
+	Run           decision.RunSnapshot
+	Registry      *gateway.ModelRegistry
+	ConfigVersion string
+	Policy        *gateway.Policy
 }
 
 type unsupportedFieldError struct {

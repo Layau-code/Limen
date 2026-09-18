@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,10 +13,12 @@ import (
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/configstore"
+	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
+	"github.com/huz/limen/internal/run"
 )
 
 func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
@@ -52,6 +56,107 @@ func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
 	models := router.Models()
 	if len(models) != 1 || models[0].ID != "new" {
 		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestGovernedChatUsesRunConfigVersionAfterPublish(t *testing.T) {
+	configs := configstore.NewMemoryStore()
+	oldDocument := []byte(`{"routing":{"attempt_timeout":"2s","failure_threshold":1,"cooldown":"10s","economy_threshold_percent":77,"minimum_attempt_window":"333ms"},"models":[{"id":"model","targets":[{"id":"old","provider":"openai","upstream_model":"gpt-old","pricing":{"input_per_million_usd":"1","output_per_million_usd":"1"}}]}]}`)
+	oldRecord, err := configs.Create(context.Background(), "tenant-a", oldDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seenModel string
+	upstream := testProviderFunc(func(_ context.Context, request provider.ChatRequest) (provider.Response, error) {
+		seenModel = request.Model
+		return provider.Response{StatusCode: http.StatusOK, ContentType: "application/json", Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+	})
+	oldRegistry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{ID: "old", Provider: "openai", UpstreamModel: "gpt-old", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(upstream, nil, oldRegistry)
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", auth.AllScopes()), router, nil, "tenant-a", journal.NewMemoryStore(), configs, run.NewMemoryService(nil),
+	)
+	publish := func(record configstore.Record, key string) {
+		request := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+record.Version+"/publish", nil)
+		request.Header.Set("Authorization", "Bearer secret")
+		request.Header.Set("Idempotency-Key", key)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("publish status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	publish(oldRecord, "publish-old")
+	createRun := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
+	createRun.Header.Set("Authorization", "Bearer secret")
+	createRun.Header.Set("Idempotency-Key", "run-1")
+	createdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createdResponse, createRun)
+	var created run.Run
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if createdResponse.Code != http.StatusCreated || created.ConfigVersion != oldRecord.Version {
+		t.Fatalf("run = %d %+v", createdResponse.Code, created)
+	}
+	newRecord, err := configs.Create(context.Background(), "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"id":"new","provider":"openai","upstream_model":"gpt-new","pricing":{"input_per_million_usd":"1","output_per_million_usd":"1"}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish(newRecord, "publish-new")
+
+	chat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	chat.Header.Set("Authorization", "Bearer secret")
+	chat.Header.Set("X-Limen-Run-ID", created.ID)
+	chat.Header.Set("Idempotency-Key", "request-1")
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chat)
+	if chatResponse.Code != http.StatusOK || seenModel != "gpt-old" || chatResponse.Header().Get("X-Limen-Config-Version") != oldRecord.Version {
+		t.Fatalf("chat status=%d model=%q body=%s", chatResponse.Code, seenModel, chatResponse.Body.String())
+	}
+	decisionRequest := httptest.NewRequest(http.MethodGet, "/v1/limen/decisions/"+chatResponse.Header().Get("X-Limen-Decision-ID"), nil)
+	decisionRequest.Header.Set("Authorization", "Bearer secret")
+	decisionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(decisionResponse, decisionRequest)
+	var decisionRecord struct {
+		Input decision.Input `json:"input"`
+	}
+	if err := json.Unmarshal(decisionResponse.Body.Bytes(), &decisionRecord); err != nil {
+		t.Fatal(err)
+	}
+	if decisionRecord.Input.ConfigVersion != oldRecord.Version || decisionRecord.Input.Run.EconomyThresholdPercent != 77 || decisionRecord.Input.Run.MinimumAttemptWindow != 333*time.Millisecond {
+		t.Fatalf("decision = %+v", decisionRecord.Input)
+	}
+}
+
+func TestGovernedChatRejectsMissingRunConfigVersion(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-current"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		t.Fatal("provider must not be called")
+		return provider.Response{}, nil
+	}), nil, registry)
+	router.SetConfigVersion("current")
+	runs := run.NewMemoryService(nil)
+	if err := runs.CreateRun(context.Background(), "tenant-a", run.Run{ID: "run-missing", State: run.StateActive, SoftBudgetNanoUSD: 1, MaxParallelism: 1, Strategy: "balanced", ConfigVersion: "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", auth.AllScopes()), router, nil, "tenant-a", journal.NewMemoryStore(), configstore.NewMemoryStore(), runs,
+	)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("X-Limen-Run-ID", "run-missing")
+	request.Header.Set("Idempotency-Key", "request-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "config_version_unavailable") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

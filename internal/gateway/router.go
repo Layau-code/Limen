@@ -64,6 +64,16 @@ type AttemptReport struct {
 // AttemptStartHook 在 Provider 调用前持久化 Attempt，失败时不会发起调用。
 type AttemptStartHook func(decision.PlanTarget) error
 
+// ChatOptions 描述一次 Chat 执行所需的可选治理快照和审计钩子。
+type ChatOptions struct {
+	Run           decision.RunSnapshot
+	Registry      *ModelRegistry
+	ConfigVersion string
+	Policy        *Policy
+	BeforeExecute func(decision.Input, decision.ExecutionPlan) error
+	BeforeAttempt AttemptStartHook
+}
+
 // Decision 描述一次请求实际经过的安全路由路径。
 type Decision struct {
 	Provider string
@@ -141,7 +151,11 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	policy = normalizePolicy(policy)
 	router.registryMu.Lock()
 	defer router.registryMu.Unlock()
-	nextBreakers := make(map[string]*circuitBreaker)
+	nextBreakers := make(map[string]*circuitBreaker, len(router.breakers)+len(registry.List()))
+	// 保留历史目标的熔断器，供仍在执行旧配置版本的 Run 使用。
+	for key, breaker := range router.breakers {
+		nextBreakers[key] = breaker
+	}
 	for _, model := range registry.List() {
 		for _, target := range model.Targets {
 			key := targetKey(model, target)
@@ -200,29 +214,41 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 
 // ChatWithContract 根据能力契约生成计划，再在共享总预算内执行目标。
 func (router *Router) ChatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract) (Result, error) {
-	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, nil, nil)
+	return router.ChatWithOptions(parent, request, contract, ChatOptions{})
 }
 
 // ChatWithContractAndRun 根据固定 Run 快照生成计划并执行一次请求。
 func (router *Router) ChatWithContractAndRun(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot) (Result, error) {
-	return router.chatWithContract(parent, request, contract, runSnapshot, nil, nil)
+	return router.ChatWithOptions(parent, request, contract, ChatOptions{Run: runSnapshot})
 }
 
 // ChatWithContractHooks 允许调用方同时记录决策和每次 Provider 尝试。
 func (router *Router) ChatWithContractHooks(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
-	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, beforeExecute, beforeAttempt)
+	return router.ChatWithOptions(parent, request, contract, ChatOptions{BeforeExecute: beforeExecute, BeforeAttempt: beforeAttempt})
 }
 
 // ChatWithContractHooksAndRun 在持久化计划前注入 Run 快照和 Attempt 钩子。
 func (router *Router) ChatWithContractHooksAndRun(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
-	return router.chatWithContract(parent, request, contract, runSnapshot, beforeExecute, beforeAttempt)
+	return router.ChatWithOptions(parent, request, contract, ChatOptions{Run: runSnapshot, BeforeExecute: beforeExecute, BeforeAttempt: beforeAttempt})
+}
+
+// ChatWithOptions 使用显式治理快照和配置目录执行一次 Chat 请求。
+func (router *Router) ChatWithOptions(parent context.Context, request provider.ChatRequest, contract decision.Contract, options ChatOptions) (Result, error) {
+	return router.chatWithContract(parent, request, contract, options)
 }
 
 // chatWithContract 统一处理计划生成、审计回调和计划执行。
-func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
+func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, options ChatOptions) (Result, error) {
 	ctx, span := otel.Tracer("github.com/huz/limen/internal/gateway").Start(parent, "limen.decision")
 	defer span.End()
-	input, plan, err := router.planWithInputAndRun(request, contract, runSnapshot)
+	var input decision.Input
+	var plan decision.ExecutionPlan
+	var err error
+	if options.Registry == nil {
+		input, plan, err = router.planWithInputAndRun(request, contract, options.Run)
+	} else {
+		input, plan, err = router.planWithRegistryAndRun(request, contract, options.Registry, options.ConfigVersion, options.Run)
+	}
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.String("limen.config.version", plan.ConfigVersion),
@@ -243,13 +269,13 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 		}
 		return Result{Input: input, Plan: plan}, err
 	}
-	if beforeExecute != nil {
-		if err := beforeExecute(input, plan); err != nil {
+	if options.BeforeExecute != nil {
+		if err := options.BeforeExecute(input, plan); err != nil {
 			span.SetStatus(codes.Error, "")
 			return Result{Input: input, Plan: plan}, err
 		}
 	}
-	result, err := router.executePlan(ctx, request, plan, beforeAttempt)
+	result, err := router.executePlanWithPolicy(ctx, request, plan, options.Policy, options.BeforeAttempt)
 	if err != nil {
 		span.SetStatus(codes.Error, "")
 	}
@@ -259,7 +285,7 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 
 // ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。
 func (router *Router) ChatWithContractHook(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error) (Result, error) {
-	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, beforeExecute, nil)
+	return router.ChatWithOptions(parent, request, contract, ChatOptions{BeforeExecute: beforeExecute})
 }
 
 // DryRun 只生成决策计划，不访问 Provider 或改变熔断、结算状态。
@@ -444,6 +470,14 @@ func historicalHealth(candidates []decision.Candidate, modelID string, target ca
 // executePlan 交给只消费 ExecutionPlan 的 Gateway Executor。
 func (router *Router) executePlan(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, beforeAttempt AttemptStartHook) (Result, error) {
 	return router.executor.Execute(parent, request, plan, beforeAttempt)
+}
+
+// executePlanWithPolicy 使用可选的 Run 固定执行策略消费计划。
+func (router *Router) executePlanWithPolicy(parent context.Context, request provider.ChatRequest, plan decision.ExecutionPlan, policy *Policy, beforeAttempt AttemptStartHook) (Result, error) {
+	if policy == nil {
+		return router.executePlan(parent, request, plan, beforeAttempt)
+	}
+	return router.executor.ExecuteWithPolicy(parent, request, plan, *policy, beforeAttempt)
 }
 
 // traceProviderChat 为一次真实上游调用记录不含业务正文和上游模型名的 Attempt Span。

@@ -8,6 +8,7 @@
 
 - Router 增加带 `RunSnapshot` 的 Chat、Explain 入口，旧入口保持无状态兼容。
 - HTTP Handler 在 Run 准入前读取固定策略，并把已结算金额、软预算、剩余截止时间、经济阈值和最小尝试窗口写入 DecisionInput。
+- HTTP Handler 在配置发布后按 Run 的 `config_version` 重新加载不可变目录和路由参数；找不到版本时拒绝请求，不使用当前版本代替。
 - 路由配置支持 `economy_threshold_percent`（默认 20）和 `minimum_attempt_window`（默认 250ms）。
 - `RemainingDeadline=0` 表示没有截止时间；有截止时间时，低于最小尝试窗口的目标返回 `deadline_insufficient`。
 
