@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -275,10 +276,16 @@ func main() {
 		IdleTimeout:       90 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	health.SetReady(true)
+	listener, err := openHTTPListener(cfg.Addr)
+	if err != nil {
+		logger.Error("listen failed", "error", err)
+		os.Exit(1)
+	}
+	defer listener.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	health.SetReady(true)
 	if credentialListener != nil {
 		defer credentialListener.Close()
 		go watchCredentialChanges(ctx, credentialListener, cfg.TenantID, credentialStore, credentialSetters, credentialEndpoints, logger)
@@ -308,8 +315,8 @@ func main() {
 		}
 	}()
 
-	logger.Info("Limen listening", "address", cfg.Addr)
-	serverErr := server.ListenAndServe()
+	logger.Info("Limen listening", "address", listener.Addr().String())
+	serverErr := server.Serve(listener)
 	traceShutdownContext, cancelTraceShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := tracing.Shutdown(traceShutdownContext); err != nil {
 		logger.Warn("telemetry shutdown failed")
@@ -319,6 +326,18 @@ func main() {
 		logger.Error("server failed", "error", serverErr)
 		os.Exit(1)
 	}
+}
+
+// openHTTPListener 先绑定监听地址，确保 readiness 只在 socket 可接受连接后生效。
+func openHTTPListener(address string) (net.Listener, error) {
+	if strings.TrimSpace(address) == "" {
+		return nil, errors.New("listen address is required")
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	return listener, nil
 }
 
 // watchConfigChanges 接收跨实例配置通知并刷新本地 Router 快照。

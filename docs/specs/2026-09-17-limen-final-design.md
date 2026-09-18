@@ -583,7 +583,7 @@ Trace 包含请求、准入、决策、Attempt 和结算 Span；Telemetry 导出
 - 不原样透传客户端 Header，不使用用户输入拼接 Host，也不允许凭据跨 endpoint_id 复用。
 - 限制请求体、Header、SSE 事件、空闲连接、Provider 错误体和在途请求数量。
 
-livez 只表示进程存活，readyz 表示数据库、配置和接收状态正常。关闭时先变为未就绪，再停止准入，等待有限时间后取消剩余 Context，并由租约任务处理未结算请求。
+livez 只表示进程存活，readyz 表示数据库、配置和接收状态正常；只有监听 socket 成功绑定后才进入 ready。关闭时先变为未就绪，再停止准入，等待有限时间后取消剩余 Context，并由租约任务处理未结算请求。
 
 ## 11. 依赖与部署
 

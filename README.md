@@ -206,7 +206,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 Provider 普通 JSON 响应和 SSE 观察都使用有界读取；Anthropic 普通响应超过 4 MiB 时会在转换阶段拒绝，非成功错误正文最多透传 64 KiB，避免异常上游响应造成无界内存增长。
 
-`/livez` 表示进程存活，`/readyz` 表示已完成启动；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
+`/livez` 表示进程存活，`/readyz` 表示已完成依赖初始化并成功绑定监听 socket；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 
 ## 开发验证
 

@@ -143,7 +143,7 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 ## 健康与交付
 
-`/livez` 只表示进程可响应；`/readyz` 表示启动依赖已完成，关闭时先变为未就绪再执行 `Server.Shutdown`。`limen version` 和 `limen healthcheck` 不读取业务密钥；Docker 使用静态非 root 运行时。完整运维说明见 [`docs/operations.md`](operations.md)。
+`/livez` 只表示进程可响应；`/readyz` 表示启动依赖已完成且 TCP socket 已成功绑定，关闭时先变为未就绪再执行 `Server.Shutdown`。服务使用已绑定的 Listener 调用 `Serve`，避免 readiness 早于实际接收能力。`limen version` 和 `limen healthcheck` 不读取业务密钥；Docker 使用静态非 root 运行时。完整运维说明见 [`docs/operations.md`](operations.md)。
 
 `limen demo` 使用进程内固定 Provider 演示 Fallback 和草稿影响分析，不读取密钥、不访问网络，作为可重复的端到端验收入口。
 

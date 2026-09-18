@@ -9,7 +9,7 @@
 ## 健康检查
 
 - `GET /livez`：无需鉴权，进程可响应即返回 `200`。
-- `GET /readyz`：无需鉴权，依赖组装完成返回 `200`；关闭流程开始后返回 `503`。
+- `GET /readyz`：无需鉴权，依赖组装完成且监听 socket 已成功绑定后返回 `200`；监听失败或关闭流程开始后返回 `503`/不可连接。
 - `limen healthcheck`：请求本地 `/readyz`，可直接作为容器健康检查命令。
 - `limen validate --models <path>`：离线检查模型目录、Provider endpoint 绑定并输出 `config_version`，不读取密钥或访问网络；可用 `--openai-base-url`、`--anthropic-base-url` 覆盖默认地址。
 - `limen diff --base <path> --candidate <path>`：离线比较两个模型目录的结构影响，不读取密钥、不连接数据库、不访问 Provider。

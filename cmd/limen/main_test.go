@@ -12,6 +12,21 @@ import (
 	"github.com/huz/limen/internal/gateway"
 )
 
+func TestOpenHTTPListenerBindsBeforeReadiness(t *testing.T) {
+	listener, err := openHTTPListener("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if listener.Addr().String() == "" {
+		t.Fatal("listener address is empty")
+	}
+
+	if _, err := openHTTPListener("127.0.0.1:not-a-port"); err == nil {
+		t.Fatal("expected invalid listen address error")
+	}
+}
+
 func TestGatewayTargetPreservesPricing(t *testing.T) {
 	source := config.Target{Provider: "openai", UpstreamModel: "gpt-test", EndpointID: "endpoint:0123456789abcdef01234567", Pricing: &config.Pricing{InputPerMillionNanoUSD: 11}}
 	target := gatewayTarget(source)
