@@ -44,6 +44,11 @@ func (service *MemoryService) AdmitRequest(_ context.Context, tenantID, runID st
 	return service.store.AdmitRequestWithLease(tenantID, runID, input)
 }
 
+// SetRequestDecisionID 绑定已持久化决策记录，供幂等重试查询原始决策。
+func (service *MemoryService) SetRequestDecisionID(_ context.Context, tenantID, requestID, decisionID string) error {
+	return service.store.SetRequestDecisionID(tenantID, requestID, decisionID)
+}
+
 // RecordAttemptStarted 将内存 Attempt 写入本地 Store。
 func (service *MemoryService) RecordAttemptStarted(_ context.Context, tenantID string, attempt Attempt) error {
 	return service.store.RecordAttemptStarted(tenantID, attempt)

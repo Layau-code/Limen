@@ -112,7 +112,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
 - 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、保存/读取哈希校验、持久化摘要与 JSONB 不一致、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
-- Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、无 Attempt 的零成本结算、已知成本结算和未知成本 `pending`。
+- Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、无 Attempt 的零成本结算、已知成本结算和未知成本 `pending`；已处理幂等重试还必须返回安全的原 Request ID、Decision ID 和结算状态，并证明决策标识在 Provider 调用前已绑定。
 - Run HTTP 返回测试必须证明公共响应不泄露租户标识、幂等键、请求哈希和租约信息。
 - 未知费用处置测试必须覆盖补记金额、接受未知、重复幂等键、跨 Run 请求绑定和 `admin` Scope；补记最多产生一条 Ledger。
 - Run 租约测试必须覆盖同一请求的抢占拒绝、续租、响应后释放、过期恢复、`abandoned/pending` 和 Run `suspended_accounting`，并用竞态测试验证后台恢复；HTTP 幂等测试还必须覆盖 `request_in_progress`（原 Request ID 与 `Retry-After`）、`request_already_processed`、`idempotency_conflict`，并证明重复请求不会再次调用 Provider。

@@ -98,6 +98,7 @@ type Mutation struct {
 type Service interface {
 	CreateRun(context.Context, string, Run) error
 	AdmitRequest(context.Context, string, string, AdmissionInput) (Request, error)
+	SetRequestDecisionID(context.Context, string, string, string) error
 	RecordAttemptStarted(context.Context, string, Attempt) error
 	UpdateAttemptProviderRequestID(context.Context, string, string, string) error
 	FinishAttempt(context.Context, string, string, AttemptState, time.Time) error

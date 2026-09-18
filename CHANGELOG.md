@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 受治理 Chat 的已处理幂等重试现在返回原 Request ID、Decision ID 和结算状态；决策标识在 Provider 调用前持久化绑定，避免重试丢失审计关联。
 - 新增离线 `limen diff`，在发布审批前比较两个模型目录的安全结构影响；输出配置版本、变化类型和 opaque 目标引用，不访问数据库或 Provider。
 - `limen diff` 新增 `--fail-on` 发布风险门禁，可按稳定变化类别阻止 Provider、endpoint、策略或路由变化，并保留安全 JSON 输出。
 - Replay 差异现在能识别同一 target ID 下的 Provider、上游模型、endpoint 或目标策略元数据变化，同时只返回安全差异码，不泄露隐藏映射和价格。

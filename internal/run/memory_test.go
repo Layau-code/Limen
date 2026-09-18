@@ -88,6 +88,35 @@ func TestMemoryStoreRejectsConflictingIdempotency(t *testing.T) {
 	}
 }
 
+// TestMemoryStoreBindsDecisionID 验证决策标识只允许绑定一次并可供幂等查询使用。
+func TestMemoryStoreBindsDecisionID(t *testing.T) {
+	store := NewMemoryService(nil)
+	if err := store.CreateRun(context.Background(), "tenant-1", testRun()); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := HashRequest("tenant-1", "/v1/chat/completions", "decision-key", []byte(`{"model":"auto"}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := store.AdmitRequest(context.Background(), "tenant-1", "run-1", AdmissionInput{Request: Request{Endpoint: "/v1/chat/completions", IdempotencyKey: "decision-key", RequestHash: hash}, Now: time.Unix(100, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRequestDecisionID(context.Background(), "tenant-1", request.ID, "decision_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRequestDecisionID(context.Background(), "tenant-1", request.ID, "decision_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRequestDecisionID(context.Background(), "tenant-1", request.ID, "decision_2"); err == nil {
+		t.Fatal("expected decision binding conflict")
+	}
+	bound, err := store.GetRequest(context.Background(), "tenant-1", request.ID)
+	if err != nil || bound.DecisionID != "decision_1" {
+		t.Fatalf("bound request = %+v err=%v", bound, err)
+	}
+}
+
 func TestMemoryRequestLeaseRenewsAndRecovers(t *testing.T) {
 	store := NewMemoryStore()
 	if err := store.CreateRun(testRun()); err != nil {

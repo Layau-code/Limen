@@ -580,6 +580,43 @@ func TestPostgresIntegrationConcurrentIdempotency(t *testing.T) {
 	}
 }
 
+// TestPostgresIntegrationDecisionBindingSurvivesRetry 验证已处理幂等重试能读取原决策和结算状态。
+func TestPostgresIntegrationDecisionBindingSurvivesRetry(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-decision-binding")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	store := NewPostgresStore(appDB)
+	item := integrationRun(integrationID("run-decision-binding"), 1)
+	if err := store.CreateRun(ctx, tenantID, item); err != nil {
+		t.Fatal(err)
+	}
+	request, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request: run.Request{ID: integrationID("request-decision-binding"), Endpoint: "/v1/chat/completions", IdempotencyKey: "decision-key", RequestHash: "decision-hash"},
+		Now:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRequestDecisionID(ctx, tenantID, request.ID, "decision_1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginSettlement(ctx, tenantID, request.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	if _, err := store.SettleRequest(ctx, tenantID, request.ID, &zero, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := store.AdmitRequest(ctx, tenantID, item.ID, AdmissionInput{
+		Request: run.Request{ID: integrationID("request-decision-retry"), Endpoint: "/v1/chat/completions", IdempotencyKey: "decision-key", RequestHash: "decision-hash"},
+		Now:     time.Now().UTC(),
+	})
+	if !errors.Is(err, run.ErrRequestAlreadyProcessed) || retry.DecisionID != "decision_1" || retry.SettlementStatus != "complete" || retry.State != run.RequestSettled {
+		t.Fatalf("retry=%+v err=%v", retry, err)
+	}
+}
+
 // TestPostgresIntegrationConcurrentSettlement 验证同一费用只能进入账本一次。
 func TestPostgresIntegrationConcurrentSettlement(t *testing.T) {
 	adminDB, appDB, _ := postgresIntegrationDatabases(t)

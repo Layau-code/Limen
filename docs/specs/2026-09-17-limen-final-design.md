@@ -622,6 +622,7 @@ livez 只表示进程存活，readyz 表示数据库、配置和接收状态正�
 
 - 对同一 Run 发起 100 个并发准入请求，max_parallelism=8 时任意时刻最多 8 个处于在途或待结算状态，最终计数无丢失。
 - 对同一 Idempotency-Key 并发请求 100 次，Provider 实际调用至多一次，Ledger 至多一条；不同请求体稳定返回 idempotency_conflict。
+- 已处理幂等重试必须返回原 Request ID、Decision ID 和结算状态，且这些关联在首次 Provider 调用前完成持久化绑定。
 - 至少 100 组已提交 DecisionInput fixture 在重启后得到字节级相同的规范 ExecutionPlan 和 plan_hash。
 - 数据库恢复后，settlement_pending 请求在三十秒内完成重试或转为 suspended_accounting，不永久占用并发名额。
 - 跨实例取消在正常数据库连接下 p95 不超过两秒，丢失 NOTIFY 后轮询仍能生效。

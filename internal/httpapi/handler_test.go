@@ -476,7 +476,11 @@ func TestGovernedChatIdempotencyProvidesRetryContract(t *testing.T) {
 
 	processedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(processedResponse, newChat(body))
-	if processedResponse.Code != http.StatusConflict || processedResponse.Header().Get("X-Limen-Request-ID") != requestID || processedResponse.Header().Get("Retry-After") != "" || !strings.Contains(processedResponse.Body.String(), "request_already_processed") {
+	var processedEnvelope errorEnvelope
+	if err := json.Unmarshal(processedResponse.Body.Bytes(), &processedEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if processedResponse.Code != http.StatusConflict || processedResponse.Header().Get("X-Limen-Request-ID") != requestID || processedResponse.Header().Get("Retry-After") != "" || processedEnvelope.Error.Code != "request_already_processed" || processedEnvelope.Error.RequestID != requestID || processedEnvelope.Error.DecisionID == "" || processedEnvelope.Error.SettlementStatus != "complete" {
 		t.Fatalf("processed duplicate = %d headers=%v body=%s", processedResponse.Code, processedResponse.Header(), processedResponse.Body.String())
 	}
 

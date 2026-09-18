@@ -1371,7 +1371,7 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 	now := time.Now().UTC()
 	item, err := h.runs.AdmitRequest(r.Context(), tenantID, runID, run.AdmissionInput{Request: run.Request{ID: requestID, Endpoint: r.URL.Path, IdempotencyKey: key, RequestHash: hash}, Now: now, LeaseOwner: h.leaseOwner, LeaseTTL: run.RequestLeaseDuration})
 	if err != nil {
-		writeRunAdmissionError(w, err, item.ID)
+		writeRunAdmissionError(w, err, item)
 		return "", nil, false
 	}
 	w.Header().Set("X-Limen-Request-ID", item.ID)
@@ -1627,8 +1627,16 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		Policy:        policy,
 		BeforeExecute: func(input decision.Input, plan decision.ExecutionPlan) error {
 			id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
+			if recordErr != nil {
+				return recordErr
+			}
+			if runRequestID != "" {
+				if err := h.runs.SetRequestDecisionID(r.Context(), tenantID, runRequestID, id); err != nil {
+					return fmt.Errorf("%w: bind request decision: %v", errDecisionJournal, err)
+				}
+			}
 			decisionID = id
-			return recordErr
+			return nil
 		},
 		BeforeAttempt: beforeAttempt,
 	})
@@ -1899,19 +1907,22 @@ func writePendingSettlementTrailers(w http.ResponseWriter) {
 	w.Header().Set("X-Limen-Settlement-Status", "pending")
 }
 
-// writeRunAdmissionError 将 Run 准入错误映射为稳定 API 错误。
-func writeRunAdmissionError(w http.ResponseWriter, err error, requestID string) {
-	if requestID != "" {
-		w.Header().Set("X-Limen-Request-ID", requestID)
+// writeRunAdmissionError 将 Run 准入错误映射为稳定 API 错误，并保留安全幂等摘要。
+func writeRunAdmissionError(w http.ResponseWriter, err error, request run.Request) {
+	if request.ID != "" {
+		w.Header().Set("X-Limen-Request-ID", request.ID)
 	}
+	metadata := errorMetadata{RequestID: request.ID}
 	switch {
 	case errors.Is(err, run.ErrRequestInProgress):
 		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusConflict, "request is in progress", "invalid_request_error", "request_in_progress")
+		writeErrorWithMetadata(w, http.StatusConflict, "request is in progress", "invalid_request_error", "request_in_progress", metadata)
 	case errors.Is(err, run.ErrRequestAlreadyProcessed):
-		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
+		metadata.DecisionID = request.DecisionID
+		metadata.SettlementStatus = request.SettlementStatus
+		writeErrorWithMetadata(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed", metadata)
 	case errors.Is(err, run.ErrIdempotencyConflict):
-		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
+		writeErrorWithMetadata(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict", metadata)
 	case errors.Is(err, run.ErrRunDeadlineExceeded):
 		writeError(w, http.StatusRequestTimeout, "Run deadline exceeded", "invalid_request_error", "run_deadline_exceeded")
 	case errors.Is(err, run.ErrRunBudgetExhausted):

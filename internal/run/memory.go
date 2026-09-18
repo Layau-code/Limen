@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -201,6 +202,27 @@ func (store *MemoryStore) AdmitRequest(tenantID, runID string, request Request, 
 // AdmitRequestWithLease 在准入事务内同时写入执行实例租约。
 func (store *MemoryStore) AdmitRequestWithLease(tenantID, runID string, input AdmissionInput) (Request, error) {
 	return store.admitRequest(tenantID, runID, input.Request, input.Now, input.LeaseOwner, input.LeaseTTL)
+}
+
+// SetRequestDecisionID 为已准入请求保存唯一的决策记录标识。
+func (store *MemoryStore) SetRequestDecisionID(tenantID, requestID, decisionID string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if strings.TrimSpace(decisionID) == "" {
+		return errors.New("decision id is required")
+	}
+	key := resourceKey(tenantID, requestID)
+	request, exists := store.requests[key]
+	if !exists {
+		return ErrResourceNotFound
+	}
+	if request.DecisionID != "" && request.DecisionID != decisionID {
+		return errors.New("request decision is already bound")
+	}
+	request.DecisionID = decisionID
+	request.UpdatedAt = time.Now().UTC()
+	store.requests[key] = request
+	return nil
 }
 
 // admitRequest 是内存 Store 的统一准入实现。

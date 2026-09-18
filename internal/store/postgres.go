@@ -217,9 +217,11 @@ func (store *PostgresStore) AdmitRequest(ctx context.Context, tenantID, runID st
 		return run.Request{}, err
 	}
 	var existing run.Request
-	err = tx.QueryRowContext(ctx, `SELECT id, request_hash, state FROM run_requests WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, input.Request.Endpoint, input.Request.IdempotencyKey).
-		Scan(&existing.ID, &existing.RequestHash, &existing.State)
+	var decisionID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT id, request_hash, state, settlement_status, decision_id FROM run_requests WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, input.Request.Endpoint, input.Request.IdempotencyKey).
+		Scan(&existing.ID, &existing.RequestHash, &existing.State, &existing.SettlementStatus, &decisionID)
 	if err == nil {
+		existing.DecisionID = decisionID.String
 		if existing.RequestHash != input.Request.RequestHash {
 			return existing, ErrIdempotencyConflict
 		}
@@ -260,6 +262,35 @@ func (store *PostgresStore) AdmitRequest(ctx context.Context, tenantID, runID st
 		return run.Request{}, err
 	}
 	return request, nil
+}
+
+// SetRequestDecisionID 为已准入请求保存唯一的决策记录标识。
+func (store *PostgresStore) SetRequestDecisionID(ctx context.Context, tenantID, requestID, decisionID string) error {
+	if store.db == nil || tenantID == "" || requestID == "" || decisionID == "" {
+		return errors.New("decision binding requires database, tenant, request and decision")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	var existing sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT decision_id FROM run_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, requestID).Scan(&existing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return run.ErrResourceNotFound
+		}
+		return err
+	}
+	if existing.Valid && existing.String != decisionID {
+		return errors.New("request decision is already bound")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE run_requests SET decision_id=$3, updated_at=$4 WHERE tenant_id=$1 AND id=$2`, tenantID, requestID, decisionID, time.Now().UTC()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AcquireRequestLease 为 PostgreSQL 请求分配一个可续租的执行实例租约。
