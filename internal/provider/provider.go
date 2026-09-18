@@ -46,6 +46,7 @@ type UsageRecorder interface {
 }
 
 // Response 表示 Provider 返回的、与 HTTP 框架无关的响应。
+// Provider 出错时 Body 不会被消费，Executor 会防御性关闭它。
 type Response struct {
 	StatusCode        int
 	ContentType       string
@@ -139,7 +140,7 @@ func resolveCredential(ctx context.Context, tenantID string, resolver Credential
 	return fallback, nil
 }
 
-// Provider 定义统一的聊天调用入口。
+// Provider 定义统一的聊天调用入口；出错时即使同时返回 Body，调用方也必须关闭它。
 type Provider interface {
 	Chat(context.Context, ChatRequest) (Response, error)
 }

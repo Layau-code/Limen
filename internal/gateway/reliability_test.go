@@ -82,6 +82,27 @@ func TestRouterDoesNotFallbackOnRequestError(t *testing.T) {
 	}
 }
 
+func TestRouterClosesResponseBodyWhenProviderReturnsError(t *testing.T) {
+	orphanBody := &closeSpy{Reader: strings.NewReader("orphan")}
+	providers := map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			return provider.Response{StatusCode: http.StatusBadGateway, Body: orphanBody}, &provider.TransportError{Operation: "send", Err: errors.New("connection reset")}
+		}),
+		"anthropic": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+		}),
+	}
+	router := newReliabilityRouter(t, providers)
+	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Response.Body.Close()
+	if !orphanBody.closed {
+		t.Fatal("provider response body was not closed after provider error")
+	}
+}
+
 func TestRouterFallsBackAfterAttemptTimeout(t *testing.T) {
 	providers := map[string]provider.Provider{
 		"openai": providerFunc(func(ctx context.Context, request provider.ChatRequest) (provider.Response, error) {

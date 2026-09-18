@@ -127,6 +127,10 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 		decision.Attempts++
 		decision.Provider = target.Provider
 		if err != nil {
+			if response.Body != nil {
+				// Provider 出错时不再消费响应，防御性关闭可能已创建的上游连接。
+				_ = response.Body.Close()
+			}
 			cancelAttempt()
 			errorClass := provider.ClassifyError(err)
 			if budget.Err() != nil || parent.Err() != nil || errors.Is(err, context.Canceled) {

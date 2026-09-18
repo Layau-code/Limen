@@ -65,7 +65,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 2. `context.Context` 必须贯穿 HTTP、Router 和 Provider；客户端断开要取消上游。
 3. 一次请求只创建一个总预算；每个目标最多调用一次；SSE 返回成功后不切换。
 4. 只有 Provider 归一化为 `retryable_transient` 的响应和传输错误触发 Fallback；认证、配额和确定性错误直接返回。
-5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥；普通响应和 SSE 必须传播上游读取或客户端写入错误，已开始的响应不得 Fallback，传输中断必须把 Settlement 标记为 `partial`。
+5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥；普通响应和 SSE 必须传播上游读取或客户端写入错误，已开始的响应不得 Fallback，传输中断必须把 Settlement 标记为 `partial`。Provider 同时返回响应和错误时，Executor 必须关闭未消费的响应体。
 6. 优先整理和复用旧实现，保持文件职责单一，删除已失效代码。
 7. 金额使用十进制定点整数；缺失用量或价格时省略费用，不把未知值写成零。
 8. Decision Engine 只消费带版本的输入快照，不读取时间、网络或数据库；Router 负责执行计划和并发熔断探测，Provider 只负责协议转换。
@@ -89,6 +89,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `Router.ExplainWithRegistry` 和 `ReplayWithRegistry` 必须复用与发布相同的 endpoint 绑定校验。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
+- Provider 出错时不提供可消费响应；Executor 仍须防御性关闭同时返回的非空 Body，避免异常适配器泄漏上游连接。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；构造函数未注入 Client 时也必须自动创建带 endpoint allowlist 的安全 Client，禁止回退到 `http.DefaultClient`；测试可注入 `httptest` Client。
 - 配置发布通知只允许携带租户和版本哈希；实例收到通知后必须从数据库重新读取配置，不能信任通知正文，且必须保留通知丢失后的轮询或重启恢复路径。
 - 配置发布必须携带 `Idempotency-Key`；幂等记录绑定租户、固定操作和请求哈希，重试不得重复切换版本，冲突必须返回稳定错误。
