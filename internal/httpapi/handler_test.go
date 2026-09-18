@@ -98,6 +98,25 @@ func TestModelsRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestIdempotencyKeyHasStableBounds(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", nil)
+	request.Header.Set("Idempotency-Key", "  request-1  ")
+	if key, ok := idempotencyKey(request); !ok || key != "request-1" {
+		t.Fatalf("normalized key = %q, ok = %v", key, ok)
+	}
+
+	for _, value := range []string{
+		strings.Repeat("a", maxIdempotencyKeyBytes+1),
+		"request\x00-1",
+		"request\t-1",
+	} {
+		request.Header.Set("Idempotency-Key", value)
+		if key, ok := idempotencyKey(request); ok {
+			t.Fatalf("invalid key accepted: %q", key)
+		}
+	}
+}
+
 func TestMetricsRequiresAdminScope(t *testing.T) {
 	handler := NewWithHealthAndRunsForTenantScopes("secret", nil, nil, "tenant-a", []auth.Scope{auth.ScopeInference}, nil)
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)

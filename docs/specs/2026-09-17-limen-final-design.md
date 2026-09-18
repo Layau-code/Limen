@@ -153,7 +153,7 @@ Attempt 在访问 Provider 前持久化为 started，执行结束后变为 succe
 
 ### 4.4 幂等与并发
 
-幂等唯一键为 tenant_id、endpoint、idempotency_key，数据库同时保存规范化请求哈希。哈希输入包括 Run ID、endpoint、规范请求体和影响语义的 Limen Header，不包括 Authorization：
+幂等唯一键为 tenant_id、endpoint、idempotency_key，数据库同时保存规范化请求哈希。HTTP 控制面先裁剪幂等键首尾空白，并限制为最多 256 字节的可见 ASCII；空值、超长值和控制字符统一拒绝，避免索引膨胀和跨客户端规范化差异。哈希输入包括 Run ID、endpoint、规范请求体和影响语义的 Limen Header，不包括 Authorization：
 
 - 推理请求第一次创建 run_request 后才允许访问 Provider。
 - 推理请求使用相同 Key、相同哈希且仍在执行时返回 409 request_in_progress 和原 request_id。

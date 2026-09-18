@@ -32,7 +32,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-const maxRequestBytes = 4 << 20
+const (
+	maxRequestBytes        = 4 << 20
+	maxIdempotencyKeyBytes = 256
+)
 
 var errDecisionJournal = errors.New("decision journal unavailable")
 
@@ -1067,7 +1070,15 @@ func writeAccountingResolutionError(w http.ResponseWriter, err error, requestID 
 // idempotencyKey 读取并规范化控制面幂等键。
 func idempotencyKey(r *http.Request) (string, bool) {
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	return key, key != ""
+	if key == "" || len(key) > maxIdempotencyKeyBytes {
+		return "", false
+	}
+	for index := 0; index < len(key); index++ {
+		if key[index] < 0x21 || key[index] > 0x7e {
+			return "", false
+		}
+	}
+	return key, true
 }
 
 // readRequestBody 以有界缓冲读取控制面请求正文。

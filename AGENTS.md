@@ -89,6 +89,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
 - 配置发布通知只允许携带租户和版本哈希；实例收到通知后必须从数据库重新读取配置，不能信任通知正文，且必须保留通知丢失后的轮询或重启恢复路径。
 - 配置发布必须携带 `Idempotency-Key`；幂等记录绑定租户、固定操作和请求哈希，重试不得重复切换版本，冲突必须返回稳定错误。
+- 控制面 `Idempotency-Key` 先裁剪首尾空白，再限制为最多 256 字节的可见 ASCII；空值、超长值和控制字符统一按缺少幂等键拒绝，避免索引膨胀和跨客户端规范化差异。
 - Provider 密钥通过 `SetAPIKey` 原子替换；加密存储只能返回短暂明文给对应适配器，禁止写入日志、决策快照或 HTTP 响应。启用租户凭据解析时，`ChatRequest` 只携带非敏感租户标识，Router/Decision 不得持久化或读取实际密钥。
 - 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新且失败不得回滚事务，数据库记录仍是唯一事实来源。
 - API Key 控制 API 只接受 `admin` Scope；创建、列表、轮换和撤销不接受请求中的租户字段，租户必须来自 Principal。创建或轮换明文只在首次成功响应出现，重试不能从数据库恢复明文。
