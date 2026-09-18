@@ -38,6 +38,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Decision Journal 的 HTTP 响应必须经过安全视图转换：不返回 `upstream_model`，目标引用使用稳定 opaque ID；内部完整快照只能用于租户隔离的 Replay。
 - 配置摘要和配置 diff 也必须使用稳定 opaque 目标引用；目标 ID 可能由 `provider:upstream_model` 派生，不能直接进入控制面响应或 diff 路径。
 - Run 和 Request 的 HTTP 响应必须经过安全 DTO 转换：不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt 字段；客户端只读取生命周期、结算和决策关联状态。
+- 配置审批 HTTP 响应必须经过安全 DTO 转换：不返回发布幂等键、请求哈希或租户字段，只返回审批生命周期和非敏感执行者标识。
 - 访问日志的 Path 只能使用固定路由类别，动态或未知路径必须归并，不能把用户输入原样写入日志。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
@@ -99,6 +100,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
 - 配置控制面安全视图测试必须证明摘要和 diff 不泄露由上游模型派生的目标标识。
+- 配置审批测试必须证明响应不泄露发布幂等键、请求哈希和租户字段。
 - 配置审批测试必须覆盖默认关闭回归、批准者身份分离、过期、状态冲突、绑定冲突、并发幂等、Router 激活失败重试和 PostgreSQL RLS；不得把审批校验只放在 HTTP 层而绕过持久化事务。
 - 算法版本测试必须覆盖当前版本解析、未知版本拒绝和重复注册拒绝；配置 diff 测试必须证明只返回稳定路径与变化类型。
 - Replay 算法注册必须支持显式保留截止时间；过期版本返回 `algorithm_version_unavailable`，不得静默回退；新增算法版本必须保留旧版本语义或明确退役窗口。

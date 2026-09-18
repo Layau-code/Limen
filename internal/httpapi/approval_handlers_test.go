@@ -61,6 +61,11 @@ func TestConfigApprovalRequiresDistinctActorAndBindsPublish(t *testing.T) {
 	if requested.Code != http.StatusCreated {
 		t.Fatalf("approval request status=%d body=%s", requested.Code, requested.Body.String())
 	}
+	for _, secret := range []string{"publish-1", "request_hash", "tenant_id"} {
+		if strings.Contains(requested.Body.String(), secret) {
+			t.Fatalf("approval response exposes %s: %s", secret, requested.Body.String())
+		}
+	}
 	var record approval.Record
 	if err := json.Unmarshal(requested.Body.Bytes(), &record); err != nil {
 		t.Fatal(err)

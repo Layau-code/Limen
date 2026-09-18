@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/huz/limen/internal/approval"
 	"github.com/huz/limen/internal/audit"
@@ -14,6 +15,31 @@ import (
 
 type createApprovalRequest struct {
 	PublishIdempotencyKey string `json:"publish_idempotency_key"`
+}
+
+// publicApproval 将审批内部绑定转换为安全的控制面状态摘要。
+func publicApproval(record approval.Record) publicApprovalResponse {
+	return publicApprovalResponse{
+		ID:            record.ID,
+		ConfigVersion: record.ConfigVersion,
+		RequestedBy:   record.RequestedBy,
+		ApprovedBy:    record.ApprovedBy,
+		State:         record.State,
+		ExpiresAt:     record.ExpiresAt,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+	}
+}
+
+type publicApprovalResponse struct {
+	ID            string    `json:"approval_id"`
+	ConfigVersion string    `json:"config_version"`
+	RequestedBy   string    `json:"requested_by"`
+	ApprovedBy    string    `json:"approved_by,omitempty"`
+	State         string    `json:"state"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // createApproval 为指定配置发布创建一个有时效的待审批记录。
@@ -61,7 +87,7 @@ func (h *Handler) createApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.appendAudit(r.Context(), tenantID, audit.ActionApprovalRequested, "config_approval", record.ID, "success", operationHash)
-	writeJSON(w, http.StatusCreated, record)
+	writeJSON(w, http.StatusCreated, publicApproval(record))
 }
 
 // getApproval 返回当前租户指定配置发布审批的安全状态摘要。
@@ -78,7 +104,7 @@ func (h *Handler) getApproval(w http.ResponseWriter, r *http.Request) {
 		writeApprovalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, publicApproval(record))
 }
 
 // approveConfig 执行与申请者身份分离的配置发布批准操作。
@@ -137,7 +163,7 @@ func (h *Handler) mutateApproval(w http.ResponseWriter, r *http.Request, approve
 		action = audit.ActionApprovalApproved
 	}
 	h.appendAudit(r.Context(), tenantID, action, "config_approval", record.ID, "success", hash)
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, publicApproval(record))
 }
 
 // writeApprovalError 将审批状态机错误映射为稳定的控制面响应。

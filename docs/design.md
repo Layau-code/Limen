@@ -87,6 +87,8 @@ HTTP Principal/Scope 鉴权与解析
 
 Run 控制面的 HTTP 响应使用独立安全 DTO，只返回生命周期、并发、结算和决策关联状态；`tenant_id`、幂等键、请求哈希、租约字段以及 Provider 内部 Attempt 不进入公共响应。
 
+审批接口同样只返回审批 ID、配置版本、状态、有效期和非敏感执行者标识；发布幂等键与请求哈希只保留在服务端绑定校验中。
+
 当前 HTTP Run、配置、API Key 和管理审计控制面通过 `LIMEN_DATABASE_URL` 启用 PostgreSQL 持久化；启动会 Ping 数据库并执行版本化迁移，008 迁移对既有租户表启用 `FORCE ROW LEVEL SECURITY`，009 迁移保存配置发布幂等操作，010 迁移保存控制面审计摘要，011 迁移保存 API Key 控制面幂等记录并启用 Key 表 RLS，012 迁移补充审计 actor_id。生产事务连接池统一由 `store.OpenPostgres` 创建，每次 socket 读写具有 5 秒期限，数据库网络黑洞会返回错误而不是永久占住恢复协程；`LISTEN/NOTIFY` 使用可自动重连的专用长连接。配置发布通知只包含租户和版本哈希，接收实例从数据库重新读取配置并原子替换 Router；每 5 秒轮询已发布版本弥补通知丢失。未配置数据库时，控制面使用内存实现，仅适合单机开发，不能作为生产账本或配置发布记录。`LIMEN_TENANT_ID` 绑定当前静态 Key 的开发租户，`LIMEN_API_SCOPES` 控制该 Key 可用接口；启用 PostgreSQL Key Store 后，租户、Subject 和 Scope 从数据库 Key 记录生成。认证查询通过安全数据库函数按公开前缀读取最小字段，管理查询设置租户上下文并受 RLS 保护。凭据、取消和配置的 `NOTIFY` 都只是低延迟提示，通知失败不回滚已提交事务，轮询或重启负责兜底。
 
 受治理 Chat 在 Request 准入时写入执行实例租约，默认 30 秒过期、每 10 秒续租，响应结束后释放。每次真实 Provider 调用前单独写入 Attempt，收到上游非敏感 request ID 后补写，Fallback 后续目标不会覆盖前一个 Attempt 的状态。结算遇到暂时性存储错误时，当前进程按 0、100、500 毫秒退避重试；仍未完成则写入持久化 `settlement_jobs` 并返回 `pending`。后台任务使用独立租约幂等重试已知费用；未知费用只转为 `suspended_accounting`，不重放 Provider。主进程同时扫描当前租户的过期请求；恢复事务将 Request 标记为 `abandoned/pending`，把仍为 `started` 的 Attempt 标记为 `abandoned`，并暂停关联 Run 的账本。取消 Run 时在同一事务写入租户隔离取消事件，PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 广播，在途 Chat 同时每秒轮询事件作为断线兜底。真实 PostgreSQL 集成测试使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立进程、数据库暂停/恢复和两个 Store 的恢复竞争。这样既避免实例崩溃永久占用并发名额，也不把可能已经发生的上游费用伪造成零。
