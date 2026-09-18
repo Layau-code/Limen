@@ -30,6 +30,7 @@
 - Provider 基础地址配置现在强制使用 HTTPS；安全拨号器额外拒绝 CGNAT、保留测试网和广播地址，避免配置层与运行时出站策略不一致。
 - Provider 出站凭据现在绑定请求租户；启用加密凭据存储后，OpenAI/Anthropic 每次调用按租户和 endpoint 解析密钥，缺失凭据不会回退到进程共享密钥。
 - HTTP Handler 新增 `HandlerOptions` 依赖装配入口，主程序不再使用难以维护的长参数构造调用；旧入口保留为兼容包装。
+- `make check` 新增 Replay fixture 生成一致性校验，防止决策证据文件与生成器悄然漂移。
 
 ### 修复
 
