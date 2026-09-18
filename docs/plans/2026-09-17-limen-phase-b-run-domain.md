@@ -1,7 +1,5 @@
 # Limen 阶段 B：Run 与可信账本边界实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** 建立 Run 级预算、并发、幂等和结算状态机，并用可替换的 Store 接口和 PostgreSQL 迁移固定强一致边界。
 
 **Architecture:** `internal/run` 只保存可测试的领域状态和状态转移；`internal/store` 提供租户隔离的持久化接口与 SQL 迁移；阶段 B 第一批使用线程安全 MemoryStore 验证并发和幂等，Gateway 仍保持无 Run 兼容路径。任何请求费用只在结束后结算，Run 的 soft budget 是后续请求准入阈值，不是单请求硬上限。

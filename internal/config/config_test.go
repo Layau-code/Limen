@@ -27,6 +27,101 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadReadsSecretsFromFiles(t *testing.T) {
+	secretDir := t.TempDir()
+	files := map[string]string{
+		"limen":     "limen-file-secret\n",
+		"openai":    "openai-file-secret\n",
+		"anthropic": "anthropic-file-secret\n",
+	}
+	paths := make(map[string]string, len(files))
+	for name, value := range files {
+		path := filepath.Join(secretDir, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths[name] = path
+	}
+	t.Setenv("LIMEN_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("LIMEN_API_KEY_FILE", paths["limen"])
+	t.Setenv("OPENAI_API_KEY_FILE", paths["openai"])
+	t.Setenv("ANTHROPIC_API_KEY_FILE", paths["anthropic"])
+	t.Setenv("LIMEN_MODELS_FILE", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LimenAPIKey != "limen-file-secret" || cfg.OpenAIAPIKey != "openai-file-secret" || cfg.AnthropicAPIKey != "anthropic-file-secret" {
+		t.Fatal("file secrets were not loaded")
+	}
+}
+
+func TestLoadRejectsSecretValueAndFileConflict(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "limen")
+	if err := os.WriteFile(secretFile, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LIMEN_API_KEY", "env-secret")
+	t.Setenv("LIMEN_API_KEY_FILE", secretFile)
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "LIMEN_API_KEY_FILE") {
+		t.Fatalf("expected secret source conflict, got %v", err)
+	}
+}
+
+func TestLoadRejectsEmptySecretFile(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "openai")
+	if err := os.WriteFile(secretFile, []byte("\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY_FILE", secretFile)
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY_FILE") {
+		t.Fatalf("expected empty secret file error, got %v", err)
+	}
+}
+
+func TestLoadRejectsUnreadableSecretFile(t *testing.T) {
+	t.Setenv("LIMEN_API_KEY", "limen-secret")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY_FILE", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY_FILE") {
+		t.Fatalf("expected unreadable secret file error, got %v", err)
+	}
+}
+
+func TestLoadRejectsStaticAPIKeyFileInPostgresMode(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "limen")
+	if err := os.WriteFile(secretFile, []byte("static-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LIMEN_API_KEY", "")
+	t.Setenv("LIMEN_API_KEY_FILE", secretFile)
+	t.Setenv("LIMEN_API_KEY_STORE", "postgres")
+	t.Setenv("LIMEN_API_KEY_HMAC_SECRET", "hmac-secret")
+	t.Setenv("LIMEN_DATABASE_URL", "postgresql://limen:secret@db.example/limen?sslmode=require")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("LIMEN_MODELS_FILE", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "LIMEN_API_KEY_FILE") {
+		t.Fatalf("expected postgres key mode error, got %v", err)
+	}
+}
+
 func TestLoadParsesAPIScopes(t *testing.T) {
 	t.Setenv("LIMEN_API_KEY", "limen-secret")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")

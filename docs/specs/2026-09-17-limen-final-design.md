@@ -67,7 +67,7 @@ Usage 结算、Ledger、Decision Journal
 
 ~~~text
 internal/auth       Principal、Scope、租户隔离
-internal/config     环境变量、配置导入和校验
+internal/config     环境变量、文件密钥、配置导入和校验
 internal/catalog    模型能力目录和不可变版本
 internal/decision   纯决策、ExecutionPlan、Explain、Dry Run、Replay
 internal/run        Run 生命周期、快照采集、准入、持久化和结算协调
@@ -503,7 +503,7 @@ Run 和 Request 查询使用安全 DTO，不返回 `tenant_id`、幂等键、请
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入、结算和 Provider 出站路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出、原子轮换和撤销 API Key。创建和轮换使用幂等键，明文只在首次响应返回；轮换事务提交后旧 Key 立即失效，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint；每次出站按请求租户解析凭据，缺失时不回退到其他租户或进程共享密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY` 或启动时读取一次的 `LIMEN_API_KEY_FILE`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；文件密钥与明文变量不能同时设置，空文件或读取失败直接阻止启动。PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal；`LIMEN_API_KEY_FILE` 不适用于该模式。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入、结算和 Provider 出站路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出、原子轮换和撤销 API Key。创建和轮换使用幂等键，明文只在首次响应返回；轮换事务提交后旧 Key 立即失效，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint；每次出站按请求租户解析凭据，缺失时不回退到其他租户或进程共享密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |

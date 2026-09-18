@@ -86,15 +86,27 @@ type routingDocument struct {
 
 // Load 从环境变量读取配置，并校验启动所需的密钥。
 func Load() (Config, error) {
+	limenAPIKey, err := loadSecret("LIMEN_API_KEY", "LIMEN_API_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	openAIAPIKey, err := loadSecret("OPENAI_API_KEY", "OPENAI_API_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	anthropicAPIKey, err := loadSecret("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:                valueOrDefault("LIMEN_ADDR", ":8080"),
-		LimenAPIKey:         os.Getenv("LIMEN_API_KEY"),
+		LimenAPIKey:         limenAPIKey,
 		APIKeyStore:         valueOrDefault("LIMEN_API_KEY_STORE", "static"),
 		APIKeyHMACSecret:    os.Getenv("LIMEN_API_KEY_HMAC_SECRET"),
 		CredentialMasterKey: os.Getenv("LIMEN_CREDENTIAL_MASTER_KEY"),
-		OpenAIAPIKey:        os.Getenv("OPENAI_API_KEY"),
+		OpenAIAPIKey:        openAIAPIKey,
 		OpenAIBaseURL:       valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		AnthropicAPIKey:     os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicAPIKey:     anthropicAPIKey,
 		AnthropicBaseURL:    valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		Routing:             DefaultRouting(),
 		RequestTimeout:      60 * time.Second,
@@ -105,6 +117,9 @@ func Load() (Config, error) {
 	}
 	if cfg.APIKeyStore != "static" && cfg.APIKeyStore != "postgres" {
 		return Config{}, errors.New("LIMEN_API_KEY_STORE must be static or postgres")
+	}
+	if cfg.APIKeyStore == "postgres" && strings.TrimSpace(os.Getenv("LIMEN_API_KEY_FILE")) != "" {
+		return Config{}, errors.New("LIMEN_API_KEY_FILE is only supported in static key mode")
 	}
 	if cfg.APIKeyStore == "static" && cfg.LimenAPIKey == "" {
 		return Config{}, errors.New("LIMEN_API_KEY is required in static key mode")
@@ -164,6 +179,27 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// loadSecret 从环境变量或只读文件读取密钥，并拒绝同时配置两个来源。
+func loadSecret(valueName, fileName string) (string, error) {
+	value := os.Getenv(valueName)
+	path := strings.TrimSpace(os.Getenv(fileName))
+	if value != "" && path != "" {
+		return "", fmt.Errorf("%s and %s must not both be set", valueName, fileName)
+	}
+	if path == "" {
+		return value, nil
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("unable to read %s: %w", fileName, err)
+	}
+	secret := strings.TrimSpace(string(contents))
+	if secret == "" {
+		return "", fmt.Errorf("%s must contain a non-empty secret", fileName)
+	}
+	return secret, nil
 }
 
 // parseConfigApprovalFlag 只接受明确的 true 或 false，避免启动配置产生歧义。

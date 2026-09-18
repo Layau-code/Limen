@@ -2,7 +2,7 @@
 
 ## 启动
 
-生产环境使用静态鉴权时至少设置 `LIMEN_API_KEY`，并为模型文件实际引用的 Provider 设置环境密钥；启用 PostgreSQL Key Store 时，首个 `admin` Key 必须由部署初始化流程预置。若同时设置 `LIMEN_CREDENTIAL_MASTER_KEY`，Provider 凭据必须在加密凭据存储中按租户配置，环境密钥不再作为租户请求的回退。`LIMEN_MODELS_FILE` 只在启动时读取，修改后重启进程。默认监听 `:8080`，可用 `LIMEN_ADDR` 修改；之后可通过 `POST /v1/limen/keys` 创建后续 Key，并使用轮换接口在不中断租户配置的情况下替换旧 Key。
+生产环境使用静态鉴权时至少设置 `LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`，并为模型文件实际引用的 Provider 设置对应环境密钥或只读文件密钥（例如 `OPENAI_API_KEY_FILE`）；启用 PostgreSQL Key Store 时，首个 `admin` Key 必须由部署初始化流程预置，`LIMEN_API_KEY_FILE` 不参与认证。文件密钥只在启动时读取，去除首尾空白；明文变量与对应 `_FILE` 同时设置、文件为空或文件不可读都会让启动失败。若同时设置 `LIMEN_CREDENTIAL_MASTER_KEY`，Provider 凭据必须在加密凭据存储中按租户配置，环境密钥不再作为租户请求的回退。`LIMEN_MODELS_FILE` 只在启动时读取，修改后重启进程。默认监听 `:8080`，可用 `LIMEN_ADDR` 修改；之后可通过 `POST /v1/limen/keys` 创建后续 Key，并使用轮换接口在不中断租户配置的情况下替换旧 Key。
 
 启动失败通常表示配置错误：检查 JSON 是否严格匹配示例、模型 ID 是否重复、目标 Provider 是否支持、时长是否为正数，以及实际引用的 Provider Key 是否存在。生产 Provider Base URL 必须是绝对 HTTPS 地址且不能含用户信息；测试代码注入的 `httptest` Client 不受此配置限制。
 

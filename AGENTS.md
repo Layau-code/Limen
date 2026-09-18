@@ -23,6 +23,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 配置发布可选启用 `LIMEN_CONFIG_APPROVAL_REQUIRED=true`；`internal/approval` 负责双人审批状态机，审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 发布必须在同一事务内消费审批；静态 actor 不能满足身份分离。
 - 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。
 - PostgreSQL Key Store 只按公开前缀查询 HMAC 摘要，使用常量时间比较校验完整 Key；数据库、日志和 Principal 均不得保存或暴露完整 Key。
+- `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE` 只读一次启动时的文件密钥；对应明文变量与 `_FILE` 冲突必须拒绝，空文件或读取失败不能静默回退，日志不得输出密钥内容。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
 - Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
@@ -108,6 +109,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
+- 配置测试必须覆盖环境密钥、`*_FILE` 文件密钥、来源冲突、空文件、读取失败和 PostgreSQL Key Store 对静态 Key 文件的拒绝；测试错误不得包含密钥内容。
 - 配置控制面安全视图测试必须证明摘要和 diff 不泄露由上游模型派生的目标标识。
 - 配置审批测试必须证明响应不泄露发布幂等键、请求哈希和租户字段。
 - 配置审批测试必须覆盖默认关闭回归、批准者身份分离、过期、状态冲突、绑定冲突、并发幂等、Router 激活失败重试和 PostgreSQL RLS；不得把审批校验只放在 HTTP 层而绕过持久化事务。
