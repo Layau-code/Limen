@@ -14,6 +14,7 @@
 - 故障注入会强制终止持有租约的独立进程，并暂停/恢复 PostgreSQL 验证结算任务不会丢失或重复记账。
 - 可选 OTLP/HTTP Trace 将 HTTP、Run 准入、Decision、Fallback Attempt 和 Settlement 串成隐私安全的证据链。
 - Metrics 增加可信模型、状态类别、稳定拒绝码和目标标签，Attempt 计数改为只反映真实 Provider 调用。
+- Decision Engine 增加 100 组已提交输入与计划哈希的 golden Replay 语料，并提供确定性生成器。
 
 ### 修复
 
@@ -21,6 +22,7 @@
 - 过期租约恢复会把遗留的 `Attempt started` 标记为 `abandoned`；PostgreSQL 事务连接池设置 5 秒网络 I/O 期限，避免断连时永久阻塞。
 - 客户端提供的 Request ID 先转换为长度固定的不可逆摘要再进入日志与 Trace，避免借标识字段注入敏感正文。
 - 未注册模型不再原样进入 Metrics，熔断跳过也不再被错误统计为 Provider Attempt。
+- 修复定点价格 JSON 编码与解码格式不对称，带价格的 Decision Journal 现在可以从 PostgreSQL 还原并 Replay。
 
 ### 限制
 

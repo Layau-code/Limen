@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/catalog"
+	"github.com/huz/limen/internal/cost"
+	"github.com/huz/limen/internal/decision"
+	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/run"
 	"github.com/lib/pq"
 )
@@ -81,6 +86,40 @@ func TestPostgresIntegrationRLSUsesDatabasePolicy(t *testing.T) {
 	}
 	if stored.Strategy != "balanced" {
 		t.Fatalf("cross-tenant update changed strategy = %q", stored.Strategy)
+	}
+}
+
+// TestPostgresIntegrationDecisionJournalRoundTripsPricing 验证带价格的决策快照可从 JSONB 还原并 Replay。
+func TestPostgresIntegrationDecisionJournalRoundTripsPricing(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-journal-pricing")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	pricing := &cost.Pricing{InputPerMillionNanoUSD: 250_000_001, OutputPerMillionNanoUSD: 2_000_000_009}
+	input := decision.Input{
+		SchemaVersion: decision.SchemaVersionV1, AlgorithmVersion: decision.AlgorithmVersionV1,
+		ConfigVersion: "journal-config-v1", EvaluatedAtUnixMS: 1,
+		Request: decision.Request{Model: "auto", Contract: decision.Contract{Active: true, Strategy: decision.StrategyBalanced}},
+		Candidates: []decision.Candidate{{ModelID: "model", Enabled: true, SecurityAllowed: true, Target: catalog.Target{
+			ID: "target", Provider: "openai", UpstreamModel: "gpt-test", Capabilities: []string{"text"}, SupportsStreaming: true,
+			QualityTier: 1, CostTier: 1, ContextWindow: 1024, DataClasses: []string{"public"}, Pricing: pricing,
+		}}},
+	}
+	plan, err := decision.NewEngine().Decide(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewDecisionJournal(appDB)
+	record := journal.Record{ID: integrationID("decision-pricing"), TenantID: tenantID, Input: input, Plan: plan, CreatedAt: time.Now().UTC()}
+	if err := store.Save(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, tenantID, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Input, record.Input) || !reflect.DeepEqual(got.Plan, record.Plan) {
+		t.Fatalf("journal round trip changed decision: got=%+v want=%+v", got, record)
 	}
 }
 

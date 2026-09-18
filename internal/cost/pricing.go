@@ -31,6 +31,17 @@ type pricingDocument struct {
 	OutputPerMillionUSD string `json:"output_per_million_usd"`
 }
 
+// MarshalJSON 使用公开美元字符串格式编码价格，保证配置和决策快照可逆。
+func (pricing Pricing) MarshalJSON() ([]byte, error) {
+	if pricing.InputPerMillionNanoUSD < 0 || pricing.OutputPerMillionNanoUSD < 0 {
+		return nil, errors.New("pricing must not be negative")
+	}
+	return json.Marshal(pricingDocument{
+		InputPerMillionUSD:  FormatUSD(pricing.InputPerMillionNanoUSD),
+		OutputPerMillionUSD: FormatUSD(pricing.OutputPerMillionNanoUSD),
+	})
+}
+
 // UnmarshalJSON 将配置文件中的十进制价格解析为定点整数。
 func (pricing *Pricing) UnmarshalJSON(data []byte) error {
 	var document pricingDocument

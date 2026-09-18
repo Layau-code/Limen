@@ -70,7 +70,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 
 - 新行为先写能复现边界的失败测试，再写最小实现；测试聚焦可观察行为，辅助函数保持少而清楚。
 - Provider 使用 `httptest.Server`，不访问真实网络或密钥；Router 使用固定 Provider 验证预算、熔断、Fallback 和 SSE 边界。
-- Decision Engine 测试必须覆盖能力、质量下限、流式、上下文、数据等级等硬过滤、策略排序、稳定原因码、软预算策略切换、至少 10 个 golden fixture 和重复构造后的哈希一致性。
+- Decision Engine 测试必须覆盖能力、质量下限、流式、上下文、数据等级等硬过滤、策略排序、稳定原因码和软预算策略切换；100 组已提交 golden fixture 必须验证重建 Engine 后的规范计划字节与 `plan_hash`，不得静默更新预期值。
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。

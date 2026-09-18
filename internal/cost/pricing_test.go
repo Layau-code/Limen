@@ -1,6 +1,9 @@
 package cost
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestPricingCostUsesFixedPoint(t *testing.T) {
 	pricing := Pricing{InputPerMillionNanoUSD: 250_000_000, OutputPerMillionNanoUSD: 2_000_000_000}
@@ -31,5 +34,20 @@ func TestPricingCostRejectsNegativeTokens(t *testing.T) {
 	pricing := Pricing{InputPerMillionNanoUSD: 1}
 	if _, err := pricing.Cost(-1, 0); err == nil {
 		t.Fatal("negative input tokens were accepted")
+	}
+}
+
+func TestPricingJSONRoundTripPreservesFixedPointValues(t *testing.T) {
+	want := Pricing{InputPerMillionNanoUSD: 250_000_001, OutputPerMillionNanoUSD: 2_000_000_009}
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Pricing
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("pricing = %+v, want %+v", got, want)
 	}
 }
