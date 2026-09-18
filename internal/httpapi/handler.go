@@ -1758,6 +1758,9 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&incoming); err != nil {
+		if field := unknownJSONField(err); field != "" {
+			return parsedChatRequest{}, &unsupportedFieldError{Field: field}
+		}
 		return parsedChatRequest{}, errors.New("invalid JSON request")
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
@@ -1806,6 +1809,20 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 		contract.Strategy = incoming.Limen.Strategy
 	}
 	return parsedChatRequest{Request: request, Contract: contract}, nil
+}
+
+// unknownJSONField 将严格 JSON 解码报告的未知字段提取为稳定的 API 字段名。
+func unknownJSONField(err error) string {
+	const prefix = "json: unknown field "
+	message := err.Error()
+	if !strings.HasPrefix(message, prefix) {
+		return ""
+	}
+	field, unquoteErr := strconv.Unquote(strings.TrimPrefix(message, prefix))
+	if unquoteErr != nil {
+		return ""
+	}
+	return field
 }
 
 // relayStream 逐块转发 SSE 数据，并在每块写入后刷新客户端。

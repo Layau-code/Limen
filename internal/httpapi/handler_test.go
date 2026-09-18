@@ -871,6 +871,14 @@ func TestParseChatRequestRejectsUnsupportedFields(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestReportsUnknownFieldExplicitly(t *testing.T) {
+	_, err := parseChatRequestEnvelope([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"unknown":true}`))
+	var unsupported *unsupportedFieldError
+	if !errors.As(err, &unsupported) || unsupported.Field != "unknown" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestParseChatRequestExtractsLimenContract(t *testing.T) {
 	envelope, err := parseChatRequestEnvelope([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}],"limen":{"required_capabilities":["text"],"minimum_quality_tier":3,"required_context_tokens":1000,"data_class":"internal","strategy":"economy"}}`))
 	if err != nil {

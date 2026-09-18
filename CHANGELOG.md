@@ -33,6 +33,7 @@
 - `make check` 新增 Replay fixture 生成一致性校验，防止决策证据文件与生成器悄然漂移。
 - Dry Run、Decision 查询和 Replay 响应现在隐藏真实上游模型名，并将目标引用归并为稳定 opaque ID；内部快照仍可用于确定性 Replay。
 - 新增 OpenAI Chat Completions 兼容矩阵，明确支持子集、拒绝字段、SSE 行为和 1.0 范围，避免把有限兼容误写成完整兼容。
+- 未知 Chat 请求字段现在统一返回 `unsupported_field`，与已知暂不支持字段保持一致。
 
 ### 修复
 
