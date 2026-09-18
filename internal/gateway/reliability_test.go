@@ -103,6 +103,26 @@ func TestRouterClosesResponseBodyWhenProviderReturnsError(t *testing.T) {
 	}
 }
 
+// TestRouterNormalizesNilProviderBody 保证适配器遗漏响应体时仍返回可关闭的空体。
+func TestRouterNormalizesNilProviderBody(t *testing.T) {
+	router := newReliabilityRouter(t, map[string]provider.Provider{
+		"openai": providerFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+			return provider.Response{StatusCode: http.StatusOK}, nil
+		}),
+	})
+	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Response.Body.Close()
+	if result.Response.Body == nil {
+		t.Fatal("response body is nil")
+	}
+	if _, err := io.ReadAll(result.Response.Body); err != nil {
+		t.Fatalf("read normalized body: %v", err)
+	}
+}
+
 func TestRouterFallsBackAfterAttemptTimeout(t *testing.T) {
 	providers := map[string]provider.Provider{
 		"openai": providerFunc(func(ctx context.Context, request provider.ChatRequest) (provider.Response, error) {

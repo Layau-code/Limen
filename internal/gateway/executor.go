@@ -2,10 +2,6 @@ package gateway
 
 import (
 	"context"
-	"errors"
-	"io"
-	"strconv"
-	"strings"
 
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
@@ -46,41 +42,19 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 	}
 	defer releaseBreakers()
 	budget, cancelBudget := context.WithTimeout(parent, policy.RequestTimeout)
-	decision := Decision{}
-	attemptReports := make([]AttemptReport, 0, len(plan.Targets))
-	withPlan := func(result Result) Result {
-		result.Plan = plan
-		result.Attempts = append([]AttemptReport(nil), attemptReports...)
-		return result
-	}
-	settlement := NewSettlement()
-	var lastErr error
-	var pendingResponse provider.Response
-	var pendingCancel context.CancelFunc
-	hasPendingResponse := false
-	closePending := func() {
-		if !hasPendingResponse {
-			return
-		}
-		if parent.Err() == nil && budget.Err() == nil && pendingResponse.Usage != nil {
-			_, _ = io.CopyN(io.Discard, pendingResponse.Body, maxSettlementDrainBytes+1)
-		}
-		_ = pendingResponse.Body.Close()
-		pendingCancel()
-		hasPendingResponse = false
-	}
+	state := newExecutionState(len(plan.Targets))
 
 	for _, planned := range plan.Targets {
 		target := planned.Target
 		model := Model{ID: planned.ModelID, Compatibility: planned.Compatibility}
 		if err := parent.Err(); err != nil {
-			closePending()
+			state.closePending(parent, budget)
 			cancelBudget()
-			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
+			return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &RouteError{Decision: state.decision, Err: err}
 		}
 		breaker := executor.breakerFor(targetKey(model, target))
 		if breaker == nil {
-			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "target_unavailable"})
+			state.decision.Steps = append(state.decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "target_unavailable"})
 			continue
 		}
 		if !breaker.allowWithCooldown(policy.Cooldown) {
@@ -88,16 +62,16 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 			if breaker.observeWithCooldown(policy.Cooldown).state == "half_open" {
 				outcome = "skipped_due_to_race"
 			}
-			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
+			state.decision.Steps = append(state.decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 			continue
 		}
 		if err := budget.Err(); err != nil {
 			breaker.recordNeutral()
-			if hasPendingResponse {
-				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
+			if state.hasPendingResponse {
+				return state.withPlan(plan, state.pendingResult(cancelBudget)), nil
 			}
 			cancelBudget()
-			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
+			return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &RouteError{Decision: state.decision, Err: err}
 		}
 
 		attempt, cancelAttempt := context.WithTimeout(budget, policy.AttemptTimeout)
@@ -105,114 +79,53 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 		if upstream == nil {
 			cancelAttempt()
 			breaker.recordNeutral()
-			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "provider_unavailable"})
-			if hasPendingResponse {
-				return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
+			state.decision.Steps = append(state.decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "provider_unavailable"})
+			if state.hasPendingResponse {
+				return state.withPlan(plan, state.pendingResult(cancelBudget)), nil
 			}
 			cancelBudget()
-			return withPlan(Result{Decision: decision, Settlement: settlement}), &ProviderUnavailableError{Name: target.Provider, Decision: decision}
+			return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &ProviderUnavailableError{Name: target.Provider, Decision: state.decision}
 		}
-		closePending()
+		state.closePending(parent, budget)
 		if beforeAttempt != nil {
 			if err := beforeAttempt(planned); err != nil {
 				cancelAttempt()
 				cancelBudget()
-				return withPlan(Result{Decision: decision, Settlement: settlement}), &AttemptStartError{Err: err}
+				return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &AttemptStartError{Err: err}
 			}
 		}
 		upstreamRequest := request
 		upstreamRequest.Model = target.UpstreamModel
 		upstreamRequest.EndpointID = target.EndpointID
 		response, err := traceProviderChat(attempt, upstream, upstreamRequest, planned)
-		decision.Attempts++
-		decision.Provider = target.Provider
+		state.decision.Attempts++
+		state.decision.Provider = target.Provider
 		if err != nil {
-			if response.Body != nil {
-				// Provider 出错时不再消费响应，防御性关闭可能已创建的上游连接。
-				_ = response.Body.Close()
+			outcome := state.handleProviderError(parent, budget, planned, breaker, response, err, cancelAttempt, cancelBudget, policy.FailureThreshold)
+			if outcome.stop {
+				return state.withPlan(plan, outcome.result), outcome.err
 			}
-			cancelAttempt()
-			errorClass := provider.ClassifyError(err)
-			if budget.Err() != nil || parent.Err() != nil || errors.Is(err, context.Canceled) {
-				outcome := "timeout"
-				if errors.Is(parent.Err(), context.Canceled) {
-					outcome = "canceled"
-				}
-				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-				breaker.recordNeutral()
-				if errors.Is(parent.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
-					attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
-					closePending()
-					cancelBudget()
-					cause := firstContextError(parent, budget)
-					if cause == nil {
-						cause = context.Canceled
-					}
-					return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: cause}
-				}
-				attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
-				if hasPendingResponse {
-					return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
-				}
-				cancelBudget()
-				cause := firstContextError(parent, budget)
-				if cause == nil {
-					cause = context.Canceled
-				}
-				return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: cause}
-			}
-			if errorClass != provider.ErrorClassRetryableTransient && !errors.Is(err, context.DeadlineExceeded) {
-				outcome := "internal_error"
-				if errorClass == provider.ErrorClassDeterministicRequest {
-					outcome = "request_error"
-				}
-				decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-				attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
-				breaker.recordNeutral()
-				cancelBudget()
-				return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
-			}
-			outcome := "transport_error"
-			if errors.Is(err, context.DeadlineExceeded) {
-				outcome = "timeout"
-			}
-			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-			attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
-			breaker.recordFailureWith(policy.FailureThreshold)
-			lastErr = err
 			continue
 		}
-		if response.Body == nil {
-			response.Body = io.NopCloser(strings.NewReader(""))
-		}
-		settlement.AddAttempt(AttemptSettlement{Provider: target.Provider, UpstreamModel: target.UpstreamModel, StatusCode: response.StatusCode, Pricing: target.Pricing, Usage: response.Usage})
-
-		outcome := strconv.Itoa(response.StatusCode)
-		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
-		attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome, StatusCode: response.StatusCode, ErrorClass: response.ErrorClass, ProviderRequestID: response.ProviderRequestID})
-		if provider.IsRetryableResponse(response) {
-			breaker.recordFailureWith(policy.FailureThreshold)
-			lastErr = nil
-			pendingResponse = response
-			pendingCancel = cancelAttempt
-			hasPendingResponse = true
+		response, accepted := state.recordResponse(planned, response, breaker, cancelAttempt, policy.FailureThreshold)
+		if !accepted {
 			continue
 		}
 		breaker.recordSuccess()
-		return withPlan(resultWithCancel(response, decision, settlement, cancelAttempt, cancelBudget)), nil
+		return state.withPlan(plan, resultWithCancel(response, state.decision, state.settlement, cancelAttempt, cancelBudget)), nil
 	}
 
-	if hasPendingResponse {
+	if state.hasPendingResponse {
 		if err := parent.Err(); err != nil {
-			closePending()
+			state.closePending(parent, budget)
 			cancelBudget()
-			return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: err}
+			return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &RouteError{Decision: state.decision, Err: err}
 		}
-		return withPlan(resultWithCancel(pendingResponse, decision, settlement, pendingCancel, cancelBudget)), nil
+		return state.withPlan(plan, state.pendingResult(cancelBudget)), nil
 	}
 	cancelBudget()
-	if decision.Attempts == 0 {
-		return withPlan(Result{Decision: decision, Settlement: settlement}), &NoAvailableTargetError{Decision: decision}
+	if state.decision.Attempts == 0 {
+		return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &NoAvailableTargetError{Decision: state.decision}
 	}
-	return withPlan(Result{Decision: decision, Settlement: settlement}), &RouteError{Decision: decision, Err: lastErr}
+	return state.withPlan(plan, Result{Decision: state.decision, Settlement: state.settlement}), &RouteError{Decision: state.decision, Err: state.lastErr}
 }

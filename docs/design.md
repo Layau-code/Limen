@@ -36,7 +36,8 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/audit`：保存控制面安全摘要；事件按租户隔离，记录非敏感的凭据身份标识，查询不返回原始 Key，只返回动作、资源、结果、请求哈希和时间。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。
-- `internal/gateway/executor.go`：只消费 ExecutionPlan，管理共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
+- `internal/gateway/executor.go`：只消费 ExecutionPlan，编排共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
+- `internal/gateway/execution_state.go`：集中保存一次执行的 Attempt、结算和待返回响应状态，隔离 Provider 错误分类与响应关闭细节，避免主循环堆叠状态分支。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；普通 JSON、错误正文、用量观察和 SSE 事件均有固定读取上限；不感知逻辑模型。构造函数未收到 HTTP Client 时仍使用带 endpoint allowlist 的安全默认 Client。HTTP 层传播响应体读取/写入错误，已开始响应不 Fallback，并将中断响应的 Settlement 标记为 `partial`。OpenAI/Anthropic SSE 都要求各自的终止事件：收到上游错误事件或在终止事件前结束时返回稳定读取错误，不伪造 `[DONE]`。Provider 出错时 Executor 不消费响应；即使异常适配器同时返回非空 Body，也会立即关闭。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。

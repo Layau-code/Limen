@@ -6,6 +6,7 @@
 
 ### 新增
 
+- Gateway Executor 的执行状态、响应关闭和 Provider 错误分类已拆分到独立执行状态模块，主循环更易阅读且行为由可靠性契约回归保护。
 - `limen demo` 现在同时演示 `model=auto` 能力契约选模、被排除目标的稳定原因码、Fallback、配置草稿 Replay、Decision 绑定和 Run 结算，输出安全的逻辑模型与账本摘要。
 - 新增项目定位与差异化证据文档，明确常规网关能力、Limen 的 Run 治理/决策重放重点以及不宣称的范围。
 - 受治理 Chat 的已处理幂等重试现在返回原 Request ID、Decision ID 和结算状态；决策标识在 Provider 调用前持久化绑定，避免重试丢失审计关联。
