@@ -57,7 +57,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 12. Run 创建后固定 `strategy` 和 `config_version`；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 13. `suspended_accounting` 期间允许记录 `complete_requested` 但不得直接完成；所有未知费用处置完毕后才按固定优先级恢复或进入 `completed`。
 14. 生产 PostgreSQL 事务连接池必须通过 `store.OpenPostgres` 设置有限 I/O 期限；`LISTEN/NOTIFY` 专用监听器除外，禁止为业务 Store 重新使用裸 `sql.Open("postgres", ...)`。
-15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。
+15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。Metrics、Trace 和日志中的目标标识必须使用 `catalog.OpaqueTargetID`；内部 Attempt/结算记录可保留真实映射，但观测字段不能通过派生 `target_id` 间接泄露上游模型名。
 
 ## Provider 与路由
 

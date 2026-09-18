@@ -2,6 +2,14 @@ package catalog
 
 import "testing"
 
+func TestOpaqueTargetIDIsStableAndDoesNotContainSource(t *testing.T) {
+	first := OpaqueTargetID("openai:gpt-secret")
+	second := OpaqueTargetID("openai:gpt-secret")
+	if first != second || first == "openai:gpt-secret" || len(first) != len("target-")+12 {
+		t.Fatalf("opaque target id first=%q second=%q", first, second)
+	}
+}
+
 func TestRegistryClonesCapabilityMetadata(t *testing.T) {
 	registry, err := NewRegistry([]Model{{
 		ID: "coding",

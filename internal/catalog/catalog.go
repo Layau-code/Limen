@@ -2,6 +2,8 @@
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -25,6 +27,12 @@ type Target struct {
 	ContextWindow     int64         `json:"context_window"`
 	DataClasses       []string      `json:"data_classes"`
 	Pricing           *cost.Pricing `json:"pricing,omitempty"`
+}
+
+// OpaqueTargetID 将内部目标标识转换为稳定的观测引用，避免泄露配置命名或上游模型。
+func OpaqueTargetID(targetID string) string {
+	sum := sha256.Sum256([]byte(targetID))
+	return "target-" + hex.EncodeToString(sum[:6])
 }
 
 // Model 描述客户端可见模型及其有序上游目标。

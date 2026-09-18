@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/auth"
+	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
@@ -138,7 +139,7 @@ func TestAttemptMetricsCountOnlyRealProviderCalls(t *testing.T) {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, metrics)
 	output := response.Body.String()
-	for _, target := range []string{`target="primary"`, `target="backup"`} {
+	for _, target := range []string{`target="` + catalog.OpaqueTargetID("primary") + `"`, `target="` + catalog.OpaqueTargetID("backup") + `"`} {
 		if !strings.Contains(output, target) {
 			t.Fatalf("metrics missing %s: %s", target, output)
 		}

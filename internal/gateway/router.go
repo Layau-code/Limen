@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
 	"go.opentelemetry.io/otel"
@@ -322,7 +323,7 @@ func traceProviderChat(ctx context.Context, upstream provider.Provider, request 
 	defer span.End()
 	if span.IsRecording() {
 		span.SetAttributes(
-			attribute.String("limen.target.id", planned.Target.ID),
+			attribute.String("limen.target.id", catalog.OpaqueTargetID(planned.Target.ID)),
 			attribute.String("limen.provider.name", planned.Target.Provider),
 		)
 	}

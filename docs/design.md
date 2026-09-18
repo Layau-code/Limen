@@ -116,7 +116,7 @@ Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`
 
 HTTP 根 Span 和结构化日志在第一次写出响应正文时记录 `ttfb_ms`；SSE 的首段因此可以独立于完整响应和结算耗时进行排障，没有正文的响应不伪造 TTFB。
 
-Prometheus 指标使用独立的可信标签边界：显式配置只记录目录中的逻辑模型 ID，兼容模式记录 `gpt-*` 等模式，未注册输入记录 `unsupported`；HTTP 状态按类别归并，拒绝原因来自稳定 API 错误码。`limen_provider_attempts_total` 以 Router 的真实 AttemptReport 为来源，熔断、健康过滤和竞争跳过属于决策步骤，不伪装成 Provider 调用。请求总耗时和首字节延迟使用固定桶直方图，非法、负数和无穷值直接丢弃。
+Prometheus 指标使用独立的可信标签边界：显式配置只记录目录中的逻辑模型 ID，兼容模式记录 `gpt-*` 等模式，目标标签使用 `catalog.OpaqueTargetID`，未注册输入记录 `unsupported`；HTTP 状态按类别归并，拒绝原因来自稳定 API 错误码。`limen_provider_attempts_total` 以 Router 的真实 AttemptReport 为来源，熔断、健康过滤和竞争跳过属于决策步骤，不伪装成 Provider 调用。请求总耗时和首字节延迟使用固定桶直方图，非法、负数和无穷值直接丢弃。
 
 ## 健康与交付
 

@@ -25,8 +25,8 @@ import (
 func TestGovernedFallbackTraceFormsPrivacySafeEvidenceChain(t *testing.T) {
 	recorder := installRecordingTracer(t)
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "private-model", Targets: []gateway.Target{
-		{ID: "primary", Provider: "openai", UpstreamModel: "secret-upstream-primary", QualityTier: 2},
-		{ID: "backup", Provider: "anthropic", UpstreamModel: "secret-upstream-backup", QualityTier: 1, Pricing: &cost.Pricing{}},
+		{ID: "openai:secret-upstream-primary", Provider: "openai", UpstreamModel: "secret-upstream-primary", QualityTier: 2},
+		{ID: "anthropic:secret-upstream-backup", Provider: "anthropic", UpstreamModel: "secret-upstream-backup", QualityTier: 1, Pricing: &cost.Pricing{}},
 	}}})
 	if err != nil {
 		t.Fatal(err)

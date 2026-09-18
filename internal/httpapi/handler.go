@@ -3,8 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 	"github.com/huz/limen/internal/approval"
 	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
+	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/credentialstore"
@@ -575,8 +574,7 @@ func safePlanTargetID(target decision.PlanTarget) string {
 
 // publicTargetID 将内部目标标识转换为稳定 opaque 引用，避免配置命名泄露上游模型。
 func publicTargetID(targetID string) string {
-	sum := sha256.Sum256([]byte(targetID))
-	return "target-" + hex.EncodeToString(sum[:6])
+	return catalog.OpaqueTargetID(targetID)
 }
 
 // writeDecisionLookupError 将决策日志查询错误映射为稳定 API 错误。
@@ -1377,7 +1375,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			Status:   metricStatus(attempt.StatusCode),
 			Model:    metricModel,
 			Provider: attempt.Provider,
-			Target:   attempt.TargetID,
+			Target:   catalog.OpaqueTargetID(attempt.TargetID),
 			Result:   metricAttemptResult(attempt),
 		})
 	}

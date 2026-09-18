@@ -35,6 +35,7 @@
 - 新增 OpenAI Chat Completions 兼容矩阵，明确支持子集、拒绝字段、SSE 行为和 1.0 范围，避免把有限兼容误写成完整兼容。
 - 未知 Chat 请求字段现在统一返回 `unsupported_field`，与已知暂不支持字段保持一致。
 - 运维文档同步说明 HTTPS 出站和加密租户凭据模式，避免把环境变量密钥误当成多租户回退。
+- Metrics 和 Trace 的目标标识统一改为稳定 opaque ID，避免默认派生的 `provider:upstream_model` 进入观测系统。
 
 ### 修复
 
