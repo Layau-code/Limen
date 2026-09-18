@@ -169,11 +169,12 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 ## 开发验证
 
-`make check` 运行格式、静态分析、Replay fixture 生成一致性和竞态测试；`make integration` 使用临时 PostgreSQL 17 容器验证 RLS、100 并发准入、幂等、唯一账本、强制终止执行进程、数据库暂停/恢复、租约竞争以及取消通知/轮询。集成测试也可通过 `LIMEN_TEST_DATABASE_ADMIN_URL`、`LIMEN_TEST_DATABASE_URL` 和 `LIMEN_TEST_DATABASE_ROLE` 使用外部测试数据库，三个变量必须同时提供；此时无法安全控制数据库生命周期的暂停场景会跳过。
+`make check` 运行格式、静态分析、Replay fixture 生成一致性和竞态测试；`make reliability` 集中验证瞬时错误 Fallback、确定性错误不切换、Provider 错误分类、总预算、客户端取消、流式请求不重放和 HTTP 错误边界；`make integration` 使用临时 PostgreSQL 17 容器验证 RLS、100 并发准入、幂等、唯一账本、强制终止执行进程、数据库暂停/恢复、租约竞争以及取消通知/轮询。集成测试也可通过 `LIMEN_TEST_DATABASE_ADMIN_URL`、`LIMEN_TEST_DATABASE_URL` 和 `LIMEN_TEST_DATABASE_ROLE` 使用外部测试数据库，三个变量必须同时提供；此时无法安全控制数据库生命周期的暂停场景会跳过。
 
 ```bash
 make check   # gofmt、go vet、竞态测试
 make compatibility # OpenAI Chat 请求、错误和 SSE 兼容契约
+make reliability # 故障注入与取消/Fallback 可靠性契约
 make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
 make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准

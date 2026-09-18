@@ -88,6 +88,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - HTTP Handler 依赖装配统一使用 `httpapi.HandlerOptions`；旧的长构造函数只保留兼容包装，不在业务代码中继续增加位置参数。
 - OpenAI 兼容边界以 `docs/openai-compatibility.md` 为单一文档来源；新增或拒绝字段必须同步解析器、测试和矩阵，不能静默丢弃未知字段。
 - `make compatibility` 必须覆盖矩阵中的支持字段、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
+- `make reliability` 必须保持为离线、确定性的故障注入入口，覆盖瞬时错误 Fallback、确定性错误不切换、总预算、客户端取消、流式不重放和 Provider 错误分类；可靠性边界变化必须同步更新对应契约测试。
 
 ## 测试与验证
 
@@ -124,6 +125,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 - 兼容性相关改动还必须运行 `make compatibility`，并确认不访问真实 Provider 网络。
+- Fallback、超时、取消、熔断或 Provider 错误分类相关改动还必须运行 `make reliability`，并确认不访问真实 Provider 网络。
 - 修改演示场景时还必须运行 `make demo`，并保持输出字段和安全边界稳定。
 
 ## 文档同步

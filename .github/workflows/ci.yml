@@ -16,6 +16,8 @@ jobs:
         run: make check
       - name: 验证 OpenAI 兼容契约
         run: make compatibility
+      - name: 验证故障注入可靠性契约
+        run: make reliability
       - name: 验证 PostgreSQL 多实例不变量
         run: make integration
       - name: 构建二进制

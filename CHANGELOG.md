@@ -8,6 +8,7 @@
 - 新增配置影响分析接口，可将历史决策重放到指定草稿并返回安全结构化差异，不访问 Provider 或改变线上路由。
 - 新增完全离线的 `limen demo`，展示 Fallback 和配置草稿影响分析，便于重复验收。
 - 新增 `make compatibility` OpenAI Chat 兼容契约测试，自动验证请求字段、错误 envelope 和 SSE 边界。
+- 新增 `make reliability` 离线故障注入契约，集中验证 Fallback、预算、取消、流式不重放和 Provider 错误分类。
 - Decision Journal 读取时新增 `plan_hash` 和持久化摘要列校验，检测 JSONB 证据篡改后拒绝 Replay。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
