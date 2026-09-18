@@ -245,6 +245,7 @@ func translateAnthropicStream(source io.ReadCloser, recorder *usageRecorder) io.
 		scanner := bufio.NewScanner(source)
 		scanner.Buffer(make([]byte, 4096), 1<<20)
 		var eventName, data string
+		completed := false
 		for scanner.Scan() {
 			line := scanner.Text()
 			switch {
@@ -258,12 +259,17 @@ func translateAnthropicStream(source io.ReadCloser, recorder *usageRecorder) io.
 						_ = writer.CloseWithError(err)
 						return
 					}
+					if eventName == "message_stop" {
+						completed = true
+					}
 				}
 				eventName, data = "", ""
 			}
 		}
 		if err := scanner.Err(); err != nil {
 			_ = writer.CloseWithError(err)
+		} else if !completed {
+			_ = writer.CloseWithError(errors.New("Anthropic stream ended before message_stop"))
 		}
 	}()
 	return &anthropicStreamBody{reader: reader, source: source}
@@ -298,6 +304,8 @@ func writeAnthropicEvent(writer io.Writer, recorder *usageRecorder, eventName, d
 	}
 	var chunk any
 	switch eventName {
+	case "error":
+		return errors.New("Anthropic stream returned error")
 	case "message_start":
 		recorder.setInput(event.Message.Usage.InputTokens)
 		chunk = map[string]any{"id": event.Message.ID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": event.Message.Model, "choices": []any{map[string]any{"index": 0, "delta": map[string]string{"role": "assistant"}, "finish_reason": nil}}}

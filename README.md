@@ -204,7 +204,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 `GET /metrics` 需要 `admin`，输出固定计数器 `limen_chat_requests_total`、`limen_provider_attempts_total`、`limen_settlements_total`，以及请求耗时和 TTFB 直方图 `limen_chat_request_duration_seconds`、`limen_chat_ttfb_seconds`。直方图使用固定桶，不接受非法或无穷值。模型标签只使用已注册逻辑 ID、`auto` 或 `gpt-*` 等兼容模式，目标标签使用稳定 opaque ID，未知输入统一为 `unsupported`；状态只使用 `2xx/4xx/5xx` 等类别，拒绝原因只使用稳定错误码。Attempt 只统计真实 Provider 调用，熔断跳过不会虚增。标签不包含 Request ID、Run ID、租户 ID、Prompt、Response、密钥、上游模型名或原始错误。
 
-Provider 普通 JSON 响应和 SSE 观察都使用有界读取；Anthropic 普通响应超过 4 MiB 时会在转换阶段拒绝，非成功错误正文最多透传 64 KiB，避免异常上游响应造成无界内存增长。异常 Provider 同时返回响应和错误时，Executor 会关闭未消费的响应体。
+Provider 普通 JSON 响应和 SSE 观察都使用有界读取；Anthropic 普通响应超过 4 MiB 时会在转换阶段拒绝，非成功错误正文最多透传 64 KiB，避免异常上游响应造成无界内存增长。Anthropic SSE 遇到上游错误事件或缺少 `message_stop` 时返回读取错误，不伪造 `[DONE]`；异常 Provider 同时返回响应和错误时，Executor 会关闭未消费的响应体。
 
 `/livez` 表示进程存活，`/readyz` 表示已完成依赖初始化并成功绑定监听 socket；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 

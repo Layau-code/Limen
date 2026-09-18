@@ -252,6 +252,61 @@ func TestAnthropicChatConvertsStream(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamPropagatesErrorEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n\n")
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{Model: "claude-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	_, err = io.ReadAll(response.Body)
+	if err == nil || !strings.Contains(err.Error(), "stream returned error") {
+		t.Fatalf("read error = %v", err)
+	}
+}
+
+func TestAnthropicStreamRejectsTruncatedCompletion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"claude-test\"}}\n\n")
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{Model: "claude-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	_, err = io.ReadAll(response.Body)
+	if err == nil || !strings.Contains(err.Error(), "before message_stop") {
+		t.Fatalf("read error = %v", err)
+	}
+}
+
+func TestAnthropicStreamAcceptsCRLF(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"claude-test\"}}\r\n\r\n")
+		_, _ = io.WriteString(w, "event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n")
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{Model: "claude-test", Stream: true, Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || !strings.HasSuffix(string(body), "data: [DONE]\n\n") {
+		t.Fatalf("body=%q err=%v", body, err)
+	}
+}
+
 func TestAnthropicStreamCloseCancelsUpstream(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
