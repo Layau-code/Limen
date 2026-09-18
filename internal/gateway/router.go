@@ -248,6 +248,12 @@ func (router *Router) Explain(request provider.ChatRequest, contract decision.Co
 	return router.planWithInput(request, contract)
 }
 
+// ExplainAt 使用指定评估时间生成可复现的决策计划，供离线解释和验收使用。
+func (router *Router) ExplainAt(evaluatedAt time.Time, request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
+	registry, configVersion := router.registrySnapshot()
+	return router.planWithRegistryAt(request, contract, registry, configVersion, evaluatedAt)
+}
+
 // ExplainWithRegistry 使用指定配置版本生成只读决策计划，不访问 Provider 或修改当前目录。
 func (router *Router) ExplainWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
 	return router.planWithRegistry(request, contract, registry, configVersion)
@@ -292,8 +298,16 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 
 // planWithRegistry 将指定目录和当前熔断快照组装为可持久化的 DecisionInput。
 func (router *Router) planWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistryAt(request, contract, registry, configVersion, router.now())
+}
+
+// planWithRegistryAt 将指定目录和评估时间组装为可持久化的决策输入。
+func (router *Router) planWithRegistryAt(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, evaluatedAt time.Time) (decision.Input, decision.ExecutionPlan, error) {
 	if registry == nil {
 		return decision.Input{}, decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
+	}
+	if evaluatedAt.IsZero() {
+		evaluatedAt = router.now()
 	}
 	models := registry.List()
 	if request.Model != "auto" {
@@ -333,7 +347,7 @@ func (router *Router) planWithRegistry(request provider.ChatRequest, contract de
 		SchemaVersion:     decision.SchemaVersionV1,
 		AlgorithmVersion:  decision.AlgorithmVersionV2,
 		ConfigVersion:     configVersion,
-		EvaluatedAtUnixMS: router.now().UnixMilli(),
+		EvaluatedAtUnixMS: evaluatedAt.UnixMilli(),
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
 		Candidates:        candidates,
 	}

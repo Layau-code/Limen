@@ -29,6 +29,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 核心 HTTP 数据面不使用 Web 框架或 ORM；外部依赖只用于 PostgreSQL 与 OpenTelemetry 等明确边界，并包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统；即使尚无请求，也会输出稳定的 Prometheus `HELP`/`TYPE` 元数据。
 - `limen demo` / `make demo` 提供完全离线的确定性演示，展示一次 Fallback 和配置草稿影响分析，不读取密钥或访问网络。
+- `limen explain` 可读取模型目录和 Chat 请求快照，离线输出候选目标、淘汰原因、策略和 `plan_hash`；输出不包含 Prompt 或真实上游模型名，适合演示和发布前排障。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
@@ -119,6 +120,17 @@ curl http://localhost:8080/v1/chat/completions \
 配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；受治理 Run 创建时固定的策略优先，冲突请求返回 `400 strategy_conflict`。输出上限支持 `max_tokens` 或新版 `max_completion_tokens`，两者不能同时出现。当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
 
 可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，目标引用使用稳定的 opaque ID，不返回真实上游模型名，适合在 Agent 调用前解释路由选择。
+
+也可以在不启动服务、不配置 Provider Key 的情况下使用离线解释命令：
+
+```bash
+make build
+./bin/limen explain \
+  --models /absolute/path/to/models.json \
+  --request /absolute/path/to/chat-request.json
+```
+
+该命令复用 Chat 请求和 Decision Engine 的严格规则，使用固定评估时间生成稳定的 `input_hash`/`plan_hash`。即使没有可用目标，也会以 JSON 返回每个候选的淘汰原因；命令不会访问网络或输出请求正文。
 
 配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider；因此可以在审批或发布前验证模型能力、Fallback 顺序和计划哈希。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 

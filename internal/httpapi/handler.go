@@ -1908,6 +1908,15 @@ func parseChatRequest(body []byte) (provider.ChatRequest, error) {
 	return envelope.Request, nil
 }
 
+// ParseChatRequest 复用 Chat API 的严格解析规则，供离线工具读取请求快照。
+func ParseChatRequest(body []byte) (provider.ChatRequest, decision.Contract, error) {
+	envelope, err := parseChatRequestEnvelope(body)
+	if err != nil {
+		return provider.ChatRequest{}, decision.Contract{}, err
+	}
+	return envelope.Request, envelope.Contract, nil
+}
+
 type parsedChatRequest struct {
 	Request  provider.ChatRequest
 	Contract decision.Contract

@@ -39,6 +39,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
 - `internal/telemetry`：提供有界 Prometheus 指标和可选 OTLP/HTTP Trace；遥测失败不参与业务控制流。
+- `cmd/limen explain`：复用严格 Chat 解析和 Decision Engine，在不启动服务、不访问 Provider 的情况下输出稳定路由解释。
 
 ## 模型与路由
 
@@ -86,6 +87,8 @@ HTTP Principal/Scope 鉴权与解析
 配置控制面还提供 `POST /v1/limen/configs/{version}/replay`。它读取租户隔离的历史 DecisionInput，将原请求和运行快照应用到指定草稿目录，返回原计划、草稿计划及不含上游模型名的结构化差异。影响分析沿用历史目标健康快照，不读取当前熔断器，不访问 Provider，也不改变线上 Router，便于在审批前评估配置变更影响。
 
 当前 Decision Journal 在真实 Chat 调用 Provider 前写入决策快照，并通过 `X-Limen-Decision-ID` 暴露不含正文的标识。`GET /v1/limen/decisions/{decision_id}`、Dry Run 和 Replay 使用安全响应视图，只返回逻辑模型、能力依据和稳定 opaque 目标引用，不返回真实上游模型名；内部完整快照只用于租户隔离的 Replay。`POST /v1/limen/decisions/{decision_id}/replay` 只使用历史输入调用无状态 Decision Engine，对比 `plan_hash` 并返回策略、目标顺序、候选原因等结构化差异，不访问 Provider 或当前熔断器。算法注册表可为每个版本设置 `retainUntil`，到期后返回 `algorithm_version_unavailable`，不会用新算法冒充历史结果。
+
+离线 `limen explain` 使用固定评估时间和模型配置版本生成同一套计划哈希；它只返回 Provider 名称、opaque 目标引用、候选原因和哈希，不返回 Prompt 或 `upstream_model`。没有可用目标时命令仍返回候选淘汰原因和 `no_eligible_target`，便于在发布前定位能力契约与模型目录冲突。
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 

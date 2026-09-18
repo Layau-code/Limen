@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,5 +70,83 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "gpt-") || strings.Contains(stdout.String(), "claude-") {
 		t.Fatalf("demo leaked upstream model: %s", stdout.String())
+	}
+}
+
+func TestRunCommandExplainIsDeterministicAndHidesPrompt(t *testing.T) {
+	directory := t.TempDir()
+	modelsPath := filepath.Join(directory, "models.json")
+	requestPath := filepath.Join(directory, "request.json")
+	if err := os.WriteFile(modelsPath, []byte(`{
+  "models": [{
+    "id": "smart-model",
+    "targets": [
+      {"id":"basic","provider":"openai","upstream_model":"fixture-secret-basic","quality_tier":1,"context_window":4000,"data_classes":["public"]},
+      {"id":"premium","provider":"anthropic","upstream_model":"fixture-secret-premium","quality_tier":4,"context_window":16000,"data_classes":["public","internal"]}
+    ]
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, []byte(`{
+  "model":"auto",
+  "messages":[{"role":"user","content":"sensitive prompt"}],
+  "limen":{"required_capabilities":["text"],"minimum_quality_tier":2,"data_class":"internal","strategy":"economy"}
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var first, second, stderr strings.Builder
+	args := []string{"explain", "--models", modelsPath, "--request", requestPath}
+	if code, handled := runCommand(args, &first, &stderr); !handled || code != 0 {
+		t.Fatalf("first explain code=%d handled=%t stderr=%q", code, handled, stderr.String())
+	}
+	if code, handled := runCommand(args, &second, &stderr); !handled || code != 0 {
+		t.Fatalf("second explain code=%d handled=%t stderr=%q", code, handled, stderr.String())
+	}
+	if first.String() != second.String() {
+		t.Fatalf("explain output changed:\nfirst=%ssecond=%s", first.String(), second.String())
+	}
+	var result struct {
+		EffectiveStrategy string `json:"effective_strategy"`
+		PlanHash          string `json:"plan_hash"`
+		Candidates        []struct {
+			Accepted bool   `json:"accepted"`
+			Reason   string `json:"reason"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(first.String()), &result); err != nil {
+		t.Fatalf("explain output = %q: %v", first.String(), err)
+	}
+	if result.EffectiveStrategy != "economy" || result.PlanHash == "" || len(result.Candidates) != 2 || result.Candidates[0].Accepted || result.Candidates[0].Reason != "quality_tier_too_low" || !result.Candidates[1].Accepted {
+		t.Fatalf("explain result = %+v", result)
+	}
+	if strings.Contains(first.String(), "sensitive prompt") || strings.Contains(first.String(), "fixture-secret") {
+		t.Fatalf("explain output leaked sensitive data: %s", first.String())
+	}
+}
+
+func TestRunCommandExplainReportsNoEligibleTarget(t *testing.T) {
+	directory := t.TempDir()
+	modelsPath := filepath.Join(directory, "models.json")
+	requestPath := filepath.Join(directory, "request.json")
+	if err := os.WriteFile(modelsPath, []byte(`{"models":[{"id":"model","targets":[{"id":"basic","provider":"openai","upstream_model":"fixture","quality_tier":1}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, []byte(`{"model":"auto","messages":[{"role":"user","content":"hello"}],"limen":{"minimum_quality_tier":5}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if code, handled := runCommand([]string{"explain", "--models", modelsPath, "--request", requestPath}, &stdout, &stderr); !handled || code != 0 {
+		t.Fatalf("code=%d handled=%t stderr=%q", code, handled, stderr.String())
+	}
+	var result struct {
+		DecisionError string `json:"decision_error"`
+		Targets       []any  `json:"targets"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.DecisionError != "no_eligible_target" || len(result.Targets) != 0 {
+		t.Fatalf("result = %+v", result)
 	}
 }

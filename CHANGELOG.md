@@ -7,6 +7,7 @@
 - 新增配置版本预演接口，可在发布前对指定草稿生成决策计划而不切换 Router 或访问 Provider。
 - 新增配置影响分析接口，可将历史决策重放到指定草稿并返回安全结构化差异，不访问 Provider 或改变线上路由。
 - 新增完全离线的 `limen demo`，展示 Fallback 和配置草稿影响分析，便于重复验收。
+- 新增完全离线的 `limen explain`，使用固定评估时间输出候选淘汰原因和稳定计划哈希；没有可用目标时也返回 `no_eligible_target` 证据。
 - 新增 `make compatibility` OpenAI Chat 兼容契约测试，自动验证请求字段、错误 envelope 和 SSE 边界。
 - 新增 `make reliability` 离线故障注入契约，集中验证 Fallback、预算、取消、流式不重放和 Provider 错误分类。
 - 密钥配置新增 `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE`，支持容器只读 Secret 挂载并拒绝明文/文件来源冲突。

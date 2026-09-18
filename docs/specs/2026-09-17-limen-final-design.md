@@ -626,6 +626,7 @@ livez 只表示进程存活，readyz 表示数据库、配置和接收状态正�
 - 数据库恢复后，settlement_pending 请求在三十秒内完成重试或转为 suspended_accounting，不永久占用并发名额。
 - 跨实例取消在正常数据库连接下 p95 不超过两秒，丢失 NOTIFY 后轮询仍能生效。
 - 本地可控 Provider 在发出首块后，网关 p95 在一百毫秒内 Flush；完整响应未结束时客户端已经读到首块。
+- `limen explain` 对相同模型目录和请求快照输出字节一致的计划哈希，并在无可用目标时保留候选淘汰证据。
 - 100 个候选目标的纯决策基准 p95 小于五毫秒，不包含数据库和 Provider 时间。
 - 日志、Trace、Metrics、Decision 和数据库导出中，API Key、Provider Key、Prompt、Response 与 Tool 哨兵字符串出现次数为零。
 - 环回、RFC1918、链路本地、云元数据地址、跨主机重定向、DNS 重绑定和环境代理绕过测试全部被拒绝。
@@ -643,6 +644,7 @@ make compatibility
 make reliability
 make integration
 make build
+bin/limen explain --models models.json --request chat-request.json
 make smoke
 make bench
 git diff --check

@@ -56,7 +56,17 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 		results = append(results, result)
 	}
 	if len(accepted) == 0 {
-		return ExecutionPlan{SchemaVersion: input.SchemaVersion, AlgorithmVersion: input.AlgorithmVersion, ConfigVersion: input.ConfigVersion, Candidates: results, EffectiveStrategy: strategy, Reasons: reasons}, &DecisionError{Code: "no_eligible_target"}
+		plan := ExecutionPlan{SchemaVersion: input.SchemaVersion, AlgorithmVersion: input.AlgorithmVersion, ConfigVersion: input.ConfigVersion, Candidates: results, EffectiveStrategy: strategy, Reasons: reasons}
+		inputHash, err := HashInput(input)
+		if err != nil {
+			return ExecutionPlan{}, err
+		}
+		plan.InputHash = inputHash
+		plan.PlanHash, err = HashPlan(plan)
+		if err != nil {
+			return ExecutionPlan{}, err
+		}
+		return plan, &DecisionError{Code: "no_eligible_target"}
 	}
 	if active {
 		sortCandidates(accepted, input, strategy)

@@ -177,6 +177,21 @@ func TestDecideRejectsHardConstraints(t *testing.T) {
 	}
 }
 
+func TestDecideNoEligibleTargetKeepsHashedEvidence(t *testing.T) {
+	input := decisionInput(eligibleCandidate(testTarget("target", 1, true, []string{"text"}, []string{"public"})))
+	input.Request.Contract.MinimumQualityTier = 5
+	plan, err := NewEngine().Decide(input)
+	if err == nil {
+		t.Fatal("expected no eligible target error")
+	}
+	if plan.InputHash == "" || plan.PlanHash == "" {
+		t.Fatalf("plan hashes = input:%q plan:%q", plan.InputHash, plan.PlanHash)
+	}
+	if got, hashErr := HashPlan(plan); hashErr != nil || got != plan.PlanHash {
+		t.Fatalf("plan hash = %q, err=%v", got, hashErr)
+	}
+}
+
 func TestDecidePreservesExplicitTargetOrderWithoutContract(t *testing.T) {
 	first := eligibleCandidate(testTarget("first", 1, true, []string{"text"}, []string{"public"}))
 	second := eligibleCandidate(testTarget("second", 4, true, []string{"text"}, []string{"public"}))
