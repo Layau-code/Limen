@@ -26,7 +26,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE` 只读一次启动时的文件密钥；对应明文变量与 `_FILE` 冲突必须拒绝，空文件或读取失败不能静默回退，日志不得输出密钥内容。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
-- Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`temperature` 和 `stream`；Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
+- Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。
@@ -89,7 +89,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 - HTTP Handler 依赖装配统一使用 `httpapi.HandlerOptions`；旧的长构造函数只保留兼容包装，不在业务代码中继续增加位置参数。
 - OpenAI 兼容边界以 `docs/openai-compatibility.md` 为单一文档来源；新增或拒绝字段必须同步解析器、测试和矩阵，不能静默丢弃未知字段。
-- `make compatibility` 必须覆盖矩阵中的支持字段（包括 `stream_options.include_usage`）、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
+- `make compatibility` 必须覆盖矩阵中的支持字段（包括 `max_completion_tokens` 和 `stream_options.include_usage`）、字段互斥、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
 - `make reliability` 必须保持为离线、确定性的故障注入入口，覆盖瞬时错误 Fallback、确定性错误不切换、总预算、客户端取消、流式不重放和 Provider 错误分类；可靠性边界变化必须同步更新对应契约测试。
 
 ## 测试与验证

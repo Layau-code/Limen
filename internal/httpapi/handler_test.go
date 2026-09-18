@@ -939,6 +939,23 @@ func TestParseChatRequestExtractsStreamUsageOption(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestAcceptsModernCompletionTokenLimit(t *testing.T) {
+	request, err := parseChatRequest([]byte(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":32}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.MaxTokens != 0 || request.MaxCompletionTokens == nil || *request.MaxCompletionTokens != 32 {
+		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestParseChatRequestRejectsTwoCompletionTokenLimits(t *testing.T) {
+	_, err := parseChatRequest([]byte(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"max_tokens":16,"max_completion_tokens":32}`))
+	if err == nil || err.Error() != "max_tokens and max_completion_tokens are mutually exclusive" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestChatRejectsInvalidLimenContract(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
 	if err != nil {

@@ -118,7 +118,11 @@ type anthropicMessage struct {
 
 // marshalAnthropicRequest 提取 system 消息并构造 Messages API 请求体。
 func marshalAnthropicRequest(request ChatRequest) ([]byte, error) {
-	converted := anthropicRequest{Model: request.Model, MaxTokens: request.MaxTokens, Temperature: request.Temperature, Stream: request.Stream}
+	maxTokens := request.MaxTokens
+	if request.MaxCompletionTokens != nil {
+		maxTokens = *request.MaxCompletionTokens
+	}
+	converted := anthropicRequest{Model: request.Model, MaxTokens: maxTokens, Temperature: request.Temperature, Stream: request.Stream}
 	if converted.MaxTokens == 0 {
 		converted.MaxTokens = 4096
 	}

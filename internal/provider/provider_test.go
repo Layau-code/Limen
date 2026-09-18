@@ -67,6 +67,33 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestAnthropicChatMapsModernCompletionTokenLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.MaxTokens != 32 {
+			t.Fatalf("max_tokens = %d", request.MaxTokens)
+		}
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+
+	limit := 32
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{
+		Model:               "claude-test",
+		Messages:            []Message{{Role: "user", Content: "hello"}},
+		MaxCompletionTokens: &limit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
 func TestAnthropicProviderRotatesAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-api-key") != "rotated" {

@@ -186,6 +186,35 @@ func TestOpenAIStreamCanDisableUsageOption(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderForwardsModernCompletionTokenLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if _, found := request["max_tokens"]; found {
+			t.Fatal("max_tokens should be omitted when max_completion_tokens is set")
+		}
+		var limit int
+		if err := json.Unmarshal(request["max_completion_tokens"], &limit); err != nil || limit != 32 {
+			t.Fatalf("max_completion_tokens = %s", request["max_completion_tokens"])
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	limit := 32
+	response, err := NewOpenAI(server.Client(), server.URL, "openai-secret").Chat(context.Background(), ChatRequest{
+		Model:               "o3-test",
+		Messages:            []Message{{Role: "user", Content: "hello"}},
+		MaxCompletionTokens: &limit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
 func TestOpenAIChatCancellationReachesProvider(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})

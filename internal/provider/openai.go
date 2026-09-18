@@ -59,11 +59,15 @@ func NewOpenAI(client *http.Client, baseURL, apiKey string) *OpenAIProvider {
 // Chat 将标准化请求编码为 OpenAI 请求，并返回上游响应正文。
 func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Response, error) {
 	upstreamRequest := openAIRequest{
-		Model:       request.Model,
-		Messages:    request.Messages,
-		MaxTokens:   request.MaxTokens,
-		Temperature: request.Temperature,
-		Stream:      request.Stream,
+		Model:               request.Model,
+		Messages:            request.Messages,
+		MaxTokens:           request.MaxTokens,
+		MaxCompletionTokens: request.MaxCompletionTokens,
+		Temperature:         request.Temperature,
+		Stream:              request.Stream,
+	}
+	if request.MaxCompletionTokens != nil {
+		upstreamRequest.MaxTokens = 0
 	}
 	if request.Stream && (request.StreamIncludeUsage == nil || *request.StreamIncludeUsage) {
 		upstreamRequest.StreamOptions = &streamOptions{IncludeUsage: true}
@@ -98,12 +102,13 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 }
 
 type openAIRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	MaxTokens     int            `json:"max_tokens,omitempty"`
-	Temperature   *float64       `json:"temperature,omitempty"`
-	Stream        bool           `json:"stream,omitempty"`
-	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+	Model               string         `json:"model"`
+	Messages            []Message      `json:"messages"`
+	MaxTokens           int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int           `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64       `json:"temperature,omitempty"`
+	Stream              bool           `json:"stream,omitempty"`
+	StreamOptions       *streamOptions `json:"stream_options,omitempty"`
 }
 
 type streamOptions struct {

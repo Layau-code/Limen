@@ -12,6 +12,7 @@
 - 密钥配置新增 `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE`，支持容器只读 Secret 挂载并拒绝明文/文件来源冲突。
 - Prometheus 指标在无样本时也输出稳定的 `HELP`/`TYPE` 元数据，保持空闲实例的指标契约不漂移。
 - OpenAI 兼容契约支持 `stream_options.include_usage`，并严格校验流式条件和嵌套未知字段。
+- OpenAI 兼容契约支持 `max_completion_tokens`，保留新版 OpenAI 字段语义，并拒绝与 `max_tokens` 同时出现。
 - Decision Journal 读取时新增 `plan_hash` 和持久化摘要列校验，检测 JSONB 证据篡改后拒绝 Replay。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。

@@ -26,6 +26,17 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			status: http.StatusOK,
 		},
 		{
+			name:   "modern completion token limit",
+			body:   `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
+			status: http.StatusOK,
+		},
+		{
+			name:      "completion token limits are mutually exclusive",
+			body:      `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"max_tokens":16,"max_completion_tokens":16}`,
+			status:    http.StatusBadRequest,
+			errorCode: "invalid_chat_request",
+		},
+		{
 			name:   "stream usage option",
 			body:   `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":true}}`,
 			status: http.StatusOK,
@@ -106,8 +117,8 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			}
 		})
 	}
-	if providerCalls != 2 {
-		t.Fatalf("provider calls = %d, want 2", providerCalls)
+	if providerCalls != 3 {
+		t.Fatalf("provider calls = %d, want 3", providerCalls)
 	}
 }
 

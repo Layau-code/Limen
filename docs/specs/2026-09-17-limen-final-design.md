@@ -358,6 +358,7 @@ Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`�
 | model | 支持逻辑模型和 auto |
 | messages | 支持 system、user、assistant 的纯文本 |
 | max_tokens | 支持 |
+| max_completion_tokens | 支持；与 max_tokens 互斥，按 Provider 保留或转换字段语义 |
 | temperature | 支持 |
 | stream | 支持普通响应和 SSE |
 | stream_options.include_usage | 支持；仅允许在 stream=true 时使用 |
