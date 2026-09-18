@@ -116,9 +116,9 @@ curl http://localhost:8080/v1/chat/completions \
 
 配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；受治理 Run 创建时固定的策略优先，冲突请求返回 `400 strategy_conflict`。当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
 
-可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，适合在 Agent 调用前解释路由选择。
+可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，目标引用使用稳定的 opaque ID，不返回真实上游模型名，适合在 Agent 调用前解释路由选择。
 
-决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和结构化差异（策略、目标顺序、候选原因和哈希）；差异中不包含真实上游模型名。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；决策记录只包含模型名、能力契约、候选目标和哈希，不保存 Prompt 或 Response。
+决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和结构化差异（策略、目标顺序、候选原因和哈希）；差异中不包含真实上游模型名。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；对外快照只包含逻辑模型、能力契约、opaque 目标引用和哈希，不保存 Prompt 或 Response。内部快照仍保留协议转换所需字段，仅供租户隔离的 Replay 使用。
 
 `internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。当前新请求使用 `decision.v2`：无序能力集合会排序去重，显式模型的 Fallback 目标优先级保持不变；`decision.v1` 仍注册用于历史 Replay。算法注册表支持为旧版本设置 `retainUntil`，超过保留截止时间后返回 `algorithm_version_unavailable`，不会静默使用新算法。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
 

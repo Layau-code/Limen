@@ -507,18 +507,21 @@ func TestDecisionExplainAndReplay(t *testing.T) {
 	if dryResponse.Code != http.StatusOK || decisionID == "" {
 		t.Fatalf("dry run = %d decision=%q body=%s", dryResponse.Code, decisionID, dryResponse.Body.String())
 	}
+	if strings.Contains(dryResponse.Body.String(), "gpt-test") {
+		t.Fatalf("dry run leaked upstream model: %s", dryResponse.Body.String())
+	}
 	get := httptest.NewRequest(http.MethodGet, "/v1/limen/decisions/"+decisionID, nil)
 	get.Header.Set("Authorization", "Bearer limen-secret")
 	getResponse := httptest.NewRecorder()
 	handler.ServeHTTP(getResponse, get)
-	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), decisionID) {
+	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), decisionID) || strings.Contains(getResponse.Body.String(), "gpt-test") {
 		t.Fatalf("get decision = %d body=%s", getResponse.Code, getResponse.Body.String())
 	}
 	replay := httptest.NewRequest(http.MethodPost, "/v1/limen/decisions/"+decisionID+"/replay", nil)
 	replay.Header.Set("Authorization", "Bearer limen-secret")
 	replayResponse := httptest.NewRecorder()
 	handler.ServeHTTP(replayResponse, replay)
-	if replayResponse.Code != http.StatusOK || !strings.Contains(replayResponse.Body.String(), `"match":true`) {
+	if replayResponse.Code != http.StatusOK || !strings.Contains(replayResponse.Body.String(), `"match":true`) || strings.Contains(replayResponse.Body.String(), "gpt-test") {
 		t.Fatalf("replay = %d body=%s", replayResponse.Code, replayResponse.Body.String())
 	}
 }

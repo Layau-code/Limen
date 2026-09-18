@@ -31,6 +31,7 @@
 - Provider 出站凭据现在绑定请求租户；启用加密凭据存储后，OpenAI/Anthropic 每次调用按租户和 endpoint 解析密钥，缺失凭据不会回退到进程共享密钥。
 - HTTP Handler 新增 `HandlerOptions` 依赖装配入口，主程序不再使用难以维护的长参数构造调用；旧入口保留为兼容包装。
 - `make check` 新增 Replay fixture 生成一致性校验，防止决策证据文件与生成器悄然漂移。
+- Dry Run、Decision 查询和 Replay 响应现在隐藏真实上游模型名，并将目标引用归并为稳定 opaque ID；内部快照仍可用于确定性 Replay。
 
 ### 修复
 

@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -311,7 +313,7 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Limen-Decision-ID", decisionID)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(plan)
+	_ = json.NewEncoder(w).Encode(publicExecutionPlan(plan))
 }
 
 // recordDecision 为当前租户保存一次不含敏感正文的决策快照。
@@ -343,7 +345,7 @@ func (h *Handler) getDecision(w http.ResponseWriter, r *http.Request) {
 		writeDecisionLookupError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, publicDecisionRecord(record))
 }
 
 // replayDecision 使用历史输入重新计算计划，不访问 Provider 或当前熔断器。
@@ -373,11 +375,130 @@ func (h *Handler) replayDecision(w http.ResponseWriter, r *http.Request) {
 	differences := comparePlans(record.Plan, replay)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"decision_id":   record.ID,
-		"original_plan": record.Plan,
-		"replay_plan":   replay,
+		"original_plan": publicExecutionPlan(record.Plan),
+		"replay_plan":   publicExecutionPlan(replay),
 		"match":         len(differences) == 0,
 		"differences":   differences,
 	})
+}
+
+// publicDecisionRecord 将内部 Replay 快照转换为不暴露真实上游模型名的响应。
+func publicDecisionRecord(record journal.Record) publicDecisionRecordResponse {
+	return publicDecisionRecordResponse{
+		ID:        record.ID,
+		Input:     publicDecisionInput(record.Input),
+		Plan:      publicExecutionPlan(record.Plan),
+		CreatedAt: record.CreatedAt,
+	}
+}
+
+// publicDecisionInput 保留决策依据，但移除只供 Provider 使用的上游模型名。
+func publicDecisionInput(input decision.Input) publicDecisionInputResponse {
+	candidates := make([]publicCandidate, 0, len(input.Candidates))
+	for _, candidate := range input.Candidates {
+		candidates = append(candidates, publicCandidate{
+			ModelID:           candidate.ModelID,
+			Compatibility:     candidate.Compatibility,
+			TargetID:          publicTargetID(candidate.Target.ID),
+			Provider:          candidate.Target.Provider,
+			Capabilities:      append([]string(nil), candidate.Target.Capabilities...),
+			SupportsStreaming: candidate.Target.SupportsStreaming,
+			QualityTier:       candidate.Target.QualityTier,
+			CostTier:          candidate.Target.CostTier,
+			ContextWindow:     candidate.Target.ContextWindow,
+			DataClasses:       append([]string(nil), candidate.Target.DataClasses...),
+			Pricing:           candidate.Target.Pricing,
+			Enabled:           candidate.Enabled,
+			SecurityAllowed:   candidate.SecurityAllowed,
+			Health:            candidate.Health,
+		})
+	}
+	return publicDecisionInputResponse{
+		SchemaVersion:     input.SchemaVersion,
+		AlgorithmVersion:  input.AlgorithmVersion,
+		ConfigVersion:     input.ConfigVersion,
+		EvaluatedAtUnixMS: input.EvaluatedAtUnixMS,
+		Request:           input.Request,
+		Run:               input.Run,
+		Candidates:        candidates,
+	}
+}
+
+// publicExecutionPlan 将执行计划压缩为可解释但不含上游模型名的视图。
+func publicExecutionPlan(plan decision.ExecutionPlan) publicExecutionPlanResponse {
+	candidates := make([]decision.CandidateResult, 0, len(plan.Candidates))
+	for _, candidate := range plan.Candidates {
+		candidate.TargetID = publicTargetID(candidate.TargetID)
+		candidates = append(candidates, candidate)
+	}
+	targets := make([]publicPlanTarget, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targets = append(targets, publicPlanTarget{ModelID: target.ModelID, Compatibility: target.Compatibility, TargetID: publicTargetID(target.Target.ID), Provider: target.Target.Provider})
+	}
+	return publicExecutionPlanResponse{
+		SchemaVersion:     plan.SchemaVersion,
+		AlgorithmVersion:  plan.AlgorithmVersion,
+		ConfigVersion:     plan.ConfigVersion,
+		InputHash:         plan.InputHash,
+		EffectiveStrategy: plan.EffectiveStrategy,
+		Reasons:           append([]string(nil), plan.Reasons...),
+		Candidates:        candidates,
+		Targets:           targets,
+		PlanHash:          plan.PlanHash,
+	}
+}
+
+type publicDecisionRecordResponse struct {
+	ID        string                      `json:"decision_id"`
+	Input     publicDecisionInputResponse `json:"input"`
+	Plan      publicExecutionPlanResponse `json:"plan"`
+	CreatedAt time.Time                   `json:"created_at"`
+}
+
+type publicDecisionInputResponse struct {
+	SchemaVersion     string               `json:"schema_version"`
+	AlgorithmVersion  string               `json:"algorithm_version"`
+	ConfigVersion     string               `json:"config_version,omitempty"`
+	EvaluatedAtUnixMS int64                `json:"evaluated_at_unix_ms"`
+	Request           decision.Request     `json:"request"`
+	Run               decision.RunSnapshot `json:"run"`
+	Candidates        []publicCandidate    `json:"candidates"`
+}
+
+type publicCandidate struct {
+	ModelID           string                  `json:"model_id"`
+	Compatibility     bool                    `json:"compatibility,omitempty"`
+	TargetID          string                  `json:"target_id"`
+	Provider          string                  `json:"provider"`
+	Capabilities      []string                `json:"capabilities,omitempty"`
+	SupportsStreaming bool                    `json:"supports_streaming"`
+	QualityTier       int                     `json:"quality_tier"`
+	CostTier          int                     `json:"cost_tier"`
+	ContextWindow     int64                   `json:"context_window"`
+	DataClasses       []string                `json:"data_classes,omitempty"`
+	Pricing           *cost.Pricing           `json:"pricing,omitempty"`
+	Enabled           bool                    `json:"enabled"`
+	SecurityAllowed   bool                    `json:"security_allowed"`
+	Health            decision.HealthSnapshot `json:"health"`
+}
+
+type publicExecutionPlanResponse struct {
+	SchemaVersion     string                     `json:"schema_version"`
+	AlgorithmVersion  string                     `json:"algorithm_version"`
+	ConfigVersion     string                     `json:"config_version,omitempty"`
+	InputHash         string                     `json:"input_hash"`
+	EffectiveStrategy string                     `json:"effective_strategy"`
+	Reasons           []string                   `json:"reasons"`
+	Candidates        []decision.CandidateResult `json:"candidates"`
+	Targets           []publicPlanTarget         `json:"targets"`
+	PlanHash          string                     `json:"plan_hash"`
+}
+
+type publicPlanTarget struct {
+	ModelID       string `json:"model_id"`
+	Compatibility bool   `json:"compatibility,omitempty"`
+	TargetID      string `json:"target_id"`
+	Provider      string `json:"provider"`
 }
 
 // comparePlans 返回 Replay 与原计划之间的稳定差异码。
@@ -449,7 +570,13 @@ func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 
 // safePlanTargetID 返回计划目标的逻辑标识，不暴露真实上游模型名。
 func safePlanTargetID(target decision.PlanTarget) string {
-	return target.ModelID + ":" + target.Target.ID
+	return target.ModelID + ":" + publicTargetID(target.Target.ID)
+}
+
+// publicTargetID 将内部目标标识转换为稳定 opaque 引用，避免配置命名泄露上游模型。
+func publicTargetID(targetID string) string {
+	sum := sha256.Sum256([]byte(targetID))
+	return "target-" + hex.EncodeToString(sum[:6])
 }
 
 // writeDecisionLookupError 将决策日志查询错误映射为稳定 API 错误。
