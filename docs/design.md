@@ -29,8 +29,8 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
 - `internal/audit`：保存控制面安全摘要；事件按租户隔离，查询只返回动作、资源、结果、请求哈希和时间。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
-- `internal/gateway/router.go`：将请求快照交给 Decision Engine，替换上游模型，管理共享总预算、单次超时、Fallback 和计划执行。
-- `internal/gateway/router.go`：配置发布通过带读写锁的目录快照原子切换；配置版本和路由策略进入后续决策输入。
+- `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。
+- `internal/gateway/executor.go`：只消费 ExecutionPlan，管理共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
 - `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；不感知逻辑模型。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。

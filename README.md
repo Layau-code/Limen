@@ -10,6 +10,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 
 - 逻辑模型名与真实上游模型解耦，配置版本不可修改；启动文件用于引导，数据库发布版本可在运行中原子切换。
 - `model=auto` 可根据能力契约、数据等级、质量和成本策略生成可解释的执行计划。
+- Decision Engine 与 Gateway Executor 分离：前者只生成可重放计划，后者只按计划执行 Provider，不在执行阶段偷偷改变路由策略。
 - 每次 Dry Run 和真实 Chat 都生成不含 Prompt/Response 的 Decision Journal，返回 `decision_id`，可 Explain 查询并 Replay 校验 `plan_hash`。
 - 仓库提交 100 组完整 DecisionInput 与预期 `plan_hash`，重建 Engine 后逐组验证规范 ExecutionPlan 字节，防止算法漂移悄悄改写历史决策。
 - 阶段 B 已加入 Run 领域状态机、幂等哈希和 PostgreSQL Store 迁移；HTTP 控制面接入前，现有无 Run Chat 行为保持不变。
