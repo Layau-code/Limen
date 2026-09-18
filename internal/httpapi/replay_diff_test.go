@@ -92,3 +92,28 @@ func TestComparePlansReportsHiddenTargetMappingChange(t *testing.T) {
 		}
 	}
 }
+
+func TestComparePlansReportsHiddenTargetPolicyChange(t *testing.T) {
+	original := decision.ExecutionPlan{
+		Targets: []decision.PlanTarget{{ModelID: "model", Target: catalog.Target{
+			ID: "primary", Provider: "openai", UpstreamModel: "gpt-secret", QualityTier: 2, SupportsStreaming: true, ContextWindow: 8192,
+		}}},
+		PlanHash: "sha256:original",
+	}
+	replay := original
+	replay.Targets = []decision.PlanTarget{{ModelID: "model", Target: catalog.Target{
+		ID: "primary", Provider: "openai", UpstreamModel: "gpt-secret", QualityTier: 4, SupportsStreaming: false, ContextWindow: 16384,
+	}}}
+	replay.PlanHash = "sha256:replay"
+	differences := comparePlans(original, replay)
+	encoded, err := json.Marshal(differences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"path":"targets[0]/policy"`) {
+		t.Fatalf("missing hidden policy difference: %s", encoded)
+	}
+	if strings.Contains(string(encoded), "gpt-secret") {
+		t.Fatalf("policy difference leaked upstream model: %s", encoded)
+	}
+}

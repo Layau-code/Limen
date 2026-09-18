@@ -42,6 +42,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `internal/decision/testdata/fixtures.json` 是版本化 Replay 证据；修改决策语义必须先更新生成器和算法版本，`make check` 必须证明生成结果无漂移。
 - Decision Journal 的 HTTP 响应必须经过安全视图转换：不返回 `upstream_model`，目标引用使用稳定 opaque ID；内部完整快照只能用于租户隔离的 Replay。
 - Replay 差异必须检测 Provider、上游模型或 endpoint 映射变化，即使 target ID 未变；只返回稳定路径和 `changed` 差异码，不返回隐藏映射原值。
+- Replay 差异还必须检测目标能力、流式支持、质量/成本等级、上下文窗口、数据等级或价格元数据变化；只返回 `targets[i]/policy`，不返回价格和内部配置值。
 - Decision Journal 保存和读取时都必须重新计算 `input_hash`/`plan_hash`，并校验 PostgreSQL 摘要列与 JSONB 内容一致；检测到篡改必须失败，不能返回部分可信的历史计划。
 - 配置摘要和配置 diff 也必须使用稳定 opaque 目标引用；目标 ID 可能由 `provider:upstream_model` 派生，不能直接进入控制面响应或 diff 路径。
 - Run 和 Request 的 HTTP 响应必须经过安全 DTO 转换：不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt 字段；客户端只读取生命周期、结算和决策关联状态。

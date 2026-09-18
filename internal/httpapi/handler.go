@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -654,6 +655,9 @@ func comparePlans(original, replay decision.ExecutionPlan) []planDifference {
 		if index < len(original.Targets) && index < len(replay.Targets) && targetMappingChanged(original.Targets[index], replay.Targets[index]) {
 			differences = append(differences, planDifference{Path: fmt.Sprintf("targets[%d]/mapping", index), Kind: "changed"})
 		}
+		if index < len(original.Targets) && index < len(replay.Targets) && targetPolicyChanged(original.Targets[index], replay.Targets[index]) {
+			differences = append(differences, planDifference{Path: fmt.Sprintf("targets[%d]/policy", index), Kind: "changed"})
+		}
 	}
 	maxCandidates := len(original.Candidates)
 	if len(replay.Candidates) > maxCandidates {
@@ -682,6 +686,24 @@ func targetMappingChanged(original, replay decision.PlanTarget) bool {
 	return original.Target.Provider != replay.Target.Provider ||
 		original.Target.UpstreamModel != replay.Target.UpstreamModel ||
 		original.Target.EndpointID != replay.Target.EndpointID
+}
+
+// targetPolicyChanged 判断目标能力、限制和价格元数据是否变化，不返回其原始值。
+func targetPolicyChanged(original, replay decision.PlanTarget) bool {
+	left, right := original.Target, replay.Target
+	if !slices.Equal(left.Capabilities, right.Capabilities) ||
+		left.SupportsStreaming != right.SupportsStreaming ||
+		left.QualityTier != right.QualityTier ||
+		left.CostTier != right.CostTier ||
+		left.ContextWindow != right.ContextWindow ||
+		!slices.Equal(left.DataClasses, right.DataClasses) {
+		return true
+	}
+	if left.Pricing == nil || right.Pricing == nil {
+		return left.Pricing != right.Pricing
+	}
+	return left.Pricing.InputPerMillionNanoUSD != right.Pricing.InputPerMillionNanoUSD ||
+		left.Pricing.OutputPerMillionNanoUSD != right.Pricing.OutputPerMillionNanoUSD
 }
 
 // safePlanTargetID 返回计划目标的逻辑标识，不暴露真实上游模型名。

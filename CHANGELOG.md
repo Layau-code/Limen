@@ -4,7 +4,7 @@
 
 ### 新增
 
-- Replay 差异现在能识别同一 target ID 下的 Provider、上游模型或 endpoint 映射变化，同时只返回安全差异码，不泄露隐藏映射。
+- Replay 差异现在能识别同一 target ID 下的 Provider、上游模型、endpoint 或目标策略元数据变化，同时只返回安全差异码，不泄露隐藏映射和价格。
 - 模型目标新增可选 `endpoint_id` 绑定；Router 发布和 Provider 出站都会校验目标只能访问进程已配置的 endpoint，避免跨 endpoint 复用凭据或熔断状态。
 - 新增配置版本预演接口，可在发布前对指定草稿生成决策计划而不切换 Router 或访问 Provider。
 - 新增配置影响分析接口，可将历史决策重放到指定草稿并返回安全结构化差异，不访问 Provider 或改变线上路由。
