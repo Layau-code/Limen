@@ -6,6 +6,7 @@
 - 将 Chat 请求解析、字段校验和 SSE 分块转发拆到独立文件，降低 HTTP Handler 的认知负担；接口和兼容行为保持不变。
 - 将 Router 的 DecisionInput/Replay 组装逻辑拆到 `planner.go`，进一步明确“计划生成”和“计划执行”的边界；行为由现有决策与路由测试保护。
 - README 的基准示例同步到最近一次 `make bench` 实测结果，避免性能证据与代码版本脱节。
+- 将 HTTP 层的 Dry Run、Decision 查询/Replay 和计划安全视图拆到 `decision_handlers.go`，继续降低主 Handler 的职责密度。
 
 ### 新增
 
