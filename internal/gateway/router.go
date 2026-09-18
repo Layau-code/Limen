@@ -19,10 +19,12 @@ import (
 
 // Policy 定义完整请求预算、单次尝试和熔断参数。
 type Policy struct {
-	RequestTimeout   time.Duration
-	AttemptTimeout   time.Duration
-	FailureThreshold int
-	Cooldown         time.Duration
+	RequestTimeout          time.Duration
+	AttemptTimeout          time.Duration
+	FailureThreshold        int
+	Cooldown                time.Duration
+	EconomyThresholdPercent int
+	MinimumAttemptWindow    time.Duration
 }
 
 // Router 按模型注册表执行预算感知的 Provider 路由。
@@ -91,6 +93,7 @@ func NewRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 
 // newRouter 使用可替换时钟创建路由器，便于确定性验证熔断行为。
 func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, policy Policy, now func() time.Time) *Router {
+	policy = normalizePolicy(policy)
 	router := &Router{
 		registry:   registry,
 		policy:     policy,
@@ -114,6 +117,17 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 	return router
 }
 
+// normalizePolicy 补齐决策所需的稳定路由默认值。
+func normalizePolicy(policy Policy) Policy {
+	if policy.EconomyThresholdPercent == 0 {
+		policy.EconomyThresholdPercent = 20
+	}
+	if policy.MinimumAttemptWindow == 0 {
+		policy.MinimumAttemptWindow = 250 * time.Millisecond
+	}
+	return policy
+}
+
 // ReplaceRegistry 原子替换模型目录，并保留仍然存在目标的熔断状态。
 func (router *Router) ReplaceRegistry(registry *ModelRegistry, version string) error {
 	return router.ReplaceRegistryWithPolicy(registry, version, router.Policy())
@@ -124,6 +138,7 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	if registry == nil || len(registry.List()) == 0 {
 		return errors.New("model registry is required")
 	}
+	policy = normalizePolicy(policy)
 	router.registryMu.Lock()
 	defer router.registryMu.Unlock()
 	nextBreakers := make(map[string]*circuitBreaker)
@@ -185,19 +200,29 @@ func (router *Router) Chat(parent context.Context, request provider.ChatRequest)
 
 // ChatWithContract 根据能力契约生成计划，再在共享总预算内执行目标。
 func (router *Router) ChatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract) (Result, error) {
-	return router.chatWithContract(parent, request, contract, nil, nil)
+	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, nil, nil)
+}
+
+// ChatWithContractAndRun 根据固定 Run 快照生成计划并执行一次请求。
+func (router *Router) ChatWithContractAndRun(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot) (Result, error) {
+	return router.chatWithContract(parent, request, contract, runSnapshot, nil, nil)
 }
 
 // ChatWithContractHooks 允许调用方同时记录决策和每次 Provider 尝试。
 func (router *Router) ChatWithContractHooks(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
-	return router.chatWithContract(parent, request, contract, beforeExecute, beforeAttempt)
+	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, beforeExecute, beforeAttempt)
+}
+
+// ChatWithContractHooksAndRun 在持久化计划前注入 Run 快照和 Attempt 钩子。
+func (router *Router) ChatWithContractHooksAndRun(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
+	return router.chatWithContract(parent, request, contract, runSnapshot, beforeExecute, beforeAttempt)
 }
 
 // chatWithContract 统一处理计划生成、审计回调和计划执行。
-func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
+func (router *Router) chatWithContract(parent context.Context, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, beforeExecute func(decision.Input, decision.ExecutionPlan) error, beforeAttempt AttemptStartHook) (Result, error) {
 	ctx, span := otel.Tracer("github.com/huz/limen/internal/gateway").Start(parent, "limen.decision")
 	defer span.End()
-	input, plan, err := router.planWithInput(request, contract)
+	input, plan, err := router.planWithInputAndRun(request, contract, runSnapshot)
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.String("limen.config.version", plan.ConfigVersion),
@@ -234,7 +259,7 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 
 // ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。
 func (router *Router) ChatWithContractHook(parent context.Context, request provider.ChatRequest, contract decision.Contract, beforeExecute func(decision.Input, decision.ExecutionPlan) error) (Result, error) {
-	return router.chatWithContract(parent, request, contract, beforeExecute, nil)
+	return router.chatWithContract(parent, request, contract, decision.RunSnapshot{}, beforeExecute, nil)
 }
 
 // DryRun 只生成决策计划，不访问 Provider 或改变熔断、结算状态。
@@ -246,6 +271,11 @@ func (router *Router) DryRun(request provider.ChatRequest, contract decision.Con
 // Explain 生成决策输入和执行计划，供审计与 Replay 使用。
 func (router *Router) Explain(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
 	return router.planWithInput(request, contract)
+}
+
+// ExplainWithRun 使用固定 Run 快照生成可审计的决策输入和执行计划。
+func (router *Router) ExplainWithRun(request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithInputAndRun(request, contract, runSnapshot)
 }
 
 // ExplainAt 使用指定评估时间生成可复现的决策计划，供离线解释和验收使用。
@@ -292,17 +322,32 @@ func (router *Router) plan(request provider.ChatRequest, contract decision.Contr
 
 // planWithInput 将注册表和熔断器快照组装为可持久化的 DecisionInput。
 func (router *Router) planWithInput(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithInputAndRun(request, contract, decision.RunSnapshot{})
+}
+
+// planWithInputAndRun 将注册表和固定 Run 快照组装为决策输入。
+func (router *Router) planWithInputAndRun(request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
 	registry, configVersion := router.registrySnapshot()
-	return router.planWithRegistry(request, contract, registry, configVersion)
+	return router.planWithRegistryAndRun(request, contract, registry, configVersion, runSnapshot)
 }
 
 // planWithRegistry 将指定目录和当前熔断快照组装为可持久化的 DecisionInput。
 func (router *Router) planWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
-	return router.planWithRegistryAt(request, contract, registry, configVersion, router.now())
+	return router.planWithRegistryAndRun(request, contract, registry, configVersion, decision.RunSnapshot{})
+}
+
+// planWithRegistryAndRun 使用指定目录和 Run 快照生成决策计划。
+func (router *Router) planWithRegistryAndRun(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistryAtAndRun(request, contract, registry, configVersion, router.now(), runSnapshot)
 }
 
 // planWithRegistryAt 将指定目录和评估时间组装为可持久化的决策输入。
 func (router *Router) planWithRegistryAt(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, evaluatedAt time.Time) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistryAtAndRun(request, contract, registry, configVersion, evaluatedAt, decision.RunSnapshot{})
+}
+
+// planWithRegistryAtAndRun 使用指定时间和 Run 快照生成可复现计划。
+func (router *Router) planWithRegistryAtAndRun(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, evaluatedAt time.Time, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
 	if registry == nil {
 		return decision.Input{}, decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
 	}
@@ -349,6 +394,7 @@ func (router *Router) planWithRegistryAt(request provider.ChatRequest, contract 
 		ConfigVersion:     configVersion,
 		EvaluatedAtUnixMS: evaluatedAt.UnixMilli(),
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},
+		Run:               runSnapshot,
 		Candidates:        candidates,
 	}
 	plan, err := router.engine.Decide(input)

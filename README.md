@@ -41,7 +41,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 
 ```json
 {
-  "routing": {"attempt_timeout": "10s", "failure_threshold": 3, "cooldown": "30s"},
+  "routing": {"attempt_timeout": "10s", "failure_threshold": 3, "cooldown": "30s", "economy_threshold_percent": 20, "minimum_attempt_window": "250ms"},
   "models": [{
     "id": "smart-model",
     "display_name": "Smart Model",
@@ -159,7 +159,7 @@ X-Limen-Plan-Hash: sha256:...
 
 价格字段使用每百万 Token 的美元字符串，输入价和输出价必须同时填写。当前版本只负责请求结束后的结算，不实现每日额度或超额拦截。
 
-Run 预算采用事后软阈值：已开始请求允许完成，结算后达到阈值才阻止后续请求；不设置单请求金额上限。阶段 B 的持久化边界使用租户组合键、RLS 和 `ledger_entries(tenant_id, request_id)` 唯一约束，结算未知时保留 `pending` 并暂停 Run 记账。请求租约默认 30 秒、每 10 秒续租；结算存储失败会进入持久化 `settlement_jobs`，过期恢复不自动重放可能已经产生费用的上游调用。
+Run 预算采用事后软阈值：已开始请求允许完成，结算后达到阈值才阻止后续请求；`soft_budget_usd: "0"` 表示不启用软预算；不设置单请求金额上限。阶段 B 的持久化边界使用租户组合键、RLS 和 `ledger_entries(tenant_id, request_id)` 唯一约束，结算未知时保留 `pending` 并暂停 Run 记账。请求租约默认 30 秒、每 10 秒续租；结算存储失败会进入持久化 `settlement_jobs`，过期恢复不自动重放可能已经产生费用的上游调用。
 
 PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表所有者路径也不能绕过租户策略；需要运维操作时应使用独立的数据库角色。
 

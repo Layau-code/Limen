@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
 )
@@ -84,6 +85,51 @@ func TestRouterRejectsUnknownModel(t *testing.T) {
 	}
 	if _, ok := err.(*UnsupportedModelError); !ok {
 		t.Fatalf("error type = %T", err)
+	}
+}
+
+func TestRouterIncludesRunSnapshotInDecision(t *testing.T) {
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{
+		{ID: "expensive", Provider: "openai", UpstreamModel: "gpt-expensive", QualityTier: 2, CostTier: 2, DataClasses: []string{"public"}, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 20, OutputPerMillionNanoUSD: 20}},
+		{ID: "cheap", Provider: "openai", UpstreamModel: "gpt-cheap", QualityTier: 2, CostTier: 1, DataClasses: []string{"public"}, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(nil, registry, Policy{
+		RequestTimeout:          time.Second,
+		AttemptTimeout:          time.Second,
+		FailureThreshold:        3,
+		Cooldown:                time.Second,
+		EconomyThresholdPercent: 20,
+		MinimumAttemptWindow:    250 * time.Millisecond,
+	})
+	input, plan, err := router.ExplainWithRun(provider.ChatRequest{Model: "auto"}, decision.Contract{Active: true, Strategy: decision.StrategyBalanced}, decision.RunSnapshot{
+		Governed:                true,
+		SettledCostNanoUSD:      900,
+		SoftBudgetNanoUSD:       1_000,
+		EconomyThresholdPercent: 20,
+		RemainingDeadline:       time.Second,
+		MinimumAttemptWindow:    250 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !input.Run.Governed || input.Run.SettledCostNanoUSD != 900 || plan.EffectiveStrategy != decision.StrategyEconomy || plan.Targets[0].Target.ID != "cheap" {
+		t.Fatalf("input=%+v plan=%+v", input.Run, plan)
+	}
+}
+
+func TestRouterRejectsRunWithInsufficientDeadline(t *testing.T) {
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{ID: "target", Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(nil, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Second, MinimumAttemptWindow: 250 * time.Millisecond})
+	input, plan, err := router.ExplainWithRun(provider.ChatRequest{Model: "auto"}, decision.Contract{Active: true}, decision.RunSnapshot{Governed: true, SoftBudgetNanoUSD: 1_000, RemainingDeadline: 100 * time.Millisecond, MinimumAttemptWindow: 250 * time.Millisecond})
+	var decisionErr *decision.DecisionError
+	if !errors.As(err, &decisionErr) || decisionErr.Code != "no_eligible_target" || input.Run.RemainingDeadline != 100*time.Millisecond || len(plan.Targets) != 0 || len(plan.Candidates) != 1 || plan.Candidates[0].Reason != "deadline_insufficient" {
+		t.Fatalf("input=%+v plan=%+v err=%v", input.Run, plan, err)
 	}
 }
 

@@ -132,3 +132,20 @@ func TestDecideUsesEconomyStrategyNearSoftBudget(t *testing.T) {
 		t.Fatalf("target = %q, want cheap", got)
 	}
 }
+
+func TestDecideAllowsGovernedRunWithoutSoftBudget(t *testing.T) {
+	input := Input{
+		SchemaVersion:    SchemaVersionV1,
+		AlgorithmVersion: AlgorithmVersionV1,
+		Request:          Request{Model: "auto", Contract: Contract{Active: true}},
+		Run:              RunSnapshot{Governed: true},
+		Candidates:       []Candidate{{ModelID: "model", Enabled: true, SecurityAllowed: true, Target: testTargetWithCost("target", 2, 1)}},
+	}
+	plan, err := NewEngine().Decide(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EffectiveStrategy != StrategyBalanced || len(plan.Targets) != 1 {
+		t.Fatalf("plan = %+v", plan)
+	}
+}

@@ -47,7 +47,7 @@ HTTP Principal/Scope 鉴权与解析
 
 ```json
 {
-  "routing": {"attempt_timeout":"10s", "failure_threshold":3, "cooldown":"30s"},
+  "routing": {"attempt_timeout":"10s", "failure_threshold":3, "cooldown":"30s", "economy_threshold_percent":20, "minimum_attempt_window":"250ms"},
   "models": [{
     "id":"smart-model",
     "targets":[
@@ -74,7 +74,7 @@ HTTP Principal/Scope 鉴权与解析
 
 没有模型文件时使用兼容注册表，模型名原样透传，不执行跨 Provider Fallback。配置模式的 `/v1/models` 使用 `owned_by=limen`，兼容模式使用实际 Provider。
 
-请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、质量下限、流式、上下文、数据等级、健康和最小尝试窗口过滤。`minimum_quality_tier` 是硬约束，低于门槛的目标返回 `quality_tier_too_low`，不会进入 Fallback 计划。`balanced` 优先健康和质量，`economy` 优先预计定点成本；治理 Run 接近软预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。新决策使用 `decision.v2`，会对能力、数据等级等无序集合做排序去重，同时保留显式模型的目标优先级；历史 `decision.v1` 继续按旧语义 Replay。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
+请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、质量下限、流式、上下文、数据等级、健康和最小尝试窗口过滤。受治理 Chat 会把 Run 的已结算金额、软预算、剩余截止时间和固定策略快照传入 DecisionInput；Run 接近预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。`minimum_quality_tier` 是硬约束，低于门槛的目标返回 `quality_tier_too_low`，不会进入 Fallback 计划。`balanced` 优先健康和质量，`economy` 优先预计定点成本。新决策使用 `decision.v2`，会对能力、数据等级等无序集合做排序去重，同时保留显式模型的目标优先级；历史 `decision.v1` 继续按旧语义 Replay。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
 
 确定性验收提交 100 组完整 DecisionInput 和预期 `plan_hash`，覆盖契约、流式、上下文、数据等级、健康、定点价格、Run 预算和两种策略。测试重新构造 Engine 后比较规范 ExecutionPlan JSON 字节与已提交哈希；生成器必须重复产生完全相同的 fixture 文件。价格在配置和 Decision 快照中统一使用可逆的美元字符串 JSON，内存仍使用纳美元整数，保证 PostgreSQL Journal 读取后可 Replay。
 
@@ -90,7 +90,7 @@ HTTP Principal/Scope 鉴权与解析
 
 离线 `limen explain` 使用固定评估时间和模型配置版本生成同一套计划哈希；它只返回 Provider 名称、opaque 目标引用、候选原因和哈希，不返回 Prompt 或 `upstream_model`。没有可用目标时命令仍返回候选淘汰原因和 `no_eligible_target`，便于在发布前定位能力契约与模型目录冲突。
 
-阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重；重复请求在执行中返回 `request_in_progress`、原 Request ID 和固定 `Retry-After`，已完成请求返回 `request_already_processed`，哈希不同返回 `idempotency_conflict`，三种情况都不会再次调用 Provider。PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
+阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。`soft_budget_usd=0` 表示不启用软预算，但仍可使用截止时间和并发治理。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重；重复请求在执行中返回 `request_in_progress`、原 Request ID 和固定 `Retry-After`，已完成请求返回 `request_already_processed`，哈希不同返回 `idempotency_conflict`，三种情况都不会再次调用 Provider。PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
 Run 控制面的 HTTP 响应使用独立安全 DTO，只返回生命周期、并发、结算和决策关联状态；`tenant_id`、幂等键、请求哈希、租约字段以及 Provider 内部 Attempt 不进入公共响应。
 

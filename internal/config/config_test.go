@@ -238,7 +238,7 @@ func TestLoadUsesRoutingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Routing.AttemptTimeout != 15*time.Second || cfg.Routing.FailureThreshold != 3 || cfg.Routing.Cooldown != 30*time.Second {
+	if cfg.Routing.AttemptTimeout != 15*time.Second || cfg.Routing.FailureThreshold != 3 || cfg.Routing.Cooldown != 30*time.Second || cfg.Routing.EconomyThresholdPercent != 20 || cfg.Routing.MinimumAttemptWindow != 250*time.Millisecond {
 		t.Fatalf("routing = %+v", cfg.Routing)
 	}
 }
@@ -271,7 +271,7 @@ func TestLoadRejectsInvalidConfigApprovalFlag(t *testing.T) {
 
 func TestLoadModelsFileRequiresOnlyUsedProviderKey(t *testing.T) {
 	modelsFile := filepath.Join(t.TempDir(), "models.json")
-	contents := `{"routing":{"attempt_timeout":"8s","failure_threshold":2,"cooldown":"20s"},"models":[{"id":"fast-model","display_name":"Fast Model","targets":[{"provider":"openai","upstream_model":"gpt-test"}]}]}`
+	contents := `{"routing":{"attempt_timeout":"8s","failure_threshold":2,"cooldown":"20s","economy_threshold_percent":30,"minimum_attempt_window":"400ms"},"models":[{"id":"fast-model","display_name":"Fast Model","targets":[{"provider":"openai","upstream_model":"gpt-test"}]}]}`
 	if err := os.WriteFile(modelsFile, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestLoadModelsFileRequiresOnlyUsedProviderKey(t *testing.T) {
 	if cfg.Models[0].Targets[0].UpstreamModel != "gpt-test" {
 		t.Fatalf("target = %+v", cfg.Models[0].Targets[0])
 	}
-	if cfg.Routing.AttemptTimeout != 8*time.Second || cfg.Routing.FailureThreshold != 2 || cfg.Routing.Cooldown != 20*time.Second {
+	if cfg.Routing.AttemptTimeout != 8*time.Second || cfg.Routing.FailureThreshold != 2 || cfg.Routing.Cooldown != 20*time.Second || cfg.Routing.EconomyThresholdPercent != 30 || cfg.Routing.MinimumAttemptWindow != 400*time.Millisecond {
 		t.Fatalf("routing = %+v", cfg.Routing)
 	}
 }
@@ -417,6 +417,8 @@ func TestLoadRejectsInvalidModelsFile(t *testing.T) {
 		{"zero attempt timeout", `{"routing":{"attempt_timeout":"0s"},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
 		{"zero failure threshold", `{"routing":{"failure_threshold":0},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
 		{"negative cooldown", `{"routing":{"cooldown":"-1s"},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
+		{"invalid economy threshold", `{"routing":{"economy_threshold_percent":101},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
+		{"invalid minimum attempt window", `{"routing":{"minimum_attempt_window":"0s"},"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"real"}]}]}`},
 	}
 
 	for _, test := range tests {

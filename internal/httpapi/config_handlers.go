@@ -187,6 +187,8 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 	policy.AttemptTimeout = record.Routing.AttemptTimeout
 	policy.FailureThreshold = record.Routing.FailureThreshold
 	policy.Cooldown = record.Routing.Cooldown
+	policy.EconomyThresholdPercent = record.Routing.EconomyThresholdPercent
+	policy.MinimumAttemptWindow = record.Routing.MinimumAttemptWindow
 	if err := h.router.ReplaceRegistryWithPolicy(registry, record.Version, policy); err != nil {
 		writeError(w, http.StatusConflict, "config could not be activated", "api_error", "config_activation_failed")
 		return

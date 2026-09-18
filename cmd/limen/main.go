@@ -88,10 +88,12 @@ func main() {
 		"openai":    openAI,
 		"anthropic": anthropic,
 	}, registry, gateway.Policy{
-		RequestTimeout:   cfg.RequestTimeout,
-		AttemptTimeout:   cfg.Routing.AttemptTimeout,
-		FailureThreshold: cfg.Routing.FailureThreshold,
-		Cooldown:         cfg.Routing.Cooldown,
+		RequestTimeout:          cfg.RequestTimeout,
+		AttemptTimeout:          cfg.Routing.AttemptTimeout,
+		FailureThreshold:        cfg.Routing.FailureThreshold,
+		Cooldown:                cfg.Routing.Cooldown,
+		EconomyThresholdPercent: cfg.Routing.EconomyThresholdPercent,
+		MinimumAttemptWindow:    cfg.Routing.MinimumAttemptWindow,
 	})
 	router.SetConfigVersion(cfg.ConfigVersion)
 	health := httpapi.NewHealth()
@@ -162,6 +164,8 @@ func main() {
 			policy.AttemptTimeout = published.Routing.AttemptTimeout
 			policy.FailureThreshold = published.Routing.FailureThreshold
 			policy.Cooldown = published.Routing.Cooldown
+			policy.EconomyThresholdPercent = published.Routing.EconomyThresholdPercent
+			policy.MinimumAttemptWindow = published.Routing.MinimumAttemptWindow
 			if err := router.ReplaceRegistryWithPolicy(publishedRegistry, published.Version, policy); err != nil {
 				logger.Error("published model registry activation failed", "error", err)
 				os.Exit(1)
@@ -373,6 +377,8 @@ func refreshPublishedConfig(ctx context.Context, tenantID string, configs config
 	policy.AttemptTimeout = published.Routing.AttemptTimeout
 	policy.FailureThreshold = published.Routing.FailureThreshold
 	policy.Cooldown = published.Routing.Cooldown
+	policy.EconomyThresholdPercent = published.Routing.EconomyThresholdPercent
+	policy.MinimumAttemptWindow = published.Routing.MinimumAttemptWindow
 	return router.ReplaceRegistryWithPolicy(registry, published.Version, policy)
 }
 

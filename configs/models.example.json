@@ -2,7 +2,9 @@
   "routing": {
     "attempt_timeout": "10s",
     "failure_threshold": 3,
-    "cooldown": "30s"
+    "cooldown": "30s",
+    "economy_threshold_percent": 20,
+    "minimum_attempt_window": "250ms"
   },
   "models": [
     {

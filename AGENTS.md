@@ -73,7 +73,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 
 - Provider 只接收 `internal/provider.ChatRequest` 和 Context，负责一次协议调用及转换，不依赖 HTTP Handler，也不负责模型映射。
 - `ModelRegistry` 保存逻辑模型、有序目标和兼容模式；Router 只生成带版本的 ExecutionPlan，Gateway Executor 负责按计划替换上游模型、管理预算、熔断和 Fallback。
-- `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤（包括 `minimum_quality_tier`）、稳定排序、原因码及 `InputHash`/`PlanHash`。
+- `internal/catalog` 保存目标能力、质量/成本等级、上下文窗口和数据等级；`internal/decision` 负责硬约束过滤（包括 `minimum_quality_tier`）、稳定排序、原因码及 `InputHash`/`PlanHash`。受治理请求的 Run 快照必须原样进入 DecisionInput，不能在 HTTP 层或 Provider 层隐藏修改策略。
 - `Router.ChatWithContract` 先生成 ExecutionPlan，再按计划执行；Half-Open 探测权在执行前再次原子获取，竞争失败记录 `skipped_due_to_race`。
 - Provider 映射使用名称到实例的只读映射。Provider 适配层必须把上游状态归一为稳定错误分类，只有 `retryable_transient` 允许 Fallback；新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误分类、超时和取消测试。
 - `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，并保留仍存在目标的熔断状态。

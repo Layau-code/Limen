@@ -79,10 +79,12 @@ func runExplain(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("创建模型目录失败: %w", err)
 	}
 	router := gateway.NewRouter(nil, registry, gateway.Policy{
-		RequestTimeout:   time.Minute,
-		AttemptTimeout:   routing.AttemptTimeout,
-		FailureThreshold: routing.FailureThreshold,
-		Cooldown:         routing.Cooldown,
+		RequestTimeout:          time.Minute,
+		AttemptTimeout:          routing.AttemptTimeout,
+		FailureThreshold:        routing.FailureThreshold,
+		Cooldown:                routing.Cooldown,
+		EconomyThresholdPercent: routing.EconomyThresholdPercent,
+		MinimumAttemptWindow:    routing.MinimumAttemptWindow,
 	})
 	router.SetConfigVersion(configVersion)
 	input, plan, err := router.ExplainAt(time.Unix(0, 0), request, contract)

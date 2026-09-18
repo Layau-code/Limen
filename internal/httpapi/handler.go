@@ -1153,7 +1153,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer releaseLease()
-	h.forward(w, r, envelope.Request, envelope.Contract, requestID)
+	h.forward(w, r, envelope.Request, envelope.Contract, envelope.Run, requestID)
 }
 
 // applyRunContract 将 Run 固定策略注入请求，并拒绝客户端覆盖治理边界。
@@ -1173,6 +1173,25 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 	}
 	envelope.Contract.Strategy = runItem.Strategy
 	envelope.Contract.Active = true
+	policy := gateway.Policy{}
+	if h.router != nil {
+		policy = h.router.Policy()
+	}
+	remainingDeadline := time.Duration(0)
+	if !runItem.Deadline.IsZero() {
+		remainingDeadline = time.Until(runItem.Deadline)
+		if remainingDeadline < 0 {
+			remainingDeadline = 0
+		}
+	}
+	envelope.Run = decision.RunSnapshot{
+		Governed:                true,
+		SettledCostNanoUSD:      runItem.SettledCostNanoUSD,
+		SoftBudgetNanoUSD:       runItem.SoftBudgetNanoUSD,
+		EconomyThresholdPercent: policy.EconomyThresholdPercent,
+		RemainingDeadline:       remainingDeadline,
+		MinimumAttemptWindow:    policy.MinimumAttemptWindow,
+	}
 	return true
 }
 
@@ -1497,7 +1516,7 @@ func attemptState(report gateway.AttemptReport) run.AttemptState {
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runRequestID string) {
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, runRequestID string) {
 	tenantID := h.requestTenantID(r)
 	// 仅传递租户标识，Provider 再按绑定的 endpoint 解析实际密钥。
 	request.TenantID = tenantID
@@ -1530,7 +1549,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		}
 	}
 	decisionID := ""
-	result, err := h.router.ChatWithContractHooks(r.Context(), request, contract, func(input decision.Input, plan decision.ExecutionPlan) error {
+	result, err := h.router.ChatWithContractHooksAndRun(r.Context(), request, contract, runSnapshot, func(input decision.Input, plan decision.ExecutionPlan) error {
 		id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
 		decisionID = id
 		return recordErr
@@ -1931,6 +1950,7 @@ func ParseChatRequest(body []byte) (provider.ChatRequest, decision.Contract, err
 type parsedChatRequest struct {
 	Request  provider.ChatRequest
 	Contract decision.Contract
+	Run      decision.RunSnapshot
 }
 
 type unsupportedFieldError struct {

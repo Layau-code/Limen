@@ -123,9 +123,6 @@ func validateInput(input Input) error {
 		run.RemainingDeadline < 0 || run.MinimumAttemptWindow < 0 {
 		return &DecisionError{Code: "invalid_decision_snapshot"}
 	}
-	if run.Governed && run.SoftBudgetNanoUSD == 0 {
-		return &DecisionError{Code: "invalid_run_budget"}
-	}
 	for _, candidate := range input.Candidates {
 		switch candidate.Health.State {
 		case "", "closed", "open", "half_open":
@@ -172,7 +169,7 @@ func rejectReason(input Input, candidate Candidate) string {
 			return "circuit_probe_busy"
 		}
 	}
-	if input.Run.MinimumAttemptWindow > 0 &&
+	if input.Run.MinimumAttemptWindow > 0 && input.Run.RemainingDeadline > 0 &&
 		input.Run.RemainingDeadline < input.Run.MinimumAttemptWindow {
 		return "deadline_insufficient"
 	}

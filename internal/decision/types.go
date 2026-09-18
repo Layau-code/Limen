@@ -41,7 +41,7 @@ type RunSnapshot struct {
 	SettledCostNanoUSD      int64         `json:"settled_cost_nano_usd"`
 	SoftBudgetNanoUSD       int64         `json:"soft_budget_nano_usd"`
 	EconomyThresholdPercent int           `json:"economy_threshold_percent"`
-	RemainingDeadline       time.Duration `json:"remaining_deadline_nanos"`
+	RemainingDeadline       time.Duration `json:"remaining_deadline_nanos"` // 为零表示没有截止时间。
 	MinimumAttemptWindow    time.Duration `json:"minimum_attempt_window_nanos"`
 }
 

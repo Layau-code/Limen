@@ -42,14 +42,22 @@ type Model struct {
 
 // Routing 定义 Fallback 单次尝试和熔断策略。
 type Routing struct {
-	AttemptTimeout   time.Duration
-	FailureThreshold int
-	Cooldown         time.Duration
+	AttemptTimeout          time.Duration
+	FailureThreshold        int
+	Cooldown                time.Duration
+	EconomyThresholdPercent int
+	MinimumAttemptWindow    time.Duration
 }
 
 // DefaultRouting 返回未指定模型文件参数时使用的路由默认值。
 func DefaultRouting() Routing {
-	return Routing{AttemptTimeout: 15 * time.Second, FailureThreshold: 3, Cooldown: 30 * time.Second}
+	return Routing{
+		AttemptTimeout:          15 * time.Second,
+		FailureThreshold:        3,
+		Cooldown:                30 * time.Second,
+		EconomyThresholdPercent: 20,
+		MinimumAttemptWindow:    250 * time.Millisecond,
+	}
 }
 
 // Config 保存 Limen 启动后使用的不可变配置。
@@ -79,9 +87,11 @@ type modelsDocument struct {
 }
 
 type routingDocument struct {
-	AttemptTimeout   string `json:"attempt_timeout"`
-	FailureThreshold *int   `json:"failure_threshold"`
-	Cooldown         string `json:"cooldown"`
+	AttemptTimeout          string `json:"attempt_timeout"`
+	FailureThreshold        *int   `json:"failure_threshold"`
+	Cooldown                string `json:"cooldown"`
+	EconomyThresholdPercent *int   `json:"economy_threshold_percent"`
+	MinimumAttemptWindow    string `json:"minimum_attempt_window"`
 }
 
 // Load 从环境变量读取配置，并校验启动所需的密钥。
@@ -323,6 +333,19 @@ func parseRouting(document routingDocument, defaults Routing) (Routing, error) {
 			return Routing{}, err
 		}
 		routing.Cooldown = cooldown
+	}
+	if document.EconomyThresholdPercent != nil {
+		if *document.EconomyThresholdPercent < 0 || *document.EconomyThresholdPercent > 100 {
+			return Routing{}, errors.New("routing.economy_threshold_percent must be between 0 and 100")
+		}
+		routing.EconomyThresholdPercent = *document.EconomyThresholdPercent
+	}
+	if document.MinimumAttemptWindow != "" {
+		minimumWindow, err := parsePositiveDuration("routing.minimum_attempt_window", document.MinimumAttemptWindow)
+		if err != nil {
+			return Routing{}, err
+		}
+		routing.MinimumAttemptWindow = minimumWindow
 	}
 	return routing, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/cost"
+	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
@@ -135,8 +136,8 @@ func TestMetricsUseTrustedModelAndStableErrorLabels(t *testing.T) {
 
 func TestAttemptMetricsCountOnlyRealProviderCalls(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{
-		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2},
-		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1},
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +182,7 @@ func TestAttemptMetricsCountOnlyRealProviderCalls(t *testing.T) {
 }
 
 func TestChatPassesAuthenticatedTenantToProvider(t *testing.T) {
-	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,6 +322,21 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	handler.ServeHTTP(chatResponse, chat)
 	if chatResponse.Code != http.StatusOK || chatResponse.Header().Get("X-Limen-Request-ID") == "" || chatResponse.Header().Get("X-Limen-Decision-ID") == "" || chatResponse.Header().Get("X-Limen-Plan-Hash") == "" || chatResponse.Header().Get("X-Limen-Settlement-Status") != "complete" {
 		t.Fatalf("chat = %d headers=%v body=%s", chatResponse.Code, chatResponse.Header(), chatResponse.Body.String())
+	}
+	decisionRequest := httptest.NewRequest(http.MethodGet, "/v1/limen/decisions/"+chatResponse.Header().Get("X-Limen-Decision-ID"), nil)
+	decisionRequest.Header.Set("Authorization", "Bearer limen-secret")
+	decisionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(decisionResponse, decisionRequest)
+	var decisionRecord struct {
+		Input struct {
+			Run decision.RunSnapshot `json:"run"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(decisionResponse.Body.Bytes(), &decisionRecord); err != nil {
+		t.Fatal(err)
+	}
+	if decisionResponse.Code != http.StatusOK || !decisionRecord.Input.Run.Governed || decisionRecord.Input.Run.SoftBudgetNanoUSD != 1_000_000_000 {
+		t.Fatalf("decision = %d %+v body=%s", decisionResponse.Code, decisionRecord.Input.Run, decisionResponse.Body.String())
 	}
 	requestID := chatResponse.Header().Get("X-Limen-Request-ID")
 	request, err := runs.GetRequest(context.Background(), runTenantID, requestID)
@@ -496,8 +512,8 @@ func TestAttemptStateUsesProviderClassification(t *testing.T) {
 
 func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{
-		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2},
-		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1},
+		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary", QualityTier: 2, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}},
+		{ID: "backup", Provider: "anthropic", UpstreamModel: "claude-backup", QualityTier: 1, Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -535,7 +551,7 @@ func TestGovernedChatPersistsFallbackAttemptsSeparately(t *testing.T) {
 }
 
 func TestRunCancellationStopsInFlightChat(t *testing.T) {
-	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
