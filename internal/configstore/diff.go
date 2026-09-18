@@ -69,6 +69,9 @@ func diffTargets(modelID string, before, after []config.Target) []Change {
 		if target.UpstreamModel != previous.UpstreamModel {
 			changes = append(changes, Change{Path: targetPath(modelID, id) + ".upstream_model", Kind: "changed"})
 		}
+		if target.EndpointID != previous.EndpointID {
+			changes = append(changes, Change{Path: targetPath(modelID, id) + ".endpoint_id", Kind: "changed"})
+		}
 		if !reflect.DeepEqual(target.Capabilities, previous.Capabilities) {
 			changes = append(changes, Change{Path: targetPath(modelID, id) + ".capabilities", Kind: "changed"})
 		}

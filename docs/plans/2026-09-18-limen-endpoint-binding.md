@@ -18,6 +18,7 @@
 2. 目标键和熔断键包含 endpoint，避免同一上游模型跨 endpoint 共享状态。
 3. 进程启动时注册 OpenAI/Anthropic endpoint ID；配置发布复用 Router 校验。
 4. 使用 `httptest.Server` 覆盖配置保留、错误格式、路由传播和 Provider 错绑不出站。
+5. 配置 diff 必须报告 endpoint 绑定变化，但不返回 endpoint 原值。
 
 ## 不包含
 

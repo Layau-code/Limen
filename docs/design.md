@@ -25,7 +25,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/config`：严格解析环境变量、只读文件密钥和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复；发布通过 `limen_config_changes` 通知加速跨实例 Router 刷新，数据库版本仍是唯一事实来源。
 
-配置控制面保存规范化 JSON 的不可变版本，按模型 ID 和目标 ID 生成稳定 diff；公共摘要与 diff 路径中的目标引用统一使用 opaque ID，避免默认派生的 `provider:upstream_model` 进入控制面响应。
+配置控制面保存规范化 JSON 的不可变版本，按模型 ID 和目标 ID 生成稳定 diff；diff 会显式报告 Provider、上游模型和 endpoint 绑定变化，但不返回配置值；公共摘要与 diff 路径中的目标引用统一使用 opaque ID，避免默认派生的 `provider:upstream_model` 进入控制面响应。
 - `internal/approval`：保存可选配置发布审批状态机；审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 配置发布在同一事务中校验并消费审批。
 - `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint；Provider 按每次请求携带的非敏感租户标识解析凭据，缺失时不跨租户回退。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。

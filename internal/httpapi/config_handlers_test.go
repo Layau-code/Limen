@@ -314,3 +314,33 @@ func TestConfigDiffIsTenantScopedAndValueFree(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigDiffReportsEndpointBindingWithoutValue(t *testing.T) {
+	configs := configstore.NewMemoryStore()
+	before, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-model","endpoint_id":"endpoint:0123456789abcdef01234567"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-model","endpoint_id":"endpoint:fedcba987654321001234567"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, _ := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-model"}}}})
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeConfigsRead}),
+		gateway.NewRouter(nil, registry, gateway.Policy{}), nil, "tenant-a", journal.NewMemoryStore(), configs, nil,
+	)
+	request := httptest.NewRequest(http.MethodGet, "/v1/limen/configs/"+after.Version+"/diff/"+before.Version, nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, ".endpoint_id") {
+		t.Fatalf("status=%d body=%s", response.Code, body)
+	}
+	for _, endpointID := range []string{"endpoint:0123456789abcdef01234567", "endpoint:fedcba987654321001234567"} {
+		if strings.Contains(body, endpointID) {
+			t.Fatalf("diff leaked endpoint %s: %s", endpointID, body)
+		}
+	}
+}

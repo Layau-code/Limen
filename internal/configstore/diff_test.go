@@ -19,3 +19,12 @@ func TestDiffReturnsStableStructuralChangesWithoutValues(t *testing.T) {
 		}
 	}
 }
+
+func TestDiffReportsEndpointBindingChanges(t *testing.T) {
+	before := Record{Models: []config.Model{{ID: "model", Targets: []config.Target{{ID: "target", Provider: "openai", UpstreamModel: "gpt-model", EndpointID: "endpoint:0123456789abcdef01234567"}}}}}
+	after := Record{Models: []config.Model{{ID: "model", Targets: []config.Target{{ID: "target", Provider: "openai", UpstreamModel: "gpt-model", EndpointID: "endpoint:fedcba987654321001234567"}}}}}
+	changes := Diff(before, after)
+	if len(changes) != 1 || changes[0].Path != "models[model].targets[target].endpoint_id" || changes[0].Kind != "changed" {
+		t.Fatalf("changes = %+v", changes)
+	}
+}

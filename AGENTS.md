@@ -45,6 +45,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Replay 差异还必须检测目标能力、流式支持、质量/成本等级、上下文窗口、数据等级或价格元数据变化；只返回 `targets[i]/policy`，不返回价格和内部配置值。
 - Decision Journal 保存和读取时都必须重新计算 `input_hash`/`plan_hash`，并校验 PostgreSQL 摘要列与 JSONB 内容一致；检测到篡改必须失败，不能返回部分可信的历史计划。
 - 配置摘要和配置 diff 也必须使用稳定 opaque 目标引用；目标 ID 可能由 `provider:upstream_model` 派生，不能直接进入控制面响应或 diff 路径。
+- 配置 diff 必须覆盖 Provider、上游模型和 `endpoint_id` 绑定变化；只返回字段路径和变化类型，不返回 endpoint 或其他配置值。
 - Run 和 Request 的 HTTP 响应必须经过安全 DTO 转换：不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt 字段；客户端只读取生命周期、结算和决策关联状态。
 - 配置审批 HTTP 响应必须经过安全 DTO 转换：不返回发布幂等键、请求哈希或租户字段，只返回审批生命周期和非敏感执行者标识。
 - 访问日志的 Path 只能使用固定路由类别，动态或未知路径必须归并，不能把用户输入原样写入日志。
@@ -116,6 +117,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 鉴权测试必须覆盖错误 Key、未知 Scope、Scope 拒绝、Principal 租户绑定，以及带 Run Header 的 Chat 额外 `runs:write` 校验。
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
+- 配置 diff 测试必须覆盖 endpoint 绑定变化，并证明响应不包含 endpoint 原值。
 - Run 配置版本测试必须证明发布新版本后，已有 Run 仍使用创建时的目录、价格和路由参数；版本缺失时返回 `config_version_unavailable`，不得静默降级到当前目录。
 - 配置测试必须覆盖环境密钥、`*_FILE` 文件密钥、来源冲突、空文件、读取失败和 PostgreSQL Key Store 对静态 Key 文件的拒绝；测试错误不得包含密钥内容。
 - 配置控制面安全视图测试必须证明摘要和 diff 不泄露由上游模型派生的目标标识。
