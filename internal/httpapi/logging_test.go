@@ -65,3 +65,15 @@ func TestLoggingIncludesSettlementFields(t *testing.T) {
 		t.Fatalf("missing structured settlement key in %s", logged)
 	}
 }
+
+func TestLoggingIncludesTTFBWhenResponseHasBody(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("first byte"))
+	})
+	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if !strings.Contains(output.String(), `"ttfb_ms"`) {
+		t.Fatalf("missing TTFB field: %s", output.String())
+	}
+}

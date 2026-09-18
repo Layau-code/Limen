@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -14,6 +15,7 @@ import (
 func WithTracing(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		started := time.Now()
 		ctx, span := otel.Tracer("github.com/huz/limen/internal/httpapi").Start(ctx, "limen.http.request",
 			trace.WithSpanKind(trace.SpanKindServer),
 		)
@@ -33,6 +35,9 @@ func WithTracing(next http.Handler) http.Handler {
 			)
 			if tracedRequest.Pattern != "" {
 				span.SetAttributes(attribute.String("http.route", tracedRequest.Pattern))
+			}
+			if firstByte := recorder.FirstByteAt(); !firstByte.IsZero() {
+				span.SetAttributes(attribute.Int64("limen.ttfb_ms", firstByte.Sub(started).Milliseconds()))
 			}
 			setTraceResponseAttributes(span, recorder.Header())
 		}

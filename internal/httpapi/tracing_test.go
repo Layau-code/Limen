@@ -96,6 +96,9 @@ func TestGovernedFallbackTraceFormsPrivacySafeEvidenceChain(t *testing.T) {
 	if got := spanAttribute(root, "limen.request.id"); got == "" || got != chatResponse.Header().Get("X-Request-ID") {
 		t.Fatalf("request ID attribute=%q header=%q", got, chatResponse.Header().Get("X-Request-ID"))
 	}
+	if !hasSpanAttribute(root, "limen.ttfb_ms") {
+		t.Fatal("trace is missing TTFB attribute")
+	}
 	for _, secret := range []string{"private prompt", "privateprompt", "private response", "private-limen-api-key", "secret-upstream-primary", "secret-upstream-backup", "private upstream failure body"} {
 		if strings.Contains(rendered.String(), secret) {
 			t.Errorf("trace contains private value %q", secret)
@@ -165,4 +168,14 @@ func spanAttribute(span sdktrace.ReadOnlySpan, key string) string {
 		}
 	}
 	return ""
+}
+
+// hasSpanAttribute 判断测试 Span 是否记录了指定字段。
+func hasSpanAttribute(span sdktrace.ReadOnlySpan, key string) bool {
+	for _, item := range span.Attributes() {
+		if string(item.Key) == key {
+			return true
+		}
+	}
+	return false
 }

@@ -28,6 +28,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 用量采集、按目标定点价格计算成本，以及响应结束后的结算 Trailer 和结构化日志。
 - `/metrics` 只接受 `admin` Scope，使用固定指标名和有界标签；模型必须来自可信目录或固定归并值，Attempt 只统计真实 Provider 调用，不允许请求 ID、租户 ID、原始错误或正文进入指标。
 - OpenTelemetry Trace 只使用字段白名单串联请求、准入、决策、Attempt 和结算；只传播 `traceparent`，导出失败不得改变模型请求。
+- `statusRecorder` 只在首次写出响应正文时记录 TTFB；日志和 Trace 可记录 `ttfb_ms`，不得把正文、Header 或密钥写入观测字段。
 - 版本命令、健康检查命令、Docker、冒烟脚本、基准测试和 CI。
 
 明确不包含：每日额度和超额拦截、模型文件热加载、第三个 Provider、同目标自动重试、动态权重、成本路由、分布式熔断、Secret Manager 接入、遥测可视化后端和大型管理后台。
@@ -90,6 +91,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
 - 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
 - Trace 测试必须覆盖同一 Trace ID 的请求、准入、决策、Fallback Attempt 和结算，并用哨兵值证明正文、密钥和上游模型名不会进入 Span。
+- 流式测试必须证明首段 Flush 不等待完整响应，并且日志/Trace 的 TTFB 在有正文时出现、无正文时省略。
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
 

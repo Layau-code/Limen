@@ -26,6 +26,9 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 			"status", recorder.status,
 			"duration_ms", time.Since(started).Milliseconds(),
 		}
+		if firstByte := recorder.FirstByteAt(); !firstByte.IsZero() {
+			attrs = append(attrs, "ttfb_ms", firstByte.Sub(started).Milliseconds())
+		}
 		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route", "X-Limen-Decision-ID", "X-Limen-Config-Version"} {
 			if value := recorder.Header().Get(name); value != "" {
 				attrs = append(attrs, logHeaderKey(name), value)
@@ -58,6 +61,7 @@ type statusRecorder struct {
 	status      int
 	wroteHeader bool
 	errorCode   string
+	firstByteAt time.Time
 }
 
 // WriteHeader 记录响应状态，并将状态写入底层 ResponseWriter。
@@ -75,12 +79,20 @@ func (w *statusRecorder) Write(data []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
+	if w.firstByteAt.IsZero() {
+		w.firstByteAt = time.Now()
+	}
 	return w.ResponseWriter.Write(data)
 }
 
 // SetErrorCode 保存由网关生成的稳定错误码，供低基数指标使用。
 func (w *statusRecorder) SetErrorCode(code string) {
 	w.errorCode = code
+}
+
+// FirstByteAt 返回首次尝试写出响应正文的时间。
+func (w *statusRecorder) FirstByteAt() time.Time {
+	return w.firstByteAt
 }
 
 // Flush 将已写入的数据刷新给客户端，保持流式响应的及时性。

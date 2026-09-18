@@ -27,6 +27,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 核心 HTTP 数据面不使用 Web 框架或 ORM；外部依赖只用于 PostgreSQL 与 OpenTelemetry 等明确边界，并包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
+- 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 
 ## 快速开始
 
