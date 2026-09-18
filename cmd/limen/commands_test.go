@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/huz/limen/internal/provider"
 )
 
 func TestHealthURLNormalizesListenAddresses(t *testing.T) {
@@ -117,6 +120,31 @@ func TestRunCommandValidateRequiresModelsFile(t *testing.T) {
 		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "validate 需要 --models") {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+}
+
+// TestRunCommandValidateRejectsEndpointMismatch 预检阶段拒绝无法绑定进程 endpoint 的目标。
+func TestRunCommandValidateRejectsEndpointMismatch(t *testing.T) {
+	endpointID, err := provider.EndpointIDForBaseURL("https://provider.example/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	modelsPath := filepath.Join(directory, "models.json")
+	contents := fmt.Sprintf(`{
+  "models": [{"id":"smart-model","targets":[{"provider":"openai","upstream_model":"fixture","endpoint_id":%q}] }]
+}`, endpointID)
+	if err := os.WriteFile(modelsPath, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENAI_BASE_URL", "https://other.example/v1")
+
+	var stdout, stderr strings.Builder
+	if code, handled := runCommand([]string{"validate", "--models", modelsPath}, &stdout, &stderr); !handled || code != 1 {
+		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "endpoint 绑定") || strings.Contains(stderr.String(), endpointID) {
 		t.Fatalf("stderr=%q", stderr.String())
 	}
 }

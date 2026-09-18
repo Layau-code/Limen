@@ -485,14 +485,25 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 	return duration, nil
 }
 
-// validateBaseURL 校验 Provider 地址使用 HTTPS 且不携带凭据或动态查询参数。
-func validateBaseURL(name, raw string) error {
+// ValidateProviderBaseURL 校验 Provider 地址使用 HTTPS 且不携带凭据或动态查询参数。
+func ValidateProviderBaseURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Scheme != "https" {
-		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
+		return errors.New("provider base URL must be an absolute HTTPS URL")
 	}
 	if parsed.User != nil {
-		return fmt.Errorf("%s must not contain credentials", name)
+		return errors.New("provider base URL must not contain credentials")
+	}
+	return nil
+}
+
+// validateBaseURL 为环境变量校验保留字段名，便于启动错误直接定位配置项。
+func validateBaseURL(name, raw string) error {
+	if err := ValidateProviderBaseURL(raw); err != nil {
+		if strings.Contains(err.Error(), "credentials") {
+			return fmt.Errorf("%s must not contain credentials", name)
+		}
+		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
 	}
 	return nil
 }

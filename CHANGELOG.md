@@ -8,6 +8,7 @@
 - `make bench` 现在覆盖固定 100 个候选目标的完整 Decision Engine 路径，单独测量能力过滤、稳定排序和计划哈希开销。
 - 新增离线 `limen validate`，在不读取密钥或访问网络的情况下预检模型目录并输出稳定配置版本摘要。
 - 新增 `make validate` 和 CI 预检步骤，确保示例模型目录在构建阶段通过严格校验。
+- `limen validate` 现在复用启动阶段的 Provider endpoint 绑定校验，错绑配置不会通过发布前预检。
 - Anthropic 普通 JSON 响应新增 4 MiB 有界解码，超大响应在协议转换阶段拒绝，避免异常上游响应造成无界内存增长。
 - OpenAI 和 Anthropic 的非成功错误正文现在最多透传 64 KiB，避免异常错误响应拖垮客户端或网关内存。
 - 配置 diff 现在会报告目标 `endpoint_id` 绑定变化，只返回安全路径和变化类型。

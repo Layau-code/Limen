@@ -141,7 +141,7 @@ make build
 ./bin/limen validate --models /absolute/path/to/models.json
 ```
 
-预检复用严格模型配置解析，输出配置版本哈希、模型数、目标数和 Provider 数量；它不会加载 `LIMEN_API_KEY`、Provider Key，也不会发起网络请求。
+预检复用严格模型配置解析和启动阶段的 endpoint 绑定校验，输出配置版本哈希、模型数、目标数和 Provider 数量；它不会加载 `LIMEN_API_KEY`、Provider Key，也不会发起网络请求。`--openai-base-url` 与 `--anthropic-base-url` 默认读取对应环境变量，未设置时使用生产默认地址；endpoint 错绑会返回非零退出码。
 
 配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider，并复用 endpoint 绑定校验；因此可以在审批或发布前验证模型能力、Fallback 顺序、计划哈希和出站安全边界。错绑 endpoint 返回 `endpoint_binding_mismatch`。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 
