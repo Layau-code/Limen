@@ -289,7 +289,7 @@ DecisionInput 使用版本化、强类型 Schema，而不是 map[string]any：
 ~~~json
 {
   "schema_version": "decision-input.v1",
-  "algorithm_version": "decision.v1",
+  "algorithm_version": "decision.v2",
   "evaluated_at_unix_ms": 1789640000000,
   "tenant_id": "tenant_01",
   "run": {},
@@ -300,7 +300,7 @@ DecisionInput 使用版本化、强类型 Schema，而不是 map[string]any：
 }
 ~~~
 
-所有时间、金额和比例使用整数或十进制定点字符串，候选和原因码使用规定顺序。持久化派生结果前先保存完整原始 DecisionInput。规范 JSON 使用固定字段、UTF-8、无多余空白、对象键排序和稳定数组顺序，并计算 SHA-256 input_hash；ExecutionPlan 使用同样规则计算 plan_hash。
+所有时间、金额和比例使用整数或十进制定点字符串，候选和原因码使用规定顺序。持久化派生结果前先保存完整原始 DecisionInput。`decision.v2` 对能力、数据等级等无序集合排序去重，对 `model=auto` 的候选使用稳定键排序；显式模型的目标数组保留配置优先级。规范 JSON 使用固定字段、UTF-8、无多余空白、对象键排序和稳定数组顺序，并计算 SHA-256 input_hash；ExecutionPlan 使用同样规则计算 plan_hash。历史 `decision.v1` 不重新规范化，避免改变已持久化计划哈希。
 
 仓库提交 golden fixture，证明进程重启后同一 DecisionInput 产生字节级相同的规范 ExecutionPlan。历史 Decision 保留期间必须保留对应算法实现，最低支持十二个月；实现不可用时 Replay 返回 algorithm_version_unavailable，但 Explain 仍可读取原始记录。Replay 只复现决策计划，不声称复现 Provider 执行结果。
 
@@ -520,7 +520,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，不重新调用模型或复现运行时 Attempt。
 
-当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。旧算法实现保留窗口、审批审计和完整差异树仍待补齐。
+当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。旧算法十二个月保留窗口、审批审计和完整差异树仍待补齐。
 
 管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
 

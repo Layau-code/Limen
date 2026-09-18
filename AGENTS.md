@@ -11,6 +11,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 启动时严格加载的模型注册表；未配置文件时保留四种前缀兼容模式，配置 API 发布后可原子替换当前进程目录。
 - `GET/POST /v1/limen/configs`、配置 diff 和 `POST /v1/limen/configs/{version}/publish` 提供租户隔离的不可变配置版本控制；PostgreSQL 模式下重启恢复已发布版本，发布通过只含租户和版本哈希的通知加速跨实例刷新，并保留轮询兜底。
 - 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan；Replay 必须通过算法注册表解析版本，不得静默回退。
+- 决策哈希必须按算法版本解释；`decision.v2` 规范化无序集合但保留显式模型的目标优先级，修改 V1 语义前必须新增版本并保留旧版本 Replay。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动或配置版本发布时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。

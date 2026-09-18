@@ -7,6 +7,9 @@ func TestAlgorithmRegistryDoesNotFallbackAcrossVersions(t *testing.T) {
 	if _, ok := registry.Resolve(AlgorithmVersionV1); !ok {
 		t.Fatal("current algorithm is not registered")
 	}
+	if _, ok := registry.Resolve(AlgorithmVersionV2); !ok {
+		t.Fatal("canonical algorithm is not registered")
+	}
 	if _, ok := registry.Resolve("decision.v0"); ok {
 		t.Fatal("unknown algorithm unexpectedly resolved")
 	}

@@ -33,6 +33,9 @@ func NewEngine() Engine {
 
 // Decide 按固定硬过滤和策略排序生成 ExecutionPlan。
 func (Engine) Decide(input Input) (ExecutionPlan, error) {
+	if input.AlgorithmVersion == AlgorithmVersionV2 {
+		input = canonicalizeInput(input)
+	}
 	if err := validateInput(input); err != nil {
 		return ExecutionPlan{}, err
 	}
@@ -87,7 +90,7 @@ func validateInput(input Input) error {
 	if input.SchemaVersion != SchemaVersionV1 {
 		return &DecisionError{Code: "unsupported_decision_schema"}
 	}
-	if input.AlgorithmVersion != AlgorithmVersionV1 {
+	if input.AlgorithmVersion != AlgorithmVersionV1 && input.AlgorithmVersion != AlgorithmVersionV2 {
 		return &DecisionError{Code: "unsupported_decision_algorithm"}
 	}
 	if input.Request.Model == "" || input.EvaluatedAtUnixMS < 0 {

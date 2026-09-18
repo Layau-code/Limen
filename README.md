@@ -111,7 +111,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和差异码。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；决策记录只包含模型名、能力契约、候选目标和哈希，不保存 Prompt 或 Response。
 
-`internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
+`internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。当前新请求使用 `decision.v2`：无序能力集合会排序去重，显式模型的 Fallback 目标优先级保持不变；`decision.v1` 仍注册用于历史 Replay。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
 
 启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。取消 Run 后，在途请求会收到 `409 run_cancelled`，并由租户取消事件传播到其他实例。
 

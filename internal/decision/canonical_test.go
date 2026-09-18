@@ -1,13 +1,15 @@
 package decision
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 )
 
 func TestDecisionHashesAreStable(t *testing.T) {
 	input := Input{
 		SchemaVersion:    SchemaVersionV1,
-		AlgorithmVersion: AlgorithmVersionV1,
+		AlgorithmVersion: AlgorithmVersionV2,
 		Request: Request{
 			Model: "auto",
 			Contract: Contract{
@@ -44,6 +46,55 @@ func TestDecisionHashesAreStable(t *testing.T) {
 	}
 	if planHash != plan.PlanHash {
 		t.Fatalf("plan hash = %q, want %q", plan.PlanHash, planHash)
+	}
+}
+
+func TestDecisionCanonicalizesUnorderedInput(t *testing.T) {
+	first := canonicalTestInput([]string{"text", "json"}, []string{"a", "b"})
+	second := canonicalTestInput([]string{"json", "text"}, []string{"a", "b"})
+
+	firstHash, err := HashInput(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondHash, err := HashInput(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstHash != secondHash {
+		t.Fatalf("semantic input hashes differ: %q != %q", firstHash, secondHash)
+	}
+
+	firstPlan, err := NewEngine().Decide(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPlan, err := NewEngine().Decide(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstJSON, err := json.Marshal(firstPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondJSON, err := json.Marshal(secondPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstJSON, secondJSON) {
+		t.Fatalf("semantic plans differ:\n%s\n%s", firstJSON, secondJSON)
+	}
+}
+
+func canonicalTestInput(required []string, targetIDs []string) Input {
+	return Input{
+		SchemaVersion:    SchemaVersionV1,
+		AlgorithmVersion: AlgorithmVersionV2,
+		Request:          Request{Model: "auto", Contract: Contract{Active: true, RequiredCapabilities: required}},
+		Candidates: []Candidate{
+			{ModelID: "model", Enabled: true, SecurityAllowed: true, Target: testTarget(targetIDs[0], 2, true, []string{"json", "text"}, []string{"internal", "public"})},
+			{ModelID: "model", Enabled: true, SecurityAllowed: true, Target: testTarget(targetIDs[1], 2, true, []string{"text", "json"}, []string{"public", "internal"})},
+		},
 	}
 }
 

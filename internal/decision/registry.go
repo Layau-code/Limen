@@ -14,7 +14,11 @@ type AlgorithmRegistry struct {
 
 // NewAlgorithmRegistry 创建包含当前稳定算法版本的只读注册表。
 func NewAlgorithmRegistry() *AlgorithmRegistry {
-	return &AlgorithmRegistry{engines: map[string]Engine{AlgorithmVersionV1: NewEngine()}}
+	engine := NewEngine()
+	return &AlgorithmRegistry{engines: map[string]Engine{
+		AlgorithmVersionV1: engine,
+		AlgorithmVersionV2: engine,
+	}}
 }
 
 // Resolve 按版本获取决策算法；未知版本不会回退到新算法。

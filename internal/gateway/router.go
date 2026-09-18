@@ -301,7 +301,7 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 	}
 	input := decision.Input{
 		SchemaVersion:     decision.SchemaVersionV1,
-		AlgorithmVersion:  decision.AlgorithmVersionV1,
+		AlgorithmVersion:  decision.AlgorithmVersionV2,
 		ConfigVersion:     configVersion,
 		EvaluatedAtUnixMS: router.now().UnixMilli(),
 		Request:           decision.Request{Model: request.Model, Stream: request.Stream, Contract: contract},

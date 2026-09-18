@@ -12,6 +12,8 @@ const (
 	SchemaVersionV1 = "decision-input.v1"
 	// AlgorithmVersionV1 是第一版决策算法。
 	AlgorithmVersionV1 = "decision.v1"
+	// AlgorithmVersionV2 是采用集合规范化的决策算法。
+	AlgorithmVersionV2 = "decision.v2"
 )
 
 // Contract 描述一次请求需要的能力和治理约束。

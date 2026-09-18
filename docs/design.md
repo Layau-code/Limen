@@ -68,7 +68,7 @@ HTTP Principal/Scope 鉴权与解析
 
 没有模型文件时使用兼容注册表，模型名原样透传，不执行跨 Provider Fallback。配置模式的 `/v1/models` 使用 `owned_by=limen`，兼容模式使用实际 Provider。
 
-请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、质量下限、流式、上下文、数据等级、健康和最小尝试窗口过滤。`minimum_quality_tier` 是硬约束，低于门槛的目标返回 `quality_tier_too_low`，不会进入 Fallback 计划。`balanced` 优先健康和质量，`economy` 优先预计定点成本；治理 Run 接近软预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
+请求 `model=auto` 或携带 `limen` 契约时，Decision Engine 依次执行启用、安全、能力、质量下限、流式、上下文、数据等级、健康和最小尝试窗口过滤。`minimum_quality_tier` 是硬约束，低于门槛的目标返回 `quality_tier_too_low`，不会进入 Fallback 计划。`balanced` 优先健康和质量，`economy` 优先预计定点成本；治理 Run 接近软预算时只切换后续请求策略，不对单个请求预留或硬拦截费用。新决策使用 `decision.v2`，会对能力、数据等级等无序集合做排序去重，同时保留显式模型的目标优先级；历史 `decision.v1` 继续按旧语义 Replay。计划使用规范 JSON 和 SHA-256 哈希，便于审计和后续 Replay；Replay 只重演决策计划，不重放 Provider 请求。
 
 确定性验收提交 100 组完整 DecisionInput 和预期 `plan_hash`，覆盖契约、流式、上下文、数据等级、健康、定点价格、Run 预算和两种策略。测试重新构造 Engine 后比较规范 ExecutionPlan JSON 字节与已提交哈希；生成器必须重复产生完全相同的 fixture 文件。价格在配置和 Decision 快照中统一使用可逆的美元字符串 JSON，内存仍使用纳美元整数，保证 PostgreSQL Journal 读取后可 Replay。
 
