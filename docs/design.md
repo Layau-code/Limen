@@ -30,7 +30,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint；Provider 按每次请求携带的非敏感租户标识解析凭据，缺失时不跨租户回退。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码；算法注册表负责 Replay 的版本解析，未知版本不回退。
-- `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
+- `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；保存和读取都会重新计算 `input_hash`/`plan_hash`，PostgreSQL 还校验摘要列与 JSONB 内容一致；内存实现只用于无数据库开发。
 - `internal/audit`：保存控制面安全摘要；事件按租户隔离，记录非敏感的凭据身份标识，查询不返回原始 Key，只返回动作、资源、结果、请求哈希和时间。
 - `internal/gateway/registry.go`：保留旧导出名的兼容包装，不再承载目录实现。
 - `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。

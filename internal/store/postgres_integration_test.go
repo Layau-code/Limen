@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -125,6 +126,40 @@ func TestPostgresIntegrationDecisionJournalRoundTripsPricing(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Input, record.Input) || !reflect.DeepEqual(got.Plan, record.Plan) {
 		t.Fatalf("journal round trip changed decision: got=%+v want=%+v", got, record)
+	}
+}
+
+// TestPostgresIntegrationDecisionJournalRejectsTamperedPlan 验证读取时会校验持久化计划摘要。
+func TestPostgresIntegrationDecisionJournalRejectsTamperedPlan(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-journal-integrity")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	input := decision.Input{
+		SchemaVersion: decision.SchemaVersionV1, AlgorithmVersion: decision.AlgorithmVersionV1, EvaluatedAtUnixMS: 1,
+		Request:    decision.Request{Model: "model"},
+		Candidates: []decision.Candidate{{ModelID: "model", Enabled: true, SecurityAllowed: true, Target: catalog.Target{ID: "target", Provider: "openai", UpstreamModel: "gpt-test"}}},
+	}
+	plan, err := decision.NewEngine().Decide(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewDecisionJournal(appDB)
+	record := journal.Record{ID: integrationID("decision-integrity"), TenantID: tenantID, Input: input, Plan: plan, CreatedAt: time.Now().UTC()}
+	if err := store.Save(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	tampered := plan
+	tampered.Reasons = []string{"tampered"}
+	planJSON, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminDB.ExecContext(ctx, `UPDATE decision_journal SET plan_json=$1 WHERE tenant_id=$2 AND decision_id=$3`, planJSON, tenantID, record.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, tenantID, record.ID); err == nil {
+		t.Fatal("tampered plan was returned")
 	}
 }
 

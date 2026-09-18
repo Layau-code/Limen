@@ -26,6 +26,25 @@ type Record struct {
 	CreatedAt time.Time              `json:"created_at"`
 }
 
+// ValidateRecord 校验决策输入和计划的相互摘要，拒绝被篡改的证据。
+func ValidateRecord(record Record) error {
+	if record.TenantID == "" || record.ID == "" {
+		return errors.New("decision record requires tenant and id")
+	}
+	inputHash, err := decision.HashInput(record.Input)
+	if err != nil {
+		return err
+	}
+	planHash, err := decision.HashPlan(record.Plan)
+	if err != nil {
+		return err
+	}
+	if record.Plan.InputHash != inputHash || record.Plan.PlanHash != planHash {
+		return errors.New("decision record hash mismatch")
+	}
+	return nil
+}
+
 // Store 定义按租户保存和读取决策记录的最小接口。
 type Store interface {
 	Save(context.Context, Record) error
@@ -45,14 +64,10 @@ func NewMemoryStore() *MemoryStore {
 
 // Save 保存一个租户决策快照，并拒绝内容冲突的重复 ID。
 func (store *MemoryStore) Save(_ context.Context, record Record) error {
-	inputHash, err := decision.HashInput(record.Input)
-	if record.TenantID == "" || record.ID == "" || err != nil || inputHash == "" {
-		return errors.New("decision record requires tenant, id and input")
+	if err := ValidateRecord(record); err != nil {
+		return err
 	}
-	planHash, err := decision.HashPlan(record.Plan)
-	if err != nil || record.Plan.InputHash != inputHash || record.Plan.PlanHash != planHash {
-		return errors.New("decision record hash mismatch")
-	}
+	inputHash, _ := decision.HashInput(record.Input)
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	key := record.TenantID + "\x00" + record.ID
@@ -74,6 +89,9 @@ func (store *MemoryStore) Get(_ context.Context, tenantID, id string) (Record, e
 	record, ok := store.records[tenantID+"\x00"+id]
 	if !ok {
 		return Record{}, ErrNotFound
+	}
+	if err := ValidateRecord(record); err != nil {
+		return Record{}, err
 	}
 	return record, nil
 }

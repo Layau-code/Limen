@@ -25,6 +25,9 @@ func (store *DecisionJournal) Save(ctx context.Context, record journal.Record) e
 	if store.db == nil {
 		return ErrDatabaseRequired
 	}
+	if err := journal.ValidateRecord(record); err != nil {
+		return err
+	}
 	inputHash, err := decision.HashInput(record.Input)
 	if err != nil {
 		return err
@@ -82,8 +85,9 @@ func (store *DecisionJournal) Get(ctx context.Context, tenantID, id string) (jou
 		return journal.Record{}, err
 	}
 	var inputJSON, planJSON []byte
+	var storedInputHash, storedPlanHash string
 	var record journal.Record
-	if err := tx.QueryRowContext(ctx, `SELECT input_json,plan_json,created_at FROM decision_journal WHERE tenant_id=$1 AND decision_id=$2`, tenantID, id).Scan(&inputJSON, &planJSON, &record.CreatedAt); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT input_hash,plan_hash,input_json,plan_json,created_at FROM decision_journal WHERE tenant_id=$1 AND decision_id=$2`, tenantID, id).Scan(&storedInputHash, &storedPlanHash, &inputJSON, &planJSON, &record.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return journal.Record{}, journal.ErrNotFound
 		}
@@ -99,9 +103,16 @@ func (store *DecisionJournal) Get(ctx context.Context, tenantID, id string) (jou
 		return journal.Record{}, err
 	}
 	record.ID, record.TenantID = id, tenantID
+	if err := journal.ValidateRecord(record); err != nil {
+		return journal.Record{}, err
+	}
 	inputHash, err := decision.HashInput(record.Input)
-	if err != nil || inputHash != record.Plan.InputHash {
-		return journal.Record{}, errors.New("decision input hash mismatch")
+	if err != nil {
+		return journal.Record{}, err
+	}
+	planHash, err := decision.HashPlan(record.Plan)
+	if err != nil || storedInputHash != inputHash || storedPlanHash != planHash {
+		return journal.Record{}, errors.New("decision journal hash mismatch")
 	}
 	return record, nil
 }

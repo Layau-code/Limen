@@ -38,6 +38,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `statusRecorder` 只在首次写出响应正文时记录 TTFB；日志和 Trace 可记录 `ttfb_ms`，不得把正文、Header 或密钥写入观测字段。
 - `internal/decision/testdata/fixtures.json` 是版本化 Replay 证据；修改决策语义必须先更新生成器和算法版本，`make check` 必须证明生成结果无漂移。
 - Decision Journal 的 HTTP 响应必须经过安全视图转换：不返回 `upstream_model`，目标引用使用稳定 opaque ID；内部完整快照只能用于租户隔离的 Replay。
+- Decision Journal 保存和读取时都必须重新计算 `input_hash`/`plan_hash`，并校验 PostgreSQL 摘要列与 JSONB 内容一致；检测到篡改必须失败，不能返回部分可信的历史计划。
 - 配置摘要和配置 diff 也必须使用稳定 opaque 目标引用；目标 ID 可能由 `provider:upstream_model` 派生，不能直接进入控制面响应或 diff 路径。
 - Run 和 Request 的 HTTP 响应必须经过安全 DTO 转换：不返回 `tenant_id`、幂等键、请求哈希、租约字段或 Provider 内部 Attempt 字段；客户端只读取生命周期、结算和决策关联状态。
 - 配置审批 HTTP 响应必须经过安全 DTO 转换：不返回发布幂等键、请求哈希或租户字段，只返回审批生命周期和非敏感执行者标识。
@@ -97,7 +98,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
 - 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。
-- Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、哈希校验、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
+- Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、保存/读取哈希校验、持久化摘要与 JSONB 不一致、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
 - Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、已知成本结算和未知成本 `pending`。
 - Run HTTP 返回测试必须证明公共响应不泄露租户标识、幂等键、请求哈希和租约信息。
 - 未知费用处置测试必须覆盖补记金额、接受未知、重复幂等键、跨 Run 请求绑定和 `admin` Scope；补记最多产生一条 Ledger。
