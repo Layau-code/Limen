@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，用逻辑模型注册表选择 OpenAI 或 Anthropic，并在预算内安全执行有序 Fallback。项目强调可解释、可测试和小而清晰的实现，不为展示技术栈增加复杂度。
+Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，用逻辑模型注册表选择 OpenAI 或 Anthropic，并按软预算治理有序 Fallback。项目强调可解释、可测试和小而清晰的实现，不为展示技术栈增加复杂度。
 
 ## 当前交付范围
 

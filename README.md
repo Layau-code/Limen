@@ -3,7 +3,7 @@
 Limen（拉丁语：门槛、入口）是一个面向 Agent 的 Go AI Gateway。它提供 OpenAI 兼容接口，把稳定的逻辑模型名路由到 OpenAI 或 Anthropic，并在瞬时故障时按顺序切换备用目标。
 
 ```text
-Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → Provider → 普通响应 / SSE
+Agent / 应用 → Limen API Key → 模型注册表 → 软预算感知路由 → Provider → 普通响应 / SSE
 ```
 
 项目定位、对标边界和可验证证据见 [`docs/positioning.md`](docs/positioning.md)。
