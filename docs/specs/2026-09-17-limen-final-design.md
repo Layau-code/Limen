@@ -429,7 +429,7 @@ DecisionInput 和 ExecutionPlan 持久化后，每次真实网络调用都先插
 正常路径为同步结算，但只能在 SSE 最后一段数据已经 Flush 后等待，最多阻塞 HTTP EOF 五百毫秒：
 
 - 事务在期限内成功：Trailer 和查询 API 返回 complete、partial 或 unavailable。
-- 数据库暂时失败：Trailer 返回 pending，HTTP 结束；当前实现先在进程内按 0、100、500 毫秒退避重试，仍失败时写入 `settlement_jobs`，由持久化后台任务继续处理。
+- 数据库暂时失败：Trailer 返回 pending，HTTP 结束；当前实现先在进程内按 0、100、500 毫秒退避重试，并始终保留同一份已知成本快照，仍失败时写入 `settlement_jobs`，由持久化后台任务继续处理。
 - 重试仍失败或实例退出：数据库中的 executing/settlement_pending 租约过期，由其他实例抢占恢复。
 - Usage、价格或 Provider 对账仍不能确定：Request 变为 abandoned，Run 变为 suspended_accounting。
 

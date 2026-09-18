@@ -35,6 +35,33 @@ func (usage staticUsage) Snapshot() provider.Usage {
 	return provider.Usage(usage)
 }
 
+type settlementProbe struct {
+	*run.MemoryService
+	mu        sync.Mutex
+	failKnown int
+	costs     []*int64
+}
+
+// SettleRequest 记录结算输入并模拟已知成本的暂时性存储失败。
+func (probe *settlementProbe) SettleRequest(ctx context.Context, tenantID, requestID string, costNanoUSD *int64, now time.Time) (run.Request, error) {
+	probe.mu.Lock()
+	var snapshot *int64
+	if costNanoUSD != nil {
+		value := *costNanoUSD
+		snapshot = &value
+	}
+	probe.costs = append(probe.costs, snapshot)
+	shouldFail := costNanoUSD != nil && probe.failKnown > 0
+	if shouldFail {
+		probe.failKnown--
+	}
+	probe.mu.Unlock()
+	if shouldFail {
+		return run.Request{}, errors.New("temporary settlement failure")
+	}
+	return probe.MemoryService.SettleRequest(ctx, tenantID, requestID, costNanoUSD, now)
+}
+
 func newTestRouter(openAI, anthropic provider.Provider, registry *gateway.ModelRegistry) *gateway.Router {
 	providers := make(map[string]provider.Provider)
 	if openAI != nil {
@@ -922,6 +949,45 @@ func TestChatLeavesCostEmptyWithoutPricing(t *testing.T) {
 
 	if response.Header().Get("X-Limen-Settlement-Status") != "partial" || response.Header().Get("X-Limen-Cost-USD") != "" {
 		t.Fatalf("settlement headers = %v", response.Header())
+	}
+}
+
+func TestGovernedChatKeepsKnownSettlementForDeferredRetry(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"ok","usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer providerServer.Close()
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{
+		Provider:      "openai",
+		UpstreamModel: "gpt-test",
+		Pricing:       &cost.Pricing{InputPerMillionNanoUSD: 1_000_000, OutputPerMillionNanoUSD: 1_000_000},
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := &settlementProbe{MemoryService: run.NewMemoryService(nil), failKnown: 3}
+	if err := runs.CreateRun(context.Background(), "local", run.Run{ID: "run-settlement", State: run.StateActive, MaxParallelism: 1}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenant("secret", newTestRouter(provider.NewOpenAI(providerServer.Client(), providerServer.URL, "provider-secret"), nil, registry), nil, "local", runs)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("X-Limen-Run-ID", "run-settlement")
+	request.Header.Set("Idempotency-Key", "request-settlement")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	runs.mu.Lock()
+	costs := append([]*int64(nil), runs.costs...)
+	runs.mu.Unlock()
+	if len(costs) < 4 {
+		t.Fatalf("settlement calls = %d, want deferred retry; response=%d %s headers=%v", len(costs), response.Code, response.Body.String(), response.Header())
+	}
+	for index, value := range costs {
+		if value == nil {
+			t.Fatalf("settlement call %d used unknown cost after known response", index)
+		}
 	}
 }
 

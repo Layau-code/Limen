@@ -1594,6 +1594,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	attempts := make([]trackedAttempt, 0)
 	attemptReports := make([]gateway.AttemptReport, 0)
 	attemptsFinished := false
+	var deferredSettlement *gateway.Settlement
 	defer func() {
 		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
 		defer cancelSettlement()
@@ -1601,7 +1602,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			_ = h.finishAttemptReports(settlementContext, tenantID, attempts, attemptReports)
 		}
 		if runRequestID != "" && !settledRunRequest {
-			_ = h.settleRunRequest(settlementContext, runRequestID, nil)
+			_ = h.settleRunRequest(settlementContext, runRequestID, deferredSettlement)
 		}
 	}()
 	var beforeAttempt gateway.AttemptStartHook
@@ -1702,6 +1703,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		return
 	}
 	response := result.Response
+	deferredSettlement = result.Settlement
 	writeRouteHeaders(w, result.Decision)
 	defer response.Body.Close()
 	if response.ContentType != "" {
@@ -1722,11 +1724,14 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			return
 		}
 		attemptsFinished = true
-		settledRunRequest = true
 		if err := h.settleRunRequest(settlementContext, runRequestID, result.Settlement); err != nil {
+			if !retryableSettlementError(err) {
+				settledRunRequest = true
+			}
 			writePendingSettlementTrailers(w)
 			return
 		}
+		settledRunRequest = true
 	}
 	writeSettlementTrailers(w, result.Settlement)
 	settlementStatus := string(gateway.SettlementUnavailable)

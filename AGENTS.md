@@ -30,7 +30,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 模型目标可选声明 `endpoint_id`，必须匹配进程配置的 Provider endpoint ID；Router 发布前和 Provider 出站前都要拒绝错绑，熔断键也必须包含 endpoint 绑定。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端传入地址或选择 endpoint。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
-- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
+- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须保留原始成本快照，写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复；已知费用不得在延迟清理中降级为未知。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；PostgreSQL 用 `LISTEN/NOTIFY` 加速广播，执行中的 Chat 仍通过事件轮询兜底，不能只修改当前进程的内存映射。
 - 未知费用会暂停 Run；管理员可通过带 `admin` Scope 和幂等键的会计处置接口补记金额或明确接受未知费用。处置必须是事务化、可重复执行且不把未知值写成零。
@@ -136,7 +136,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 跨实例凭据刷新必须只传递租户、Provider、endpoint 和撤销状态等元数据，通知丢失时不能破坏数据库事实或引入明文。
 - 出站安全测试必须覆盖配置层 HTTPS、allowlist、重定向、代理关闭、私网/CGNAT/保留测试网地址拒绝；测试不得真的访问外部 Provider。
 - 用量和成本测试必须覆盖定点计算、Fallback 汇总、部分结算、Trailer 和日志敏感信息；SSE 测试要证明第一段数据无需等待完整响应。
-- 结算失败测试必须覆盖短退避重试、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
+- 结算失败测试必须覆盖短退避重试、已知成本快照保留、未知费用停止重试、`pending` 查询事实和租约恢复不重复记账。
 - Trace 测试必须覆盖同一 Trace ID 的请求、准入、决策、Fallback Attempt 和结算，并用哨兵值证明正文、密钥和上游模型名不会进入 Span。
 - 流式测试必须证明首段 Flush 不等待完整响应，并且日志/Trace 的 TTFB 在有正文时出现、无正文时省略。
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
