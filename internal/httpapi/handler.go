@@ -1852,17 +1852,22 @@ func writeRouteHeaders(w http.ResponseWriter, decision gateway.Decision) {
 }
 
 type incomingChatRequest struct {
-	Model          string            `json:"model"`
-	Messages       []incomingMessage `json:"messages"`
-	MaxTokens      int               `json:"max_tokens"`
-	Temperature    *float64          `json:"temperature"`
-	Stream         bool              `json:"stream"`
-	Tools          json.RawMessage   `json:"tools"`
-	ToolChoice     json.RawMessage   `json:"tool_choice"`
-	ResponseFormat json.RawMessage   `json:"response_format"`
-	N              *int              `json:"n"`
-	Logprobs       *bool             `json:"logprobs"`
-	Limen          *incomingLimen    `json:"limen"`
+	Model          string                 `json:"model"`
+	Messages       []incomingMessage      `json:"messages"`
+	MaxTokens      int                    `json:"max_tokens"`
+	Temperature    *float64               `json:"temperature"`
+	Stream         bool                   `json:"stream"`
+	StreamOptions  *incomingStreamOptions `json:"stream_options"`
+	Tools          json.RawMessage        `json:"tools"`
+	ToolChoice     json.RawMessage        `json:"tool_choice"`
+	ResponseFormat json.RawMessage        `json:"response_format"`
+	N              *int                   `json:"n"`
+	Logprobs       *bool                  `json:"logprobs"`
+	Limen          *incomingLimen         `json:"limen"`
+}
+
+type incomingStreamOptions struct {
+	IncludeUsage *bool `json:"include_usage"`
 }
 
 type incomingLimen struct {
@@ -1948,7 +1953,18 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 	if incoming.Logprobs != nil {
 		return parsedChatRequest{}, &unsupportedFieldError{Field: "logprobs"}
 	}
+	if incoming.StreamOptions != nil {
+		if !incoming.Stream {
+			return parsedChatRequest{}, errors.New("stream_options requires stream=true")
+		}
+		if incoming.StreamOptions.IncludeUsage == nil {
+			return parsedChatRequest{}, errors.New("stream_options.include_usage is required")
+		}
+	}
 	request := provider.ChatRequest{Model: incoming.Model, MaxTokens: incoming.MaxTokens, Temperature: incoming.Temperature, Stream: incoming.Stream}
+	if incoming.StreamOptions != nil {
+		request.StreamIncludeUsage = incoming.StreamOptions.IncludeUsage
+	}
 	for _, message := range incoming.Messages {
 		if len(message.ToolCalls) > 0 {
 			return parsedChatRequest{}, &unsupportedFieldError{Field: "messages.tool_calls"}

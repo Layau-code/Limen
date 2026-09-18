@@ -360,6 +360,7 @@ Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`�
 | max_tokens | 支持 |
 | temperature | 支持 |
 | stream | 支持普通响应和 SSE |
+| stream_options.include_usage | 支持；仅允许在 stream=true 时使用 |
 | tools / tool_choice | 不支持，返回 unsupported_field |
 | response_format | 不支持，返回 unsupported_field |
 | 图片、音频和多模态内容 | 不支持，返回 unsupported_field |

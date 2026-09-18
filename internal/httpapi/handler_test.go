@@ -929,6 +929,16 @@ func TestParseChatRequestExtractsLimenContract(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestExtractsStreamUsageOption(t *testing.T) {
+	envelope, err := parseChatRequestEnvelope([]byte(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Request.StreamIncludeUsage == nil || *envelope.Request.StreamIncludeUsage {
+		t.Fatalf("stream usage option = %v", envelope.Request.StreamIncludeUsage)
+	}
+}
+
 func TestChatRejectsInvalidLimenContract(t *testing.T) {
 	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
 	if err != nil {

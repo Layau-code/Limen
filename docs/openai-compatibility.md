@@ -12,6 +12,7 @@ Limen 兼容的是 OpenAI Chat Completions 的受支持子集，不宣称完整�
 | `max_tokens` | 支持 | 由 Provider 适配器转换。 |
 | `temperature` | 支持 | 由 Provider 适配器转换。 |
 | `stream` | 支持 | 普通响应或 OpenAI 风格 SSE。 |
+| `stream_options.include_usage` | 支持 | 仅在 `stream=true` 时接受布尔值；控制 OpenAI SSE 是否请求最终用量事件。 |
 | `limen` | Limen 扩展 | 能力、数据等级和 `balanced/economy` 策略契约。 |
 | `tools`、`tool_choice` | 明确拒绝 | 返回 `400 unsupported_field`。 |
 | `response_format` | 明确拒绝 | 当前不实现结构化输出。 |
@@ -34,4 +35,4 @@ Responses API、Assistants API、Tools、结构化输出、Vision、多模态、
 
 ## 自动化契约
 
-运行 `make compatibility` 可执行验证本矩阵中的核心边界：支持的 Chat 请求字段、Tools/结构化输出/未知字段拒绝、OpenAI 风格错误 envelope，以及流式响应的 `text/event-stream` 和 `[DONE]` 结束语义。测试只使用进程内 Provider，不访问真实网络。
+运行 `make compatibility` 可执行验证本矩阵中的核心边界：支持的 Chat 请求字段、`stream_options.include_usage` 约束、Tools/结构化输出/未知字段拒绝、OpenAI 风格错误 envelope，以及流式响应的 `text/event-stream` 和 `[DONE]` 结束语义。测试只使用进程内 Provider，不访问真实网络。

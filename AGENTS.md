@@ -89,7 +89,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
 - HTTP Handler 依赖装配统一使用 `httpapi.HandlerOptions`；旧的长构造函数只保留兼容包装，不在业务代码中继续增加位置参数。
 - OpenAI 兼容边界以 `docs/openai-compatibility.md` 为单一文档来源；新增或拒绝字段必须同步解析器、测试和矩阵，不能静默丢弃未知字段。
-- `make compatibility` 必须覆盖矩阵中的支持字段、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
+- `make compatibility` 必须覆盖矩阵中的支持字段（包括 `stream_options.include_usage`）、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
 - `make reliability` 必须保持为离线、确定性的故障注入入口，覆盖瞬时错误 Fallback、确定性错误不切换、总预算、客户端取消、流式不重放和 Provider 错误分类；可靠性边界变化必须同步更新对应契约测试。
 
 ## 测试与验证

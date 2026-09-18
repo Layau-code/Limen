@@ -26,6 +26,29 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			status: http.StatusOK,
 		},
 		{
+			name:   "stream usage option",
+			body:   `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":true}}`,
+			status: http.StatusOK,
+		},
+		{
+			name:      "stream usage option requires stream",
+			body:      `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"stream_options":{"include_usage":true}}`,
+			status:    http.StatusBadRequest,
+			errorCode: "invalid_chat_request",
+		},
+		{
+			name:      "stream usage option requires include usage",
+			body:      `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{}}`,
+			status:    http.StatusBadRequest,
+			errorCode: "invalid_chat_request",
+		},
+		{
+			name:      "stream usage option rejects unknown nested fields",
+			body:      `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":true,"extra":true}}`,
+			status:    http.StatusBadRequest,
+			errorCode: "unsupported_field",
+		},
+		{
 			name:      "tools are rejected",
 			body:      `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"tools":[]}`,
 			status:    http.StatusBadRequest,
@@ -83,8 +106,8 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			}
 		})
 	}
-	if providerCalls != 1 {
-		t.Fatalf("provider calls = %d, want 1", providerCalls)
+	if providerCalls != 2 {
+		t.Fatalf("provider calls = %d, want 2", providerCalls)
 	}
 }
 

@@ -156,6 +156,36 @@ func TestOpenAIStreamRequestsAndCollectsUsage(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamCanDisableUsageOption(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if _, found := request["stream_options"]; found {
+			t.Fatal("stream_options should be omitted")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	includeUsage := false
+	response, err := NewOpenAI(server.Client(), server.URL, "openai-secret").Chat(context.Background(), ChatRequest{
+		Model:              "gpt-test",
+		Messages:           []Message{{Role: "user", Content: "hello"}},
+		Stream:             true,
+		StreamIncludeUsage: &includeUsage,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenAIChatCancellationReachesProvider(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})

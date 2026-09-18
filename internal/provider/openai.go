@@ -65,7 +65,7 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 		Temperature: request.Temperature,
 		Stream:      request.Stream,
 	}
-	if request.Stream {
+	if request.Stream && (request.StreamIncludeUsage == nil || *request.StreamIncludeUsage) {
 		upstreamRequest.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 	body, err := json.Marshal(upstreamRequest)

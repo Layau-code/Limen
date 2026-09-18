@@ -6,10 +6,11 @@
 
 ## 覆盖范围
 
-- 支持的 `model`、文本 `messages`、`max_tokens`、`temperature` 和 `stream`。
+- 支持的 `model`、文本 `messages`、`max_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`。
 - Tools、`response_format`、工具调用、多模态内容和未知字段的明确拒绝。
 - OpenAI 风格 `error.type`、`error.code` 和 `error.message`。
 - SSE 的 `text/event-stream` Content-Type 和 `[DONE]` 结束事件。
+- `stream_options` 只能在流式请求中使用，且只接受明确的 `include_usage` 布尔字段。
 
 ## 约束
 

@@ -25,6 +25,8 @@ type ChatRequest struct {
 	MaxTokens   int
 	Temperature *float64
 	Stream      bool
+	// StreamIncludeUsage 控制 OpenAI SSE 是否请求最终用量事件；未设置时保持默认开启。
+	StreamIncludeUsage *bool
 }
 
 // Usage 表示 Provider 已经确认的输入和输出 Token。
