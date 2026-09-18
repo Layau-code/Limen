@@ -31,3 +31,7 @@ Limen 兼容的是 OpenAI Chat Completions 的受支持子集，不宣称完整�
 ## 不在 1.0 范围
 
 Responses API、Assistants API、Tools、结构化输出、Vision、多模态、Embedding 和第三 Provider 不属于当前兼容矩阵。新增能力前必须先完成 Provider 转换、能力目录、决策契约和普通/SSE/错误/取消测试。
+
+## 自动化契约
+
+运行 `make compatibility` 可执行验证本矩阵中的核心边界：支持的 Chat 请求字段、Tools/结构化输出/未知字段拒绝、OpenAI 风格错误 envelope，以及流式响应的 `text/event-stream` 和 `[DONE]` 结束语义。测试只使用进程内 Provider，不访问真实网络。

@@ -173,6 +173,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 ```bash
 make check   # gofmt、go vet、竞态测试
+make compatibility # OpenAI Chat 请求、错误和 SSE 兼容契约
 make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
 make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准

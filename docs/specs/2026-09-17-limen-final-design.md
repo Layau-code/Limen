@@ -637,6 +637,7 @@ go vet ./...
 go test ./... -race
 go clean -testcache
 make check
+make compatibility
 make integration
 make build
 make smoke

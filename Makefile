@@ -1,4 +1,4 @@
-.PHONY: fmt vet test generate-check check integration build image smoke bench demo run
+.PHONY: fmt vet test generate-check check compatibility integration build image smoke bench demo run
 
 fmt:
 	gofmt -w cmd internal
@@ -18,6 +18,9 @@ check:
 	go vet ./...
 	$(MAKE) generate-check
 	go test ./... -race
+
+compatibility:
+	go test ./internal/httpapi -run '^TestOpenAICompatibility' -count=1
 
 integration:
 	./scripts/postgres-integration.sh
