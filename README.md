@@ -165,7 +165,7 @@ make build
 
 `internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。当前新请求使用 `decision.v2`：无序能力集合会排序去重，显式模型的 Fallback 目标优先级保持不变；`decision.v1` 仍注册用于历史 Replay。算法注册表支持为旧版本设置 `retainUntil`，超过保留截止时间后返回 `algorithm_version_unavailable`，不会静默使用新算法。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
 
-启用开发用 Run Store 后可使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；幂等键会裁剪首尾空白，并限制为最多 256 字节的可见 ASCII，空值、超长值和控制字符返回 `idempotency_key_required`。同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。相同请求在首次执行期间重试会返回 `409 request_in_progress`、相同的 `X-Limen-Request-ID` 和 `Retry-After: 1`；首次请求完成后重试返回 `409 request_already_processed`，错误体同时返回安全的 `request_id`、`decision_id` 和 `settlement_status`，请求体哈希不同则返回 `409 idempotency_conflict`。取消 Run 后，在途请求会收到 `409 run_cancelled`，并由租户取消事件传播到其他实例。
+显式设置 `LIMEN_RUN_STORE=memory` 后可启用开发用 Run Store，使用 `POST /v1/limen/runs`、`GET /v1/limen/runs/{run_id}`、`POST /v1/limen/runs/{run_id}/complete`、`POST /v1/limen/runs/{run_id}/cancel` 和请求状态查询。内存实现只用于演示，生产环境应配置 PostgreSQL。Run 请求必须带 `X-Limen-Run-ID` 与 `Idempotency-Key`；幂等键会裁剪首尾空白，并限制为最多 256 字节的可见 ASCII，空值、超长值和控制字符返回 `idempotency_key_required`。同一键不会重复调用 Provider，结算状态通过请求查询作为事实来源。相同请求在首次执行期间重试会返回 `409 request_in_progress`、相同的 `X-Limen-Request-ID` 和 `Retry-After: 1`；首次请求完成后重试返回 `409 request_already_processed`，错误体同时返回安全的 `request_id`、`decision_id` 和 `settlement_status`，请求体哈希不同则返回 `409 idempotency_conflict`。取消 Run 后，在途请求会收到 `409 run_cancelled`，并由租户取消事件传播到其他实例。
 
 未知费用会让 Run 进入 `suspended_accounting`，不会伪造为零成本，也不会自动重放上游请求。管理员可用 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处理：`{"mode":"cost","cost_usd":"0.001"}` 补记确定金额，或 `{"mode":"accept_unknown"}` 明确接受未知费用；接口需要 `admin` Scope 和独立 `Idempotency-Key`，处理后请求进入 `settled`，结算状态分别为 `complete` 或 `unknown`。
 
@@ -194,6 +194,8 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY` 或 `OPENAI_API_KEY_FILE`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` 或 `ANTHROPIC_API_KEY_FILE`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并在事务级 advisory lock 下执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，`LIMEN_API_KEY_FILE` 只适用于静态 Key 模式；API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。当前进程只服务 `LIMEN_TENANT_ID`，数据库中属于其他租户的 Key 会返回 `tenant_not_served`，不会进入本进程的 Router、配置或 Provider；需要服务多个租户时应为每个租户运行独立实例。未启用凭据主密钥时，Provider 使用对应环境变量或文件密钥；启用后，Provider 只使用当前进程绑定租户和 endpoint 解析出的加密凭据，默认租户也必须先完成凭据配置。文件密钥会去除首尾空白，空文件、无法读取或同时设置明文和文件来源都会让启动失败。
 
+`limen healthcheck` 默认根据 `LIMEN_ADDR` 检查回环地址上的 `/readyz`；容器或代理场景可用 `LIMEN_HEALTH_URL` 覆盖检查地址。仅设置 `LIMEN_RUN_STORE=memory` 才启用内存 Run 控制面，该模式只适合本地演示。
+
 设置标准环境变量 `OTEL_EXPORTER_OTLP_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 即可启用 OTLP/HTTP Trace；认证头可使用 `OTEL_EXPORTER_OTLP_HEADERS`。未配置端点时使用无操作 Provider。导出在后台批量执行，初始化或导出失败只关闭或降级遥测，不改变模型请求响应。
 
 启用数据库和 `LIMEN_CREDENTIAL_MASTER_KEY` 后，管理员可使用 `POST /v1/limen/credentials/{provider}` 轮换 Provider 凭据，或调用 `POST /v1/limen/credentials/{provider}/revoke` 撤销。请求必须提供匹配当前配置的 `endpoint_id`，响应只返回凭据元数据，不返回密钥；endpoint ID 可由 `provider.EndpointIDForBaseURL` 生成。凭据轮换在当前实例立即生效，其他实例通过 PostgreSQL `NOTIFY` 刷新；通知故障不会回滚数据库变更，实例可重启重新加载。
@@ -206,7 +208,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 Provider 普通 JSON 响应和 SSE 观察都使用有界读取；Anthropic 普通响应超过 4 MiB 时会在转换阶段拒绝，非成功错误正文最多透传 64 KiB，避免异常上游响应造成无界内存增长。OpenAI/Anthropic SSE 遇到上游错误事件或缺少终止事件时返回读取错误，不伪造 `[DONE]`，也不把上游错误正文放入错误信息；异常 Provider 同时返回响应和错误时，Executor 会关闭未消费的响应体。
 
-`/livez` 表示进程存活，`/readyz` 表示已完成依赖初始化并成功绑定监听 socket；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
+`/livez` 表示进程存活，`/readyz` 表示已完成依赖初始化并成功绑定监听 socket；`limen version` 输出版本信息，`limen healthcheck` 检查本地就绪状态（可用 `LIMEN_HEALTH_URL` 覆盖地址）。更多关闭流程、日志和排障说明见 [`docs/operations.md`](docs/operations.md)。
 
 ## 开发验证
 
