@@ -471,6 +471,11 @@ POST /v1/limen/configs/{version}/publish   # 需要 Idempotency-Key
 
 POST /v1/limen/credentials/{provider}
 POST /v1/limen/credentials/{provider}/revoke
+
+GET  /v1/limen/keys
+POST /v1/limen/keys
+POST /v1/limen/keys/{public_prefix}/rotate
+POST /v1/limen/keys/{public_prefix}/revoke
 ~~~
 
 成功响应增加 request_id、run_id、decision_id、config_version、provider、attempts 和 route 的安全摘要 Header。真实上游模型名称仅向具备审计权限的调用者展示。
@@ -492,11 +497,11 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 
 ### 9.3 API Key
 
-使用高熵租户级 Key，例如 lmn_live_<public_prefix>_<random_secret>。数据库只保存公开前缀、HMAC-SHA-256 摘要、租户、Scope、状态和有效期；完整 Key 只在创建时显示一次。
+使用高熵租户级 Key，例如 lmn_live_<public_prefix>_<random_secret>。数据库只保存公开前缀、HMAC-SHA-256 摘要、租户、Scope、状态和有效期；完整 Key 只在创建或轮换时的首次响应显示一次。
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出和撤销 API Key，创建使用幂等键，明文只在首次响应返回，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出、原子轮换和撤销 API Key。创建和轮换使用幂等键，明文只在首次响应返回；轮换事务提交后旧 Key 立即失效，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |
@@ -511,7 +516,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | 创建和发布配置 | configs:write |
 | 轮换和撤销 Provider 凭据 | admin |
 | 查询控制面审计摘要 | admin |
-| 创建、列出和撤销 API Key | admin |
+| 创建、列出、轮换和撤销 API Key | admin |
 
 Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
 
@@ -523,7 +528,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，差异路径只允许算法/配置版本、策略、目标逻辑 ID、候选原因和哈希等安全字段，不重新调用模型或复现运行时 Attempt。
 
-当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名；算法注册表支持显式 `retainUntil`，到期返回 `algorithm_version_unavailable`，不静默回退。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。控制面已提供租户隔离的安全审计摘要查询；审批流仍属于后续生产化能力。
+当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；`decision.v1` 保留旧哈希语义，`decision.v2` 提供规范化集合语义，100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。Replay 已返回安全的结构化差异，不包含上游模型名；算法注册表支持显式 `retainUntil`，到期返回 `algorithm_version_unavailable`，不静默回退。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。控制面已提供租户隔离的安全审计摘要查询和 API Key 创建/轮换/撤销生命周期；审批流仍属于后续生产化能力。
 
 管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
 

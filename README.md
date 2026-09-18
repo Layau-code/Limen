@@ -19,7 +19,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - 每次真实 Provider 调用都保存独立 Attempt；若上游返回 request ID，Limen 会在结算前补写该非敏感标识，便于审计调用是否已经发生。
 - Run 取消会写入租户隔离的取消事件；PostgreSQL 实例优先通过 `LISTEN/NOTIFY` 低延迟广播，在途 Chat 同时保留每秒轮询作为断线兜底。
 - 鉴权边界生成不携带原始 Key 的租户 Principal，并按 Scope 控制数据面与 Run 控制面；默认使用环境变量静态 Key，也可切换 PostgreSQL Key Store。
-- 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库。启用后管理员可创建、列出和撤销 Key，明文只在创建首次响应中返回；默认仍使用静态 Key 便于单机开发。
+- 可选 PostgreSQL API Key Store 只读取公开前缀、HMAC-SHA-256 摘要、租户和 Scope；完整 Key 不落库。启用后管理员可创建、列出、原子轮换和撤销 Key，明文只在创建或轮换首次响应中返回；默认仍使用静态 Key 便于单机开发。
 - Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；Provider 密钥轮换不会打断在途请求。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对 Provider 归一化的 `retryable_transient` 和传输错误执行 Fallback；SSE 开始后不重放。
@@ -109,7 +109,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 管理员可通过 `GET /v1/limen/audit?limit=100` 查询当前租户最近的控制面变更摘要。返回内容只包括动作、资源类型、资源 ID、结果、请求哈希和时间；`limit` 范围为 1 到 100。
 
-启用 `LIMEN_API_KEY_STORE=postgres` 后，管理员可以使用 `POST /v1/limen/keys` 创建 Key、`GET /v1/limen/keys` 查看元数据，以及 `POST /v1/limen/keys/{public_prefix}/revoke` 撤销 Key。创建请求必须带 `Idempotency-Key` 和明确的 `scopes`；完整 `lmn_live_...` Key 只在首次创建响应返回，重试不会再次返回明文。数据库只保存 HMAC 摘要，认证查询通过受控函数执行，管理查询受 PostgreSQL RLS 保护。
+启用 `LIMEN_API_KEY_STORE=postgres` 后，管理员可以使用 `POST /v1/limen/keys` 创建 Key、`GET /v1/limen/keys` 查看元数据、`POST /v1/limen/keys/{public_prefix}/rotate` 原子轮换 Key，以及 `POST /v1/limen/keys/{public_prefix}/revoke` 撤销 Key。创建和轮换请求必须带 `Idempotency-Key` 和明确的 `scopes`；完整 `lmn_live_...` Key 只在首次成功响应返回，重试不会再次返回明文。轮换在一个事务内创建新 Key 并停用旧 Key，旧 Key 在提交后立即失效。数据库只保存 HMAC 摘要，认证查询通过受控函数执行，管理查询受 PostgreSQL RLS 保护。
 
 配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；受治理 Run 创建时固定的策略优先，冲突请求返回 `400 strategy_conflict`。当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
 

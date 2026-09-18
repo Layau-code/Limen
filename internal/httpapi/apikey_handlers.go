@@ -88,6 +88,56 @@ func (h *Handler) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
+// rotateAPIKey 原子轮换租户 API Key，并只在首次成功响应中返回新明文。
+func (h *Handler) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeAdmin) {
+		return
+	}
+	if h.apiKeys == nil {
+		writeError(w, http.StatusServiceUnavailable, "api key control is unavailable", "api_error", "api_key_control_unavailable")
+		return
+	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required", "invalid_request_error", "idempotency_key_required")
+		return
+	}
+	body, err := readRequestBody(w, r)
+	if err != nil {
+		return
+	}
+	var incoming createAPIKeyRequest
+	if err := decodeStrictJSON(body, &incoming); err != nil || auth.ValidateAPIKeyScopes(incoming.Scopes) != nil {
+		writeError(w, http.StatusBadRequest, "scopes must contain known unique values", "invalid_request_error", "invalid_api_key_scopes")
+		return
+	}
+	if incoming.ExpiresAt != nil && !incoming.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusBadRequest, "expires_at must be in the future", "invalid_request_error", "invalid_api_key_expiry")
+		return
+	}
+	prefix := strings.TrimSpace(r.PathValue("public_prefix"))
+	if !auth.ValidatePublicPrefix(prefix) {
+		writeError(w, http.StatusBadRequest, "invalid public prefix", "invalid_request_error", "invalid_api_key_prefix")
+		return
+	}
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, r.URL.Path, key, body, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return
+	}
+	oldRecord, newRecord, plaintext, err := h.apiKeys.Rotate(r.Context(), tenantID, prefix, incoming.Scopes, incoming.ExpiresAt, auth.APIKeyMutation{Key: key, Hash: hash})
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	h.appendAudit(r.Context(), tenantID, audit.ActionAPIKeyRotate, "api_key", newRecord.PublicPrefix, "success", hash)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"previous": apiKeyResponseFrom(oldRecord, ""),
+		"key":      apiKeyResponseFrom(newRecord, plaintext),
+	})
+}
+
 // revokeAPIKey 停用指定租户 API Key，并支持幂等重试。
 func (h *Handler) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticateScopes(w, r, auth.ScopeAdmin) {

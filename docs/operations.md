@@ -2,7 +2,7 @@
 
 ## 启动
 
-生产环境至少设置 `LIMEN_API_KEY`，以及模型文件实际引用的 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。`LIMEN_MODELS_FILE` 只在启动时读取，修改后重启进程。默认监听 `:8080`，可用 `LIMEN_ADDR` 修改。启用 PostgreSQL Key Store 时，首个 `admin` Key 必须由部署初始化流程预置；之后可通过 `POST /v1/limen/keys` 创建后续 Key。
+生产环境至少设置 `LIMEN_API_KEY`，以及模型文件实际引用的 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。`LIMEN_MODELS_FILE` 只在启动时读取，修改后重启进程。默认监听 `:8080`，可用 `LIMEN_ADDR` 修改。启用 PostgreSQL Key Store 时，首个 `admin` Key 必须由部署初始化流程预置；之后可通过 `POST /v1/limen/keys` 创建后续 Key，并使用轮换接口在不中断租户配置的情况下替换旧 Key。
 
 启动失败通常表示配置错误：检查 JSON 是否严格匹配示例、模型 ID 是否重复、目标 Provider 是否支持、时长是否为正数，以及实际引用的 Provider Key 是否存在。Base URL 必须是绝对 HTTP(S) 地址且不能含用户信息。
 
@@ -38,7 +38,7 @@ Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导�
 4. `504 provider_timeout`：检查 `LIMEN_REQUEST_TIMEOUT` 与 `routing.attempt_timeout`，总预算不会因切换目标而重置。
 5. 无 Fallback：确定性 4xx、请求转换错误、客户端取消和已开始的 SSE 都按设计不切换。
 6. PostgreSQL 暂时不可用：事务连接池的单次网络 I/O 最多等待 5 秒；已持久化的结算任务在连接恢复后继续处理，未完成且租约过期的请求进入 `suspended_accounting`，不会自动重放 Provider。
-7. API Key 创建响应丢失：出于安全边界，Limen 不从数据库恢复明文；使用仍有效的管理员 Key 创建新 Key，并撤销无法确认是否交付的旧 Key。
+7. API Key 创建或轮换响应丢失：出于安全边界，Limen 不从数据库恢复明文；使用仍有效的管理员 Key 再次执行新的幂等操作，并撤销无法确认是否交付的旧 Key。轮换提交后旧 Key 不再有效。
 
 ## 交付检查
 

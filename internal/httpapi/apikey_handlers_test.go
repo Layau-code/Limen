@@ -15,10 +15,14 @@ import (
 )
 
 type fakeAPIKeyManager struct {
-	record    auth.APIKeyRecord
-	plaintext string
-	created   int
-	revoked   bool
+	record     auth.APIKeyRecord
+	plaintext  string
+	created    int
+	revoked    bool
+	rotated    bool
+	rotateKey  string
+	rotateHash string
+	oldPrefix  string
 }
 
 func (manager *fakeAPIKeyManager) Create(_ context.Context, tenantID string, scopes []auth.Scope, expiresAt *time.Time, mutation auth.APIKeyMutation) (auth.APIKeyRecord, string, error) {
@@ -51,6 +55,27 @@ func (manager *fakeAPIKeyManager) Revoke(_ context.Context, tenantID, prefix str
 	manager.revoked = true
 	manager.record.Active = false
 	return nil
+}
+
+func (manager *fakeAPIKeyManager) Rotate(_ context.Context, tenantID, prefix string, scopes []auth.Scope, expiresAt *time.Time, mutation auth.APIKeyMutation) (auth.APIKeyRecord, auth.APIKeyRecord, string, error) {
+	if tenantID != manager.record.TenantID || (prefix != manager.record.PublicPrefix && prefix != manager.oldPrefix) {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrAPIKeyNotFound
+	}
+	if mutation.Key == "" || mutation.Hash == "" || auth.ValidateAPIKeyScopes(scopes) != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrInvalidAPIKeyOperation
+	}
+	if manager.rotated {
+		if mutation.Key != manager.rotateKey || mutation.Hash != manager.rotateHash {
+			return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrAPIKeyConflict
+		}
+		return auth.APIKeyRecord{PublicPrefix: prefix, TenantID: tenantID, Active: false}, manager.record, "", nil
+	}
+	manager.rotated = true
+	manager.rotateKey, manager.rotateHash = mutation.Key, mutation.Hash
+	old := manager.record
+	manager.oldPrefix = old.PublicPrefix
+	manager.record = auth.APIKeyRecord{PublicPrefix: "fedcba9876543210", TenantID: tenantID, Scopes: append([]auth.Scope(nil), scopes...), Active: true, ExpiresAt: expiresAt, CreatedAt: time.Now().UTC()}
+	return old, manager.record, "lmn_live_fedcba9876543210_rotatedsecret", nil
 }
 
 func TestAPIKeyControlCreatesOnceListsMetadataAndRevokes(t *testing.T) {
@@ -109,6 +134,39 @@ func TestAPIKeyControlRequiresAdmin(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "insufficient_scope") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIKeyControlRotatesAtomically(t *testing.T) {
+	manager := &fakeAPIKeyManager{record: auth.APIKeyRecord{PublicPrefix: "0123456789abcdef", TenantID: "tenant-a", Active: true}}
+	registry, _ := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys(
+		auth.NewStaticAuthenticator("admin", "tenant-a", []auth.Scope{auth.ScopeAdmin}),
+		gateway.NewRouter(nil, registry, gateway.Policy{}), nil, "tenant-a", journal.NewMemoryStore(), configstore.NewMemoryStore(), nil, nil, nil, nil, nil, manager,
+	)
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/keys/0123456789abcdef/rotate", strings.NewReader(`{"scopes":["inference"]}`))
+	request.Header.Set("Authorization", "Bearer admin")
+	request.Header.Set("Idempotency-Key", "rotate-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || !manager.rotated || !strings.Contains(response.Body.String(), "fedcba9876543210") || !strings.Contains(response.Body.String(), "rotatedsecret") {
+		t.Fatalf("rotate status=%d body=%s rotated=%v", response.Code, response.Body.String(), manager.rotated)
+	}
+	repeat := httptest.NewRequest(http.MethodPost, "/v1/limen/keys/0123456789abcdef/rotate", strings.NewReader(`{"scopes":["inference"]}`))
+	repeat.Header.Set("Authorization", "Bearer admin")
+	repeat.Header.Set("Idempotency-Key", "rotate-1")
+	repeatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(repeatResponse, repeat)
+	if repeatResponse.Code != http.StatusCreated || strings.Contains(repeatResponse.Body.String(), "rotatedsecret") {
+		t.Fatalf("repeat rotate status=%d body=%s", repeatResponse.Code, repeatResponse.Body.String())
+	}
+	conflict := httptest.NewRequest(http.MethodPost, "/v1/limen/keys/0123456789abcdef/rotate", strings.NewReader(`{"scopes":["runs:read"]}`))
+	conflict.Header.Set("Authorization", "Bearer admin")
+	conflict.Header.Set("Idempotency-Key", "rotate-1")
+	conflictResponse := httptest.NewRecorder()
+	handler.ServeHTTP(conflictResponse, conflict)
+	if conflictResponse.Code != http.StatusConflict || !strings.Contains(conflictResponse.Body.String(), "idempotency_conflict") {
+		t.Fatalf("conflict rotate status=%d body=%s", conflictResponse.Code, conflictResponse.Body.String())
 	}
 }
 

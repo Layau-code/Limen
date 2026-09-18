@@ -136,6 +136,84 @@ func (manager *PostgresAPIKeyManager) List(ctx context.Context, tenantID string)
 	return result, nil
 }
 
+// Rotate 原子创建新 Key 并停用旧 Key；明文只在首次成功响应中返回。
+func (manager *PostgresAPIKeyManager) Rotate(ctx context.Context, tenantID, prefix string, scopes []auth.Scope, expiresAt *time.Time, mutation auth.APIKeyMutation) (auth.APIKeyRecord, auth.APIKeyRecord, string, error) {
+	if strings.TrimSpace(tenantID) == "" || !auth.ValidatePublicPrefix(prefix) {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrInvalidAPIKeyOperation
+	}
+	if err := validateAPIKeyMutation(tenantID, scopes, mutation); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	if manager == nil || manager.db == nil || len(manager.secret) == 0 {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", ErrDatabaseRequired
+	}
+	tx, err := beginAPIKeyTx(ctx, manager.db, tenantID)
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	defer tx.Rollback()
+	endpoint := apiKeyRotationEndpoint(prefix)
+	if oldRecord, newRecord, err := readRotationOperation(ctx, tx, tenantID, prefix, endpoint, mutation); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	} else if newRecord.PublicPrefix != "" {
+		if err := tx.Commit(); err != nil {
+			return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+		}
+		return oldRecord, newRecord, "", nil
+	}
+
+	oldRecord, err := getAPIKeyTx(ctx, tx, tenantID, prefix)
+	if errors.Is(err, auth.ErrAPIKeyNotFound) {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	var lockedActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT active FROM api_keys WHERE tenant_id=$1 AND public_prefix=$2 FOR UPDATE`, tenantID, prefix).Scan(&lockedActive); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrAPIKeyNotFound
+		}
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	// 另一个相同幂等键的事务可能已在锁外完成，锁定后再次读取避免重复生成。
+	if retryOld, retryNew, retryErr := readRotationOperation(ctx, tx, tenantID, prefix, endpoint, mutation); retryErr != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", retryErr
+	} else if retryNew.PublicPrefix != "" {
+		if err := tx.Commit(); err != nil {
+			return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+		}
+		return retryOld, retryNew, "", nil
+	}
+	if !lockedActive {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", auth.ErrAPIKeyNotFound
+	}
+
+	token, newPrefix, err := generateAPIKey()
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	encodedScopes, err := json.Marshal(scopes)
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys (public_prefix,tenant_id,digest,scopes,active,expires_at,created_at) VALUES ($1,$2,$3,$4,TRUE,$5,$6)`, newPrefix, tenantID, hmacDigest(manager.secret, token), encodedScopes, expiresAt, now); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE api_keys SET active=FALSE WHERE tenant_id=$1 AND public_prefix=$2`, tenantID, prefix); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO api_key_operations (tenant_id,endpoint,idempotency_key,request_hash,public_prefix,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, tenantID, endpoint, mutation.Key, mutation.Hash, newPrefix, now); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	newRecord := auth.APIKeyRecord{PublicPrefix: newPrefix, TenantID: tenantID, Scopes: append([]auth.Scope(nil), scopes...), Active: true, ExpiresAt: cloneTime(expiresAt), CreatedAt: now}
+	if err := tx.Commit(); err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, "", err
+	}
+	return oldRecord, newRecord, token, nil
+}
+
 // Revoke 停用一个租户 API Key，并以控制面幂等键保护重复请求。
 func (manager *PostgresAPIKeyManager) Revoke(ctx context.Context, tenantID, prefix string, mutation auth.APIKeyMutation) error {
 	if strings.TrimSpace(tenantID) == "" || !auth.ValidatePublicPrefix(prefix) || strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" {
@@ -176,6 +254,34 @@ func (manager *PostgresAPIKeyManager) Revoke(ctx context.Context, tenantID, pref
 		return err
 	}
 	return tx.Commit()
+}
+
+// apiKeyRotationEndpoint 返回绑定旧 Key 前缀的稳定轮换操作名。
+func apiKeyRotationEndpoint(prefix string) string {
+	return "POST /v1/limen/keys/" + prefix + "/rotate"
+}
+
+// readRotationOperation 读取已有轮换结果，并校验幂等请求哈希。
+func readRotationOperation(ctx context.Context, tx *sql.Tx, tenantID, oldPrefix, endpoint string, mutation auth.APIKeyMutation) (auth.APIKeyRecord, auth.APIKeyRecord, error) {
+	newPrefix, requestHash, err := findAPIKeyOperation(ctx, tx, tenantID, endpoint, mutation.Key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, nil
+	}
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, err
+	}
+	if requestHash != mutation.Hash {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, auth.ErrAPIKeyConflict
+	}
+	oldRecord, err := getAPIKeyTx(ctx, tx, tenantID, oldPrefix)
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, err
+	}
+	newRecord, err := getAPIKeyTx(ctx, tx, tenantID, newPrefix)
+	if err != nil {
+		return auth.APIKeyRecord{}, auth.APIKeyRecord{}, err
+	}
+	return oldRecord, newRecord, nil
 }
 
 // validateAPIKeyMutation 校验创建操作的租户、Scope 和幂等摘要。

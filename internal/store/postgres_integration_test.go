@@ -224,20 +224,41 @@ func TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation(t *testing.T) {
 	if _, _, err := manager.Create(ctx, tenantA, []auth.Scope{auth.ScopeInference}, nil, auth.APIKeyMutation{Key: "create-1", Hash: "hash-other"}); !errors.Is(err, auth.ErrAPIKeyConflict) {
 		t.Fatalf("create conflict=%v", err)
 	}
-	keys, err := manager.List(ctx, tenantA)
-	if err != nil || len(keys) != 1 || keys[0].PublicPrefix != record.PublicPrefix {
-		t.Fatalf("tenant keys=%+v err=%v", keys, err)
-	}
 	authenticator := NewAPIKeyAuthenticator(appDB, "integration-hmac-secret")
 	principal, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+plaintext)
 	if err != nil || !ok || principal.TenantID != tenantA {
 		t.Fatalf("key authentication principal=%+v ok=%v err=%v", principal, ok, err)
 	}
-	if err := manager.Revoke(ctx, tenantA, record.PublicPrefix, auth.APIKeyMutation{Key: "revoke-1", Hash: "revoke-hash"}); err != nil {
-		t.Fatal(err)
+	oldRecord, rotated, rotatedPlaintext, err := manager.Rotate(ctx, tenantA, record.PublicPrefix, []auth.Scope{auth.ScopeInference}, authTimePtr(time.Now().UTC().Add(2*time.Hour)), auth.APIKeyMutation{Key: "rotate-1", Hash: "rotate-hash"})
+	if err != nil || !oldRecord.Active || rotated.PublicPrefix == record.PublicPrefix || !rotated.Active || rotatedPlaintext == "" {
+		t.Fatalf("rotate old=%+v new=%+v plaintext=%q err=%v", oldRecord, rotated, rotatedPlaintext, err)
+	}
+	repeatedOld, repeatedRotated, repeatedRotationPlaintext, err := manager.Rotate(ctx, tenantA, record.PublicPrefix, rotated.Scopes, rotated.ExpiresAt, auth.APIKeyMutation{Key: "rotate-1", Hash: "rotate-hash"})
+	if err != nil || repeatedOld.PublicPrefix != record.PublicPrefix || repeatedOld.Active || repeatedRotated.PublicPrefix != rotated.PublicPrefix || repeatedRotationPlaintext != "" {
+		t.Fatalf("repeated rotate old=%+v new=%+v plaintext=%q err=%v", repeatedOld, repeatedRotated, repeatedRotationPlaintext, err)
+	}
+	if _, _, _, err := manager.Rotate(ctx, tenantA, record.PublicPrefix, rotated.Scopes, rotated.ExpiresAt, auth.APIKeyMutation{Key: "rotate-1", Hash: "rotate-other"}); !errors.Is(err, auth.ErrAPIKeyConflict) {
+		t.Fatalf("rotate conflict=%v", err)
+	}
+	if _, _, _, err := manager.Rotate(ctx, tenantB, record.PublicPrefix, rotated.Scopes, rotated.ExpiresAt, auth.APIKeyMutation{Key: "rotate-other-tenant", Hash: "rotate-other-tenant-hash"}); !errors.Is(err, auth.ErrAPIKeyNotFound) {
+		t.Fatalf("cross-tenant rotate=%v", err)
+	}
+	rotatedPrincipal, rotatedOK, err := authenticator.AuthenticateContext(ctx, "Bearer "+rotatedPlaintext)
+	if err != nil || !rotatedOK || rotatedPrincipal.TenantID != tenantA {
+		t.Fatalf("rotated key authentication principal=%+v ok=%v err=%v", rotatedPrincipal, rotatedOK, err)
 	}
 	if _, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+plaintext); err != nil || ok {
-		t.Fatalf("revoked key authenticated ok=%v err=%v", ok, err)
+		t.Fatalf("old key authenticated after rotation ok=%v err=%v", ok, err)
+	}
+	keys, err := manager.List(ctx, tenantA)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("tenant keys=%+v err=%v", keys, err)
+	}
+	if err := manager.Revoke(ctx, tenantA, rotated.PublicPrefix, auth.APIKeyMutation{Key: "revoke-1", Hash: "revoke-hash"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+rotatedPlaintext); err != nil || ok {
+		t.Fatalf("revoked rotated key authenticated ok=%v err=%v", ok, err)
 	}
 	if _, err := manager.List(ctx, tenantB); err != nil {
 		t.Fatal(err)
@@ -246,12 +267,14 @@ func TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation(t *testing.T) {
 	if visible != 0 {
 		t.Fatalf("cross-tenant api keys visible=%d", visible)
 	}
-	var digest []byte
-	if err := adminDB.QueryRowContext(ctx, `SELECT digest FROM api_keys WHERE public_prefix=$1`, record.PublicPrefix).Scan(&digest); err != nil {
-		t.Fatal(err)
-	}
-	if len(digest) != 32 || strings.Contains(string(digest), plaintext) {
-		t.Fatalf("stored digest is unsafe: len=%d", len(digest))
+	for _, item := range []struct{ prefix, secret string }{{record.PublicPrefix, plaintext}, {rotated.PublicPrefix, rotatedPlaintext}} {
+		var digest []byte
+		if err := adminDB.QueryRowContext(ctx, `SELECT digest FROM api_keys WHERE public_prefix=$1`, item.prefix).Scan(&digest); err != nil {
+			t.Fatal(err)
+		}
+		if len(digest) != 32 || strings.Contains(string(digest), item.secret) {
+			t.Fatalf("stored digest is unsafe: prefix=%s len=%d", item.prefix, len(digest))
+		}
 	}
 }
 

@@ -171,6 +171,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditA
 	mux.HandleFunc("GET /v1/limen/audit", handler.listAudit)
 	mux.HandleFunc("GET /v1/limen/keys", handler.listAPIKeys)
 	mux.HandleFunc("POST /v1/limen/keys", handler.createAPIKey)
+	mux.HandleFunc("POST /v1/limen/keys/{public_prefix}/rotate", handler.rotateAPIKey)
 	mux.HandleFunc("POST /v1/limen/keys/{public_prefix}/revoke", handler.revokeAPIKey)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)

@@ -21,7 +21,7 @@ HTTP Principal/Scope 鉴权与解析
 
 - `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
 - `internal/auth`：常量时间校验静态 Bearer Key，生成不携带原始 Key 的租户 Principal，并集中定义 Scope；`internal/store` 提供 PostgreSQL HMAC Key Store 实现。
-- `internal/store/apikey_manager.go`：在 PostgreSQL 中创建、列出和撤销租户 API Key；首个 admin Key 由部署初始化流程预置，后续明文只返回一次，认证读取通过受控函数，管理操作使用幂等记录和 RLS。
+- `internal/store/apikey_manager.go`：在 PostgreSQL 中创建、列出、原子轮换和撤销租户 API Key；首个 admin Key 由部署初始化流程预置，后续明文只返回一次，认证读取通过受控函数，管理操作使用幂等记录和 RLS。
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复；发布通过 `limen_config_changes` 通知加速跨实例 Router 刷新，数据库版本仍是唯一事实来源。
 - `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint。
@@ -90,7 +90,7 @@ HTTP Principal/Scope 鉴权与解析
 
 开发控制面已覆盖 Run 创建、查询、完成、取消、Request 结算查询、未知费用处置和配置版本发布；控制变更使用 `Idempotency-Key` 与规范请求哈希。配置版本由规范 JSON 的 SHA-256 生成，发布只改变当前快照，旧版本保留为 `superseded`。受治理 Chat 在准入后记录本地 Attempt、响应结束后进入结算，已知成本写入唯一账本，未知成本返回 `pending` 并暂停 Run。管理员可对暂停请求补记确定金额，或明确接受未知费用；处置事务锁定 Request 和 Run，重复幂等键不会重复记账。暂停期间可以先请求完成，Run 会保留 `complete_requested`，不会跳过对账直接完成。
 
-控制面变更会追加安全审计事件，覆盖配置创建/发布、凭据轮换/撤销、Run 完成/取消和未知费用处置。`GET /v1/limen/audit` 只返回当前租户最近摘要，默认最多 100 条；事件 ID 按租户、动作、资源和请求哈希稳定生成，重复重试不会制造重复记录。
+控制面变更会追加安全审计事件，覆盖配置创建/发布、凭据轮换/撤销、API Key 创建/轮换/撤销、Run 完成/取消和未知费用处置。`GET /v1/limen/audit` 只返回当前租户最近摘要，默认最多 100 条；事件 ID 按租户、动作、资源和请求哈希稳定生成，重复重试不会制造重复记录。
 
 ## 可靠性不变量
 

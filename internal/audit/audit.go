@@ -23,6 +23,7 @@ const (
 	ActionConfigCreate      = "config.create"
 	ActionConfigPublish     = "config.publish"
 	ActionAPIKeyCreate      = "api_key.create"
+	ActionAPIKeyRotate      = "api_key.rotate"
 	ActionAPIKeyRevoke      = "api_key.revoke"
 	ActionCredentialRotate  = "credential.rotate"
 	ActionCredentialRevoke  = "credential.revoke"

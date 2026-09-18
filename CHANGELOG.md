@@ -24,7 +24,7 @@
 - 新增租户隔离的控制面审计摘要和 `GET /v1/limen/audit`，重复控制操作按稳定事件 ID 去重。
 - Algorithm Registry 支持显式 Replay 保留截止时间，过期算法返回 `algorithm_version_unavailable`，不回退到新版本。
 - 将 Gateway Executor 从 Router 计划生成逻辑中拆出；Executor 只按 ExecutionPlan 执行 Provider，不重新选择模型。
-- PostgreSQL API Key Store 新增创建、列表和撤销控制面；明文只在首次创建响应返回，认证查询使用受控函数，管理操作使用 RLS 和幂等记录。
+- PostgreSQL API Key Store 新增创建、列表、原子轮换和撤销控制面；明文只在首次创建或轮换响应返回，认证查询使用受控函数，管理操作使用 RLS 和幂等记录。
 
 ### 修复
 

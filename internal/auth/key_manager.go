@@ -33,10 +33,11 @@ type APIKeyMutation struct {
 	Hash string
 }
 
-// APIKeyManager 定义租户 API Key 的创建、查询和撤销边界。
+// APIKeyManager 定义租户 API Key 的创建、查询、轮换和撤销边界。
 type APIKeyManager interface {
 	Create(context.Context, string, []Scope, *time.Time, APIKeyMutation) (APIKeyRecord, string, error)
 	List(context.Context, string) ([]APIKeyRecord, error)
+	Rotate(context.Context, string, string, []Scope, *time.Time, APIKeyMutation) (APIKeyRecord, APIKeyRecord, string, error)
 	Revoke(context.Context, string, string, APIKeyMutation) error
 }
 
