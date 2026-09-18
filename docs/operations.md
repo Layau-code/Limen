@@ -54,4 +54,4 @@ Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导�
 
 ## 交付检查
 
-提交前运行 `go clean -testcache && make check && make integration && make build && make smoke && make bench && git diff --check`。`make smoke` 使用临时二进制和占位密钥，验证 `/readyz`、Bearer 鉴权、OpenAI 风格 `/v1/models`、未知模型错误不会回显请求模型，以及收到 `SIGTERM` 后就绪状态撤销并正常退出；脚本不访问真实 Provider。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。
+提交前运行 `go clean -testcache && make check && make integration && make build && make smoke && make bench && git diff --check`。其中 `make check` 还会验证 `cmd` 和 `internal` 中每个生产方法都有简体中文用途注释。`make smoke` 使用临时二进制和占位密钥，验证 `/readyz`、Bearer 鉴权、OpenAI 风格 `/v1/models`、未知模型错误不会回显请求模型，以及收到 `SIGTERM` 后就绪状态撤销并正常退出；脚本不访问真实 Provider。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。
