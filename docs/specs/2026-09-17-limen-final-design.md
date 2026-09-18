@@ -520,7 +520,7 @@ Dry Run 执行真实决策但不访问 Provider、不增加 Run 计数、不产�
 
 Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本重新生成规范 ExecutionPlan，并比较 plan_hash；可选比较新配置，返回原计划、重放计划和结构化差异，不重新调用模型或复现运行时 Attempt。
 
-当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数。旧算法实现保留窗口、审批审计和完整差异树仍待补齐。
+当前实现已持久化 DecisionInput/ExecutionPlan、`input_hash`、`plan_hash` 和算法版本，并通过算法注册表执行 Explain/Replay；100 组已提交 DecisionInput 会验证重建 Engine 后的规范计划字节和哈希。配置版本控制面已提供创建、列表、结构化 diff 和发布 API，发布会原子替换 Router 目录与路由参数，并通过 PostgreSQL 通知和轮询传播到其他实例。旧算法实现保留窗口、审批审计和完整差异树仍待补齐。
 
 管理员通过 `POST /v1/limen/runs/{run_id}/requests/{request_id}/accounting` 处置未知费用。`{"mode":"cost","cost_usd":"0.001"}` 补记定点金额并写入唯一 Ledger；`{"mode":"accept_unknown"}` 只结束不确定状态，不写入虚构金额。两种模式都需要 `Idempotency-Key`，成功后 Request 为 `settled`，`settlement_status` 分别为 `complete` 或 `unknown`；可恢复 Run 按固定优先级恢复，已取消、已截止或已超预算的终态不会被重新打开。
 

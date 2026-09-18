@@ -16,6 +16,7 @@
 - Metrics 增加可信模型、状态类别、稳定拒绝码和目标标签，Attempt 计数改为只反映真实 Provider 调用。
 - Decision Engine 增加 100 组已提交输入与计划哈希的 golden Replay 语料，并提供确定性生成器。
 - Provider 出站安全测试覆盖环境代理绕过、云元数据地址和非法 endpoint URL；endpoint 辅助函数拒绝用户信息、查询参数和片段。
+- PostgreSQL 配置发布增加跨实例版本通知和 5 秒轮询兜底，其他实例会从数据库重新读取并原子刷新 Router。
 
 ### 修复
 

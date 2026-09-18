@@ -142,6 +142,7 @@ func (store *PostgresConfigStore) Publish(ctx context.Context, tenantID, version
 	}
 	record.State = configstore.StatePublished
 	record.PublishedAt = &now
+	_ = notifyConfigChange(ctx, tx, ConfigChange{TenantID: tenantID, Version: record.Version})
 	if err := tx.Commit(); err != nil {
 		return configstore.Record{}, err
 	}

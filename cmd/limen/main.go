@@ -100,6 +100,7 @@ func main() {
 	var credentialSetters map[string]httpapi.ProviderCredentialSetter
 	var credentialEndpoints map[string]string
 	var credentialListener *store.CredentialChangeListener
+	var configListener *store.ConfigChangeListener
 	var cancellationListener *store.CancellationEventListener
 	cancellationHub := run.NewCancellationHub()
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
@@ -138,6 +139,11 @@ func main() {
 		}
 		decisionStore = store.NewDecisionJournal(database)
 		configStore = store.NewPostgresConfigStore(database)
+		configListener, err = store.NewConfigChangeListener(cfg.DatabaseURL)
+		if err != nil {
+			logger.Warn("config change listener unavailable")
+			configListener = nil
+		}
 		published, publishErr := configStore.GetPublished(context.Background(), cfg.TenantID)
 		if publishErr == nil {
 			publishedRegistry, registryErr := registryFromConfig(published.Models)
@@ -244,6 +250,11 @@ func main() {
 		defer credentialListener.Close()
 		go watchCredentialChanges(ctx, credentialListener, cfg.TenantID, credentialStore, credentialSetters, credentialEndpoints, logger)
 	}
+	if configListener != nil {
+		defer configListener.Close()
+		go watchConfigChanges(ctx, configListener, cfg.TenantID, configStore, router, logger)
+		go pollPublishedConfig(ctx, cfg.TenantID, configStore, router, logger)
+	}
 	if cancellationListener != nil {
 		defer cancellationListener.Close()
 		go watchCancellationEvents(ctx, cancellationListener, cancellationHub, logger)
@@ -275,6 +286,69 @@ func main() {
 		logger.Error("server failed", "error", serverErr)
 		os.Exit(1)
 	}
+}
+
+// watchConfigChanges 接收跨实例配置通知并刷新本地 Router 快照。
+func watchConfigChanges(ctx context.Context, listener *store.ConfigChangeListener, tenantID string, configs configstore.Store, router *gateway.Router, logger *slog.Logger) {
+	err := listener.Run(ctx, func(change store.ConfigChange) {
+		if change.TenantID != tenantID {
+			return
+		}
+		refreshContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+		refreshErr := refreshPublishedConfig(refreshContext, tenantID, configs, router)
+		cancel()
+		if refreshErr != nil && ctx.Err() == nil {
+			logger.Warn("published config refresh failed", "version", change.Version)
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		logger.Warn("config change listener stopped")
+	}
+}
+
+// pollPublishedConfig 定期从 PostgreSQL 读取当前版本，弥补 NOTIFY 丢失窗口。
+func pollPublishedConfig(ctx context.Context, tenantID string, configs configstore.Store, router *gateway.Router, logger *slog.Logger) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			refreshContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := refreshPublishedConfig(refreshContext, tenantID, configs, router)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				logger.Warn("published config poll failed")
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// refreshPublishedConfig 读取数据库当前版本并原子替换本地 Router 目录。
+func refreshPublishedConfig(ctx context.Context, tenantID string, configs configstore.Store, router *gateway.Router) error {
+	if configs == nil || router == nil {
+		return errors.New("config refresh dependencies are unavailable")
+	}
+	published, err := configs.GetPublished(ctx, tenantID)
+	if err != nil {
+		if errors.Is(err, configstore.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if published.Version == router.ConfigVersion() {
+		return nil
+	}
+	registry, err := registryFromConfig(published.Models)
+	if err != nil {
+		return err
+	}
+	policy := router.Policy()
+	policy.AttemptTimeout = published.Routing.AttemptTimeout
+	policy.FailureThreshold = published.Routing.FailureThreshold
+	policy.Cooldown = published.Routing.Cooldown
+	return router.ReplaceRegistryWithPolicy(registry, published.Version, policy)
 }
 
 // watchCancellationEvents 将 PostgreSQL 取消通知广播到当前实例的在途请求。

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/huz/limen/internal/config"
+	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/credentialstore"
 	"github.com/huz/limen/internal/gateway"
 )
@@ -48,5 +50,27 @@ func TestValidateRuntimeProviderKeysUsesActiveRegistry(t *testing.T) {
 	cfg.OpenAIAPIKey = ""
 	if err := validateRuntimeProviderKeys(registry, cfg); err == nil {
 		t.Fatal("expected missing active provider key")
+	}
+}
+
+func TestRefreshPublishedConfigReplacesRouterSnapshot(t *testing.T) {
+	initial, err := gateway.NewModelRegistry([]gateway.Model{{ID: "old", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gateway.NewRouter(nil, initial, gateway.Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second})
+	configs := configstore.NewMemoryStore()
+	record, err := configs.Create(context.Background(), "tenant-a", []byte(`{"models":[{"id":"new","targets":[{"id":"new-target","provider":"anthropic","upstream_model":"claude-new"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configs.Publish(context.Background(), "tenant-a", record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := refreshPublishedConfig(context.Background(), "tenant-a", configs, router); err != nil {
+		t.Fatal(err)
+	}
+	if router.ConfigVersion() != record.Version || router.Models()[0].ID != "new" {
+		t.Fatalf("router version=%q models=%+v", router.ConfigVersion(), router.Models())
 	}
 }

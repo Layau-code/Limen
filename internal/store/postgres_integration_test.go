@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -120,6 +121,39 @@ func TestPostgresIntegrationDecisionJournalRoundTripsPricing(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Input, record.Input) || !reflect.DeepEqual(got.Plan, record.Plan) {
 		t.Fatalf("journal round trip changed decision: got=%+v want=%+v", got, record)
+	}
+}
+
+// TestPostgresIntegrationConfigPublishNotifiesMetadata 验证配置发布只广播租户和版本哈希。
+func TestPostgresIntegrationConfigPublishNotifiesMetadata(t *testing.T) {
+	adminDB, appDB, appURL := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantID := integrationID("tenant-config-notify")
+	ensureIntegrationTenant(t, adminDB, tenantID)
+	listener := pq.NewListener(appURL, 100*time.Millisecond, time.Second, nil)
+	defer listener.Close()
+	if err := listener.Listen(configChangeChannel); err != nil {
+		t.Fatal(err)
+	}
+	configs := NewPostgresConfigStore(appDB)
+	record, err := configs.Create(ctx, tenantID, []byte(`{"models":[{"id":"notify-model","targets":[{"id":"notify-target","provider":"openai","upstream_model":"gpt-secret-upstream"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configs.Publish(ctx, tenantID, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case notification := <-listener.Notify:
+		change, err := parseConfigChange(notification.Extra)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if change.TenantID != tenantID || change.Version != record.Version || strings.Contains(notification.Extra, "gpt-secret-upstream") {
+			t.Fatalf("config notification=%q change=%+v", notification.Extra, change)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("config notification timed out")
 	}
 }
 

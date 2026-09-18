@@ -9,7 +9,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `POST /v1/chat/completions`、`GET /v1/models`、`/livez`、`/readyz`。
 - OpenAI 与 Anthropic 协议适配，普通响应和 SSE 流式响应。
 - 启动时严格加载的模型注册表；未配置文件时保留四种前缀兼容模式，配置 API 发布后可原子替换当前进程目录。
-- `GET/POST /v1/limen/configs`、配置 diff 和 `POST /v1/limen/configs/{version}/publish` 提供租户隔离的不可变配置版本控制；PostgreSQL 模式下重启恢复已发布版本。
+- `GET/POST /v1/limen/configs`、配置 diff 和 `POST /v1/limen/configs/{version}/publish` 提供租户隔离的不可变配置版本控制；PostgreSQL 模式下重启恢复已发布版本，发布通过只含租户和版本哈希的通知加速跨实例刷新，并保留轮询兜底。
 - 能力目录与版本化 Decision Engine：`model=auto` 或 Limen 契约会生成带输入/计划哈希的 ExecutionPlan；Replay 必须通过算法注册表解析版本，不得静默回退。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动或配置版本发布时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
@@ -61,6 +61,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
+- 配置发布通知只允许携带租户和版本哈希；实例收到通知后必须从数据库重新读取配置，不能信任通知正文，且必须保留通知丢失后的轮询或重启恢复路径。
 - Provider 密钥通过 `SetAPIKey` 原子替换；加密存储只能返回短暂明文给对应适配器，禁止写入日志、决策快照或 HTTP 响应。
 - 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新且失败不得回滚事务，数据库记录仍是唯一事实来源。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
