@@ -37,6 +37,7 @@
 - 运维文档同步说明 HTTPS 出站和加密租户凭据模式，避免把环境变量密钥误当成多租户回退。
 - Metrics 和 Trace 的目标标识统一改为稳定 opaque ID，避免默认派生的 `provider:upstream_model` 进入观测系统。
 - Run 和 Request 控制面改用安全响应 DTO，隐藏租户标识、幂等键、请求哈希和租约内部字段。
+- 配置摘要与 diff 路径改用 opaque 目标引用，避免默认派生的 `provider:upstream_model` 泄露到控制面响应。
 
 ### 修复
 
