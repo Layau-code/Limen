@@ -333,6 +333,11 @@ func (h *Handler) replayConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	draftPlan, err := h.router.ReplayWithRegistry(historical.Input, registry, record.Version)
 	if err != nil {
+		var endpointBinding *gateway.EndpointBindingError
+		if errors.As(err, &endpointBinding) {
+			writeError(w, http.StatusBadRequest, "config endpoint binding is invalid", "invalid_request_error", "endpoint_binding_mismatch")
+			return
+		}
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
 			writeError(w, http.StatusBadRequest, "unsupported model", "invalid_request_error", "unsupported_model")
@@ -392,6 +397,11 @@ func (h *Handler) dryRunWithRegistry(w http.ResponseWriter, r *http.Request, reg
 	}
 	writePlanHashHeader(w, plan)
 	if err != nil {
+		var endpointBinding *gateway.EndpointBindingError
+		if errors.As(err, &endpointBinding) {
+			writeError(w, http.StatusBadRequest, "config endpoint binding is invalid", "invalid_request_error", "endpoint_binding_mismatch")
+			return
+		}
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
 			writeError(w, http.StatusBadRequest, "unsupported model", "invalid_request_error", "unsupported_model")

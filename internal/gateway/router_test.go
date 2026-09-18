@@ -199,6 +199,27 @@ func TestRouterRejectsRegistryWithMismatchedProviderEndpoint(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsMismatchedEndpointInReadOnlyPlan(t *testing.T) {
+	const endpointID = "endpoint:0123456789abcdef01234567"
+	current, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-current", EndpointID: endpointID}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-draft", EndpointID: "endpoint:fedcba987654321001234567"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newTestRouter(nil, nil, current)
+	if err := router.SetProviderEndpointIDs(map[string]string{"openai": endpointID}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = router.ExplainWithRegistry(provider.ChatRequest{Model: "model"}, decision.Contract{}, draft, "sha256:draft")
+	var bindingErr *EndpointBindingError
+	if !errors.As(err, &bindingErr) {
+		t.Fatal("expected read-only plan endpoint binding rejection")
+	}
+}
+
 func TestRouterReportsEachProviderAttempt(t *testing.T) {
 	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{
 		{ID: "primary", Provider: "openai", UpstreamModel: "gpt-primary"},

@@ -344,3 +344,27 @@ func TestConfigDiffReportsEndpointBindingWithoutValue(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigDryRunRejectsEndpointBindingMismatch(t *testing.T) {
+	configs := configstore.NewMemoryStore()
+	record, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"provider":"openai","upstream_model":"gpt-model","endpoint_id":"endpoint:fedcba987654321001234567"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, _ := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-current"}}}})
+	router := gateway.NewRouter(nil, registry, gateway.Policy{})
+	if err := router.SetProviderEndpointIDs(map[string]string{"openai": "endpoint:0123456789abcdef01234567"}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeInference, auth.ScopeDecisions, auth.ScopeConfigsRead}),
+		router, nil, "tenant-a", journal.NewMemoryStore(), configs, nil,
+	)
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+record.Version+"/dry-run", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "endpoint_binding_mismatch") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}

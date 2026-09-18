@@ -134,7 +134,7 @@ make build
 
 该命令复用 Chat 请求和 Decision Engine 的严格规则，使用固定评估时间生成稳定的 `input_hash`/`plan_hash`。即使没有可用目标，也会以 JSON 返回每个候选的淘汰原因；命令不会访问网络或输出请求正文。
 
-配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider；因此可以在审批或发布前验证模型能力、Fallback 顺序和计划哈希。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
+配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider，并复用 endpoint 绑定校验；因此可以在审批或发布前验证模型能力、Fallback 顺序、计划哈希和出站安全边界。错绑 endpoint 返回 `endpoint_binding_mismatch`。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 
 还可以调用 `POST /v1/limen/configs/{version}/replay`，请求体为 `{"decision_id":"decision_..."}`，把历史决策快照重放到指定草稿，返回原计划、草稿计划和安全结构化差异。它不访问 Provider、不改变线上 Router 或熔断状态，适合回答“这次配置发布会影响哪些既有决策”；该接口只需要 `decisions:read` 和 `configs:read`，响应不会返回真实上游模型名。
 

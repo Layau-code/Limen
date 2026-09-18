@@ -14,6 +14,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 决策哈希必须按算法版本解释；`decision.v2` 规范化无序集合但保留显式模型的目标优先级，修改 V1 语义前必须新增版本并保留旧版本 Replay。
 - `POST /v1/limen/decisions/dry-run` 只生成计划，不访问 Provider；模型文件启动或配置版本发布时生成稳定 `config_version`，后续 Run 固定引用该版本。
 - `POST /v1/limen/configs/{version}/dry-run` 使用租户隔离的指定草稿生成只读计划；不得切换当前 Router、访问 Provider 或改变熔断状态。
+- 配置 dry-run/replay 必须复用发布阶段的 endpoint 绑定校验，不能生成一个实际无法激活的配置计划。
 - `POST /v1/limen/configs/{version}/replay` 使用租户隔离的历史 DecisionInput 对指定草稿做影响分析；不得访问 Provider、读取当前熔断状态或改变线上 Router，只返回原计划、草稿计划和安全差异。
 - `internal/journal` 保存 DecisionInput/ExecutionPlan 审计快照；Dry Run、Chat、Explain 和 Replay 不得持久化 Prompt、Response 或 Provider Key。
 - `internal/audit` 只保存控制面非敏感 actor_id、动作、资源摘要、请求哈希和时间；`GET /v1/limen/audit` 需要 `admin` Scope，审计故障不回滚已提交的业务变更，事件必须保持租户隔离。actor_id 只能是静态标识或 Key 公开前缀，不能是原始凭据。
@@ -82,6 +83,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 映射使用名称到实例的只读映射。Provider 适配层必须把上游状态归一为稳定错误分类，只有 `retryable_transient` 允许 Fallback；新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误分类、超时和取消测试。
 - Provider 的 `ChatRequest` 只携带非敏感 `EndpointID` 绑定标识，不携带 URL；新增或修改目标映射时必须测试 endpoint ID 传播、发布阶段错绑拒绝和 Provider 调用前错绑拒绝。
 - `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，并保留仍存在目标的熔断状态。
+- `Router.ExplainWithRegistry` 和 `ReplayWithRegistry` 必须复用与发布相同的 endpoint 绑定校验。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
@@ -118,6 +120,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API Key Store 测试必须覆盖格式解析、HMAC 摘要、过期/停用 Key、Scope 解析和跨租户查询不泄露。
 - 配置控制面测试必须覆盖严格解析、版本幂等、租户隔离、发布替换、策略切换、结构化 diff 和 `/v1/limen/configs` Scope。
 - 配置 diff 测试必须覆盖 endpoint 绑定变化，并证明响应不包含 endpoint 原值。
+- 配置 dry-run/replay 测试必须覆盖错绑 endpoint 的稳定错误码，并证明不访问 Provider、不切换当前 Router。
 - Run 配置版本测试必须证明发布新版本后，已有 Run 仍使用创建时的目录、价格和路由参数；版本缺失时返回 `config_version_unavailable`，不得静默降级到当前目录。
 - 配置测试必须覆盖环境密钥、`*_FILE` 文件密钥、来源冲突、空文件、读取失败和 PostgreSQL Key Store 对静态 Key 文件的拒绝；测试错误不得包含密钥内容。
 - 配置控制面安全视图测试必须证明摘要和 diff 不泄露由上游模型派生的目标标识。

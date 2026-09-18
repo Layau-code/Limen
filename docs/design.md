@@ -82,9 +82,9 @@ HTTP Principal/Scope 鉴权与解析
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
 
-配置控制面额外提供 `POST /v1/limen/configs/{version}/dry-run`。它基于租户隔离的草稿配置构造临时只读目录，复用同一 Decision Engine 生成计划，不切换当前 Router、不访问 Provider，并把草稿版本写入 `config_version`，用于发布前验证路由行为。
+配置控制面额外提供 `POST /v1/limen/configs/{version}/dry-run`。它基于租户隔离的草稿配置构造临时只读目录，复用同一 Decision Engine 和 endpoint 绑定校验生成计划，不切换当前 Router、不访问 Provider，并把草稿版本写入 `config_version`，用于发布前验证路由行为；错绑 endpoint 返回稳定的 `endpoint_binding_mismatch`。
 
-配置控制面还提供 `POST /v1/limen/configs/{version}/replay`。它读取租户隔离的历史 DecisionInput，将原请求和运行快照应用到指定草稿目录，返回原计划、草稿计划及不含上游模型名的结构化差异。影响分析沿用历史目标健康快照，不读取当前熔断器，不访问 Provider，也不改变线上 Router，便于在审批前评估配置变更影响。
+配置控制面还提供 `POST /v1/limen/configs/{version}/replay`。它读取租户隔离的历史 DecisionInput，将原请求和运行快照应用到指定草稿目录，先复用 endpoint 绑定校验，再返回原计划、草稿计划及不含上游模型名的结构化差异。影响分析沿用历史目标健康快照，不读取当前熔断器，不访问 Provider，也不改变线上 Router，便于在审批前评估配置变更影响。
 
 当前 Decision Journal 在真实 Chat 调用 Provider 前写入决策快照，并通过 `X-Limen-Decision-ID` 暴露不含正文的标识。`GET /v1/limen/decisions/{decision_id}`、Dry Run 和 Replay 使用安全响应视图，只返回逻辑模型、能力依据和稳定 opaque 目标引用，不返回真实上游模型名；内部完整快照只用于租户隔离的 Replay。`POST /v1/limen/decisions/{decision_id}/replay` 只使用历史输入调用无状态 Decision Engine，对比 `plan_hash` 并返回策略、目标顺序、候选原因、目标映射变化和目标策略元数据变化等结构化差异；映射与策略差异只返回路径和 `changed`，不返回上游模型、endpoint 或价格原值，也不访问 Provider 或当前熔断器。算法注册表可为每个版本设置 `retainUntil`，到期后返回 `algorithm_version_unavailable`，不会用新算法冒充历史结果。
 

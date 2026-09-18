@@ -193,6 +193,20 @@ func (router *Router) SetProviderEndpointIDs(endpoints map[string]string) error 
 	return nil
 }
 
+// ValidateRegistry 校验只读预演目录能否绑定当前进程的 Provider endpoint。
+func (router *Router) ValidateRegistry(registry *ModelRegistry) error {
+	if router == nil {
+		return errors.New("router is required")
+	}
+	router.registryMu.RLock()
+	endpoints := make(map[string]string, len(router.providerEndpoints))
+	for providerName, endpointID := range router.providerEndpoints {
+		endpoints[providerName] = endpointID
+	}
+	router.registryMu.RUnlock()
+	return validateEndpointBindings(registry, endpoints)
+}
+
 // validateEndpointBindings 确保模型目标只能绑定当前进程已知的 Provider endpoint。
 func validateEndpointBindings(registry *ModelRegistry, endpoints map[string]string) error {
 	if registry == nil {
@@ -205,7 +219,7 @@ func validateEndpointBindings(registry *ModelRegistry, endpoints map[string]stri
 			}
 			endpointID := endpoints[target.Provider]
 			if endpointID == "" || endpointID != target.EndpointID {
-				return fmt.Errorf("model %q target %q has provider endpoint binding mismatch", model.ID, target.ID)
+				return &EndpointBindingError{}
 			}
 		}
 	}
@@ -364,6 +378,9 @@ func (router *Router) ExplainAt(evaluatedAt time.Time, request provider.ChatRequ
 
 // ExplainWithRegistry 使用指定配置版本生成只读决策计划，不访问 Provider 或修改当前目录。
 func (router *Router) ExplainWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
+	if err := router.ValidateRegistry(registry); err != nil {
+		return decision.Input{}, decision.ExecutionPlan{}, err
+	}
 	return router.planWithRegistry(request, contract, registry, configVersion)
 }
 
@@ -380,6 +397,9 @@ func (router *Router) Replay(input decision.Input) (decision.ExecutionPlan, erro
 func (router *Router) ReplayWithRegistry(input decision.Input, registry *ModelRegistry, configVersion string) (decision.ExecutionPlan, error) {
 	if registry == nil {
 		return decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
+	}
+	if err := router.ValidateRegistry(registry); err != nil {
+		return decision.ExecutionPlan{}, err
 	}
 	engine, ok := router.algorithms.Resolve(input.AlgorithmVersion)
 	if !ok {
@@ -702,6 +722,14 @@ func (e *RouteError) Unwrap() error {
 // AttemptStartError 表示调用 Provider 前无法持久化 Attempt。
 type AttemptStartError struct {
 	Err error
+}
+
+// EndpointBindingError 表示模型目标无法绑定到进程已知的 Provider endpoint。
+type EndpointBindingError struct{}
+
+// Error 返回不包含模型或 endpoint 原值的稳定错误描述。
+func (EndpointBindingError) Error() string {
+	return "provider endpoint binding mismatch"
 }
 
 // Error 返回安全的 Attempt 持久化错误描述。

@@ -19,6 +19,7 @@
 3. 进程启动时注册 OpenAI/Anthropic endpoint ID；配置发布复用 Router 校验。
 4. 使用 `httptest.Server` 覆盖配置保留、错误格式、路由传播和 Provider 错绑不出站。
 5. 配置 diff 必须报告 endpoint 绑定变化，但不返回 endpoint 原值。
+6. 配置 dry-run/replay 必须与发布使用同一 endpoint 校验，错绑时不访问 Provider。
 
 ## 不包含
 
