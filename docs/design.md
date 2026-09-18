@@ -125,7 +125,7 @@ HTTP 错误消息只使用稳定描述和错误码，不回显未知模型、租
 
 Chat API 当前支持 `model`、文本 `messages`（包括 `developer` 角色）、`max_tokens`、`max_completion_tokens`、`temperature`、`stream`、`stream_options.include_usage` 和 Limen 能力契约。Tools、tool calls、`response_format`、`n`、`logprobs`、多模态内容以及未知字段均显式返回 `400`；这组边界在引入 Responses、Tools 或 Vision 前保持稳定。Anthropic 适配器会把 `developer` 消息转换为顶层 `system`。
 
-响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`；响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志读取这些字段，只记录固定路由类别，不记录动态 Path、API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
+响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`、`X-Limen-Decision-ID` 和 `X-Limen-Plan-Hash`；计划摘要可将一次调用关联到 Decision Journal 和 Replay。响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志和 Trace 只读取固定白名单，不记录动态 Path、API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
 配置 OTLP 端点后，每个请求建立 `limen.http.request` 根 Span；受治理请求继续产生 `limen.run.admission`、`limen.decision`、每次真实调用的 `limen.provider.attempt` 和 `limen.settlement`。属性只允许稳定标识、有限枚举、状态和计数，不写入 Prompt、Response、Authorization、API Key、Provider Key、原始错误正文或上游模型名。入口只提取 W3C `traceparent`，不接受 Baggage。Exporter 使用后台批处理，初始化失败会禁用 Trace，运行时导出失败只写通用告警。
 

@@ -34,11 +34,12 @@ func TestLoggingIncludesSafeRouteFields(t *testing.T) {
 		w.Header().Set("X-Limen-Provider", "anthropic")
 		w.Header().Set("X-Limen-Attempts", "2")
 		w.Header().Set("X-Limen-Route", "openai:503>anthropic:200")
+		w.Header().Set("X-Limen-Plan-Hash", "sha256:plan")
 		w.WriteHeader(http.StatusOK)
 	})
 	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
 	logged := output.String()
-	for _, value := range []string{"anthropic", "2", "openai:503>anthropic:200"} {
+	for _, value := range []string{"anthropic", "2", "openai:503>anthropic:200", "sha256:plan"} {
 		if !strings.Contains(logged, value) {
 			t.Fatalf("missing route value %q in %s", value, logged)
 		}

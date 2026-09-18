@@ -482,7 +482,7 @@ POST /v1/limen/keys/{public_prefix}/rotate
 POST /v1/limen/keys/{public_prefix}/revoke
 ~~~
 
-入口通过 `X-Request-ID` 返回安全 request ID；适用时再返回 `X-Limen-Decision-ID`、`X-Limen-Config-Version`、Provider、Attempt 和 Route 等安全摘要。Run ID 由请求 Header 关联，公共 API 不返回真实上游模型名称；Explain、Dry Run 和 Replay 只返回逻辑模型、能力依据和稳定 opaque 目标引用。内部完整快照仅供租户隔离的 Replay 和受控运维排障使用。
+入口通过 `X-Request-ID` 返回安全 request ID；适用时再返回 `X-Limen-Decision-ID`、`X-Limen-Plan-Hash`、`X-Limen-Config-Version`、Provider、Attempt 和 Route 等安全摘要。Run ID 由请求 Header 关联，公共 API 不返回真实上游模型名称；Explain、Dry Run 和 Replay 只返回逻辑模型、能力依据和稳定 opaque 目标引用。内部完整快照仅供租户隔离的 Replay 和受控运维排障使用。
 
 创建 Run 返回（字段使用纳美元整数，避免浮点误差）：
 

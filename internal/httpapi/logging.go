@@ -29,7 +29,7 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		if firstByte := recorder.FirstByteAt(); !firstByte.IsZero() {
 			attrs = append(attrs, "ttfb_ms", firstByte.Sub(started).Milliseconds())
 		}
-		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route", "X-Limen-Decision-ID", "X-Limen-Config-Version"} {
+		for _, name := range []string{"X-Limen-Provider", "X-Limen-Attempts", "X-Limen-Route", "X-Limen-Decision-ID", "X-Limen-Plan-Hash", "X-Limen-Config-Version"} {
 			if value := recorder.Header().Get(name); value != "" {
 				attrs = append(attrs, logHeaderKey(name), value)
 			}

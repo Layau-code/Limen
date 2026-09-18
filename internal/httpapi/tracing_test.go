@@ -96,6 +96,9 @@ func TestGovernedFallbackTraceFormsPrivacySafeEvidenceChain(t *testing.T) {
 	if got := spanAttribute(root, "limen.request.id"); got == "" || got != chatResponse.Header().Get("X-Request-ID") {
 		t.Fatalf("request ID attribute=%q header=%q", got, chatResponse.Header().Get("X-Request-ID"))
 	}
+	if got := spanAttribute(root, "limen.decision.plan_hash"); got == "" || got != chatResponse.Header().Get("X-Limen-Plan-Hash") {
+		t.Fatalf("plan hash attribute=%q header=%q", got, chatResponse.Header().Get("X-Limen-Plan-Hash"))
+	}
 	if !hasSpanAttribute(root, "limen.ttfb_ms") {
 		t.Fatal("trace is missing TTFB attribute")
 	}

@@ -27,7 +27,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
-- 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
+- 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
 - 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；PostgreSQL 用 `LISTEN/NOTIFY` 加速广播，执行中的 Chat 仍通过事件轮询兜底，不能只修改当前进程的内存映射。
@@ -98,6 +98,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 使用 `httptest.Server`，不访问真实网络或密钥；Router 使用固定 Provider 验证预算、熔断、Fallback 和 SSE 边界。
 - Decision Engine 测试必须覆盖能力、质量下限、流式、上下文、数据等级等硬过滤、策略排序、稳定原因码和软预算策略切换；100 组已提交 golden fixture 必须验证重建 Engine 后的规范计划字节与 `plan_hash`，不得静默更新预期值。
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
+- API 测试必须验证成功、Dry Run 和 `no_eligible_target` 响应的 `X-Limen-Plan-Hash` 与计划摘要一致；日志和 Trace 只能通过固定白名单记录该摘要。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
 - 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。

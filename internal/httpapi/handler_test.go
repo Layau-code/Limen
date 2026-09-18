@@ -317,7 +317,7 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	chat.Header.Set("Idempotency-Key", "request-1")
 	chatResponse := httptest.NewRecorder()
 	handler.ServeHTTP(chatResponse, chat)
-	if chatResponse.Code != http.StatusOK || chatResponse.Header().Get("X-Limen-Request-ID") == "" || chatResponse.Header().Get("X-Limen-Decision-ID") == "" || chatResponse.Header().Get("X-Limen-Settlement-Status") != "complete" {
+	if chatResponse.Code != http.StatusOK || chatResponse.Header().Get("X-Limen-Request-ID") == "" || chatResponse.Header().Get("X-Limen-Decision-ID") == "" || chatResponse.Header().Get("X-Limen-Plan-Hash") == "" || chatResponse.Header().Get("X-Limen-Settlement-Status") != "complete" {
 		t.Fatalf("chat = %d headers=%v body=%s", chatResponse.Code, chatResponse.Header(), chatResponse.Body.String())
 	}
 	requestID := chatResponse.Header().Get("X-Limen-Request-ID")
@@ -528,8 +528,44 @@ func TestDryRunReturnsPlanWithoutProviderCall(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &plan); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || plan.PlanHash == "" || len(plan.Targets) != 1 || plan.Targets[0].ModelID != "smart" || called {
+	if response.Code != http.StatusOK || plan.PlanHash == "" || response.Header().Get("X-Limen-Plan-Hash") != plan.PlanHash || len(plan.Targets) != 1 || plan.Targets[0].ModelID != "smart" || called {
 		t.Fatalf("status=%d plan=%+v called=%v", response.Code, plan, called)
+	}
+}
+
+func TestChatErrorExposesPlanHashForNoEligibleTarget(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{
+		ID:      "basic",
+		Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-basic", QualityTier: 1, DataClasses: []string{"public"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(nil, nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"auto","messages":[{"role":"user","content":"hello"}],"limen":{"minimum_quality_tier":5}}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("X-Limen-Plan-Hash") == "" || !strings.Contains(response.Body.String(), "no_eligible_target") {
+		t.Fatalf("status=%d plan_hash=%q body=%s", response.Code, response.Header().Get("X-Limen-Plan-Hash"), response.Body.String())
+	}
+}
+
+func TestDryRunErrorExposesPlanHashForNoEligibleTarget(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{
+		ID:      "basic",
+		Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-basic", QualityTier: 1, DataClasses: []string{"public"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("limen-secret", newTestRouter(nil, nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/decisions/dry-run", strings.NewReader(`{"model":"auto","messages":[{"role":"user","content":"hello"}],"limen":{"minimum_quality_tier":5}}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || response.Header().Get("X-Limen-Plan-Hash") == "" || !strings.Contains(response.Body.String(), "no_eligible_target") {
+		t.Fatalf("status=%d plan_hash=%q body=%s", response.Code, response.Header().Get("X-Limen-Plan-Hash"), response.Body.String())
 	}
 }
 
@@ -544,7 +580,7 @@ func TestDecisionExplainAndReplay(t *testing.T) {
 	dryResponse := httptest.NewRecorder()
 	handler.ServeHTTP(dryResponse, dryRun)
 	decisionID := dryResponse.Header().Get("X-Limen-Decision-ID")
-	if dryResponse.Code != http.StatusOK || decisionID == "" {
+	if dryResponse.Code != http.StatusOK || decisionID == "" || dryResponse.Header().Get("X-Limen-Plan-Hash") == "" {
 		t.Fatalf("dry run = %d decision=%q body=%s", dryResponse.Code, decisionID, dryResponse.Body.String())
 	}
 	if strings.Contains(dryResponse.Body.String(), "gpt-test") {

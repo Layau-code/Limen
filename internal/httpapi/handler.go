@@ -389,6 +389,7 @@ func (h *Handler) dryRunWithRegistry(w http.ResponseWriter, r *http.Request, reg
 	} else {
 		input, plan, err = h.router.ExplainWithRegistry(envelope.Request, envelope.Contract, registry, configVersion)
 	}
+	writePlanHashHeader(w, plan)
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
@@ -1548,6 +1549,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	if result.Plan.ConfigVersion != "" {
 		w.Header().Set("X-Limen-Config-Version", result.Plan.ConfigVersion)
 	}
+	writePlanHashHeader(w, result.Plan)
 	if decisionID != "" {
 		w.Header().Set("X-Limen-Decision-ID", decisionID)
 	}
@@ -1848,6 +1850,13 @@ func writeRouteHeaders(w http.ResponseWriter, decision gateway.Decision) {
 	}
 	if route := decision.String(); route != "" {
 		w.Header().Set("X-Limen-Route", route)
+	}
+}
+
+// writePlanHashHeader 暴露可 Replay 的固定计划摘要，不包含模型或请求正文。
+func writePlanHashHeader(w http.ResponseWriter, plan decision.ExecutionPlan) {
+	if plan.PlanHash != "" {
+		w.Header().Set("X-Limen-Plan-Hash", plan.PlanHash)
 	}
 }
 

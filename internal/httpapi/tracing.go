@@ -52,6 +52,7 @@ func setTraceResponseAttributes(span trace.Span, header http.Header) {
 	for name, key := range map[string]string{
 		"X-Limen-Request-ID":     "limen.run.request_id",
 		"X-Limen-Decision-ID":    "limen.decision.id",
+		"X-Limen-Plan-Hash":      "limen.decision.plan_hash",
 		"X-Limen-Config-Version": "limen.config.version",
 		"X-Limen-Provider":       "limen.provider.name",
 		"X-Limen-Attempts":       "limen.attempt.count",
