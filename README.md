@@ -193,12 +193,12 @@ make compatibility # OpenAI Chat 请求、错误和 SSE 兼容契约
 make reliability # 故障注入与取消/Fallback 可靠性契约
 make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
 make smoke   # 真实二进制启动与 API 冒烟
-make bench   # Router 主路径与 Fallback 基准
+make bench   # 100 候选决策与 Router 主路径/Fallback 基准
 make demo    # 离线演示 Fallback 与草稿影响分析
 ```
 
 `make demo` 输出一行 JSON，包含 `openai:503>anthropic:200` 路由、实际 Attempt 数、草稿 Provider 和影响分析结果；演示不需要数据库、模型密钥或外部网络。
 
-本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5–6 μs/op`、73 次分配；Fallback 路径 `6–7 μs/op`、84 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的近期基准大致为：100 个候选目标的完整决策路径 `约 217 μs/op`、约 562 KB 和 1962 次分配；Router 主路径 `5–6 μs/op`、73 次分配；Fallback 路径 `6–7 μs/op`、84 次分配。决策基准包含候选过滤、稳定排序、计划复制和哈希计算；这些数字只用于描述测量环境，不构成性能承诺。基准不访问网络或数据库。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。

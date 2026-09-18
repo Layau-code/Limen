@@ -41,6 +41,7 @@ smoke:
 	./scripts/smoke.sh
 
 bench:
+	go test ./internal/decision -run '^$$' -bench 'BenchmarkDecisionEngine' -benchmem
 	go test ./internal/gateway -run '^$$' -bench 'BenchmarkRouter' -benchmem
 
 demo:

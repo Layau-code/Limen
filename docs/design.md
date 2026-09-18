@@ -41,6 +41,8 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/telemetry`：提供有界 Prometheus 指标和可选 OTLP/HTTP Trace；遥测失败不参与业务控制流。
 - `cmd/limen explain`：复用严格 Chat 解析和 Decision Engine，在不启动服务、不访问 Provider 的情况下输出稳定路由解释。
 
+`make bench` 会额外运行固定的 100 候选 Decision Engine 基准，覆盖过滤、稳定排序、计划复制和哈希计算，不访问网络或数据库。它用于验证“能力安全决策”本身的开销，Router 的 Provider 转发基准单独记录，避免把上游网络时间混入决策性能。
+
 ## 模型与路由
 
 模型文件格式如下，目标顺序就是优先级：

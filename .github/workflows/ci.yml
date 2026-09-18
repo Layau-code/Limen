@@ -24,3 +24,5 @@ jobs:
         run: make build
       - name: 冒烟测试
         run: make smoke
+      - name: 运行决策与路由基准
+        run: make bench
