@@ -6,6 +6,7 @@
 
 - Replay 差异现在能识别同一 target ID 下的 Provider、上游模型、endpoint 或目标策略元数据变化，同时只返回安全差异码，不泄露隐藏映射和价格。
 - `make bench` 现在覆盖固定 100 个候选目标的完整 Decision Engine 路径，单独测量能力过滤、稳定排序和计划哈希开销。
+- Anthropic 普通 JSON 响应新增 4 MiB 有界解码，超大响应在协议转换阶段拒绝，避免异常上游响应造成无界内存增长。
 - 配置 diff 现在会报告目标 `endpoint_id` 绑定变化，只返回安全路径和变化类型。
 - 配置 dry-run 和 replay 现在复用发布阶段的 endpoint 绑定校验，错绑配置会在预演阶段返回 `endpoint_binding_mismatch`。
 - 模型目标新增可选 `endpoint_id` 绑定；Router 发布和 Provider 出站都会校验目标只能访问进程已配置的 endpoint，避免跨 endpoint 复用凭据或熔断状态。

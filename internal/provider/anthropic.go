@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const anthropicVersion = "2023-06-01"
+const (
+	anthropicVersion              = "2023-06-01"
+	maxAnthropicJSONResponseBytes = 4 << 20
+)
 
 // AnthropicProvider 将统一聊天请求转换为 Anthropic Messages API 请求。
 type AnthropicProvider struct {
@@ -170,7 +173,7 @@ type anthropicResponse struct {
 func translateAnthropicResponse(status int, source io.ReadCloser) (Response, error) {
 	defer source.Close()
 	var response anthropicResponse
-	if err := json.NewDecoder(source).Decode(&response); err != nil {
+	if err := decodeAnthropicResponse(source, &response); err != nil {
 		return Response{}, fmt.Errorf("decode Anthropic response: %w", err)
 	}
 	var text strings.Builder
@@ -191,6 +194,28 @@ func translateAnthropicResponse(status int, source io.ReadCloser) (Response, err
 	recorder := newUsageRecorder()
 	recorder.set(int64(response.Usage.InputTokens), int64(response.Usage.OutputTokens))
 	return Response{StatusCode: status, ContentType: "application/json", Body: io.NopCloser(bytes.NewReader(body)), Usage: recorder}, nil
+}
+
+// decodeAnthropicResponse 在固定上限内解析普通 JSON，避免异常上游响应无界膨胀。
+func decodeAnthropicResponse(source io.Reader, response *anthropicResponse) error {
+	body, err := io.ReadAll(io.LimitReader(source, maxAnthropicJSONResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if len(body) > maxAnthropicJSONResponseBytes {
+		return errors.New("response is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(response); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("response contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 type anthropicEvent struct {

@@ -67,6 +67,30 @@ func TestAnthropicChatConvertsRequestAndResponse(t *testing.T) {
 	}
 }
 
+// TestAnthropicChatRejectsOversizedJSONResponse 防止异常上游响应无界占用内存。
+func TestAnthropicChatRejectsOversizedJSONResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"`)
+		_, _ = io.WriteString(w, strings.Repeat("x", 4<<20))
+		_, _ = io.WriteString(w, `"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil {
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "response is too large") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestAnthropicChatMapsModernCompletionTokenLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
