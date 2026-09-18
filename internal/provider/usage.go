@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"sync"
 )
@@ -141,6 +142,8 @@ type observedSSEBody struct {
 	lineTooLong bool
 	event       []byte
 	eventTooBig bool
+	done        bool
+	streamErr   error
 	finished    bool
 	once        sync.Once
 }
@@ -162,6 +165,12 @@ func (body *observedSSEBody) Read(buffer []byte) (int, error) {
 			body.processLine(body.line)
 		}
 		body.finishEvent()
+		if body.streamErr == nil && !body.done {
+			body.streamErr = errors.New("OpenAI stream ended before [DONE]")
+		}
+	}
+	if body.streamErr != nil {
+		return count, body.streamErr
 	}
 	return count, err
 }
@@ -215,8 +224,19 @@ func (body *observedSSEBody) processLine(line []byte) {
 }
 
 func (body *observedSSEBody) finishEvent() {
-	if !body.eventTooBig && len(body.event) > 0 && string(body.event) != "[DONE]" {
-		setOpenAIUsage(body.recorder, body.event)
+	if !body.eventTooBig && len(body.event) > 0 {
+		if string(body.event) == "[DONE]" {
+			body.done = true
+		} else {
+			var envelope struct {
+				Error json.RawMessage `json:"error"`
+			}
+			if json.Unmarshal(body.event, &envelope) == nil && len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+				body.streamErr = errors.New("OpenAI stream returned error")
+			} else {
+				setOpenAIUsage(body.recorder, body.event)
+			}
+		}
 	}
 	body.event = body.event[:0]
 	body.eventTooBig = false

@@ -52,6 +52,22 @@ func TestObservedSSEExtractsUsageWithoutChangingBody(t *testing.T) {
 	}
 }
 
+func TestObservedSSERejectsMissingDone(t *testing.T) {
+	body := observeOpenAISSE(io.NopCloser(strings.NewReader("data: {\"choices\":[]}\n\n")), newUsageRecorder())
+	_, err := io.ReadAll(body)
+	if err == nil || !strings.Contains(err.Error(), "before [DONE]") {
+		t.Fatalf("read error = %v", err)
+	}
+}
+
+func TestObservedSSEPropagatesErrorWithoutProviderMessage(t *testing.T) {
+	body := observeOpenAISSE(io.NopCloser(strings.NewReader("data: {\"error\":{\"message\":\"private provider detail\"}}\n\n")), newUsageRecorder())
+	_, err := io.ReadAll(body)
+	if err == nil || !strings.Contains(err.Error(), "stream returned error") || strings.Contains(err.Error(), "private provider detail") {
+		t.Fatalf("read error = %v", err)
+	}
+}
+
 func TestObservedSSEReturnsFirstChunkBeforeStreamEnds(t *testing.T) {
 	source := &delayedReader{first: []byte("data: first\n\n"), closed: make(chan struct{})}
 	body := observeOpenAISSE(source, newUsageRecorder())
