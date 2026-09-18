@@ -177,7 +177,7 @@ X-Limen-Route: openai:503>anthropic:200
 X-Limen-Plan-Hash: sha256:...
 ```
 
-`X-Limen-Plan-Hash` 是不含业务正文的固定计划摘要，可与 `X-Limen-Decision-ID` 一起查询和 Replay 决策证据；即使能力契约没有可用目标，错误响应也会尽可能返回该摘要。日志和 Trace 只记录这个摘要，不记录 Prompt、真实上游模型名或密钥。如果目标配置了 `pricing`，响应结束后还会通过 HTTP Trailer 和结构化日志提供 `input_tokens`、`output_tokens`、`total_tokens`、`cost_usd` 和 `settlement_status`。SSE 内容仍然逐块推送，不会等待完整响应；如果上游没有返回用量或客户端提前断开，费用字段会留空。受治理请求的结算遇到暂时性存储错误时，会在当前进程内按短退避重试，并保留原始已知成本快照；仍未完成时返回 `pending`，租约过期后会被回收为未知费用并暂停 Run，避免重复调用或把已知费用降级为未知。
+`X-Limen-Plan-Hash` 是不含业务正文的固定计划摘要，可与 `X-Limen-Decision-ID` 一起查询和 Replay 决策证据；即使能力契约没有可用目标，错误响应也会尽可能返回该摘要。日志和 Trace 只记录这个摘要，不记录 Prompt、真实上游模型名或密钥。如果目标配置了 `pricing`，响应结束后还会通过 HTTP Trailer 和结构化日志提供 `input_tokens`、`output_tokens`、`total_tokens`、`cost_usd` 和 `settlement_status`。SSE 内容仍然逐块推送，不会等待完整响应；如果上游没有返回用量或客户端提前断开，费用字段会留空。受治理请求的结算遇到暂时性存储错误时，会在当前进程内按短退避重试，并保留原始已知成本快照；仍未完成时返回 `pending`，租约过期后会被回收为未知费用并暂停 Run，避免重复调用或把已知费用降级为未知。若请求在决策或 Provider 准备阶段就失败、没有创建任何 Attempt，则按已知零成本结算，不会误暂停 Run。
 
 价格字段使用每百万 Token 的美元字符串，输入价和输出价必须同时填写。当前版本只负责请求结束后的结算，不实现每日额度或超额拦截。
 

@@ -1602,7 +1602,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 			_ = h.finishAttemptReports(settlementContext, tenantID, attempts, attemptReports)
 		}
 		if runRequestID != "" && !settledRunRequest {
-			_ = h.settleRunRequest(settlementContext, runRequestID, deferredSettlement)
+			_ = h.settleRunRequestWithMode(settlementContext, runRequestID, deferredSettlement, len(attempts) == 0 && deferredSettlement == nil)
 		}
 	}()
 	var beforeAttempt gateway.AttemptStartHook
@@ -1791,7 +1791,12 @@ func returnRunDecisionError(w http.ResponseWriter, err error) {
 }
 
 // settleRunRequest 将响应结束后的成本提交到 Run Service。
-func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settlement *gateway.Settlement) (err error) {
+func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settlement *gateway.Settlement) error {
+	return h.settleRunRequestWithMode(ctx, requestID, settlement, false)
+}
+
+// settleRunRequestWithMode 将响应后的结算快照提交到 Run，并区分没有发起 Provider 调用的零成本情况。
+func (h *Handler) settleRunRequestWithMode(ctx context.Context, requestID string, settlement *gateway.Settlement, noProviderAttempt bool) (err error) {
 	ctx, span := otel.Tracer("github.com/huz/limen/internal/httpapi").Start(ctx, "limen.settlement")
 	defer func() {
 		outcome := "complete"
@@ -1817,6 +1822,11 @@ func (h *Handler) settleRunRequest(ctx context.Context, requestID string, settle
 			value := summary.CostNanoUSD
 			costNanoUSD = &value
 		}
+	}
+	if noProviderAttempt {
+		zero := int64(0)
+		costNanoUSD = &zero
+		settlementStatus = string(gateway.SettlementComplete)
 	}
 	if span.IsRecording() {
 		span.SetAttributes(

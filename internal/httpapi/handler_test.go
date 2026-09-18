@@ -991,6 +991,41 @@ func TestGovernedChatKeepsKnownSettlementForDeferredRetry(t *testing.T) {
 	}
 }
 
+func TestGovernedChatSettlesZeroWhenNoProviderAttempt(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "known", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := run.NewMemoryService(nil)
+	if err := runs.CreateRun(context.Background(), "local", run.Run{ID: "run-no-attempt", State: run.StateActive, MaxParallelism: 1}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenant("secret", newTestRouter(nil, nil, registry), nil, "local", runs)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"missing","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("X-Limen-Run-ID", "run-no-attempt")
+	request.Header.Set("Idempotency-Key", "request-no-attempt")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "unsupported_model") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	item, err := runs.GetRequest(context.Background(), "local", response.Header().Get("X-Limen-Request-ID"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.State != run.RequestSettled || item.SettlementStatus != "complete" || !item.LedgerRecorded {
+		t.Fatalf("request settlement = %+v", item)
+	}
+	runItem, err := runs.GetRun(context.Background(), "local", "run-no-attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runItem.State != run.StateActive || runItem.InFlight != 0 || runItem.SettledCostNanoUSD != 0 {
+		t.Fatalf("run state = %+v", runItem)
+	}
+}
+
 func TestChatRelaysSSE(t *testing.T) {
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

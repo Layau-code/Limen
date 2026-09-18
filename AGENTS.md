@@ -30,7 +30,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 模型目标可选声明 `endpoint_id`，必须匹配进程配置的 Provider endpoint ID；Router 发布前和 Provider 出站前都要拒绝错绑，熔断键也必须包含 endpoint 绑定。当前每个 Provider 只支持一个进程级 endpoint，不允许客户端传入地址或选择 endpoint。
 - Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要（包括 `X-Limen-Plan-Hash`）和安全日志。
-- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须保留原始成本快照，写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复；已知费用不得在延迟清理中降级为未知。
+- 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须保留原始成本快照，写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复；已知费用不得在延迟清理中降级为未知。没有创建任何 Provider Attempt 的请求必须按零成本结算，不能误进入 `suspended_accounting`。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。
 - Run 取消必须在状态变更事务内写入租户隔离取消事件；PostgreSQL 用 `LISTEN/NOTIFY` 加速广播，执行中的 Chat 仍通过事件轮询兜底，不能只修改当前进程的内存映射。
 - 未知费用会暂停 Run；管理员可通过带 `admin` Scope 和幂等键的会计处置接口补记金额或明确接受未知费用。处置必须是事务化、可重复执行且不把未知值写成零。
@@ -112,7 +112,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
 - 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。
 - Decision Journal 测试必须覆盖租户隔离、同 ID 幂等、保存/读取哈希校验、持久化摘要与 JSONB 不一致、Explain、Replay 不访问 Provider 以及算法版本不可用错误。
-- Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、已知成本结算和未知成本 `pending`。
+- Run HTTP 测试必须覆盖创建/查询/完成/取消、同键幂等、请求准入、每个 Fallback 目标独立 Attempt 边界、无 Attempt 的零成本结算、已知成本结算和未知成本 `pending`。
 - Run HTTP 返回测试必须证明公共响应不泄露租户标识、幂等键、请求哈希和租约信息。
 - 未知费用处置测试必须覆盖补记金额、接受未知、重复幂等键、跨 Run 请求绑定和 `admin` Scope；补记最多产生一条 Ledger。
 - Run 租约测试必须覆盖同一请求的抢占拒绝、续租、响应后释放、过期恢复、`abandoned/pending` 和 Run `suspended_accounting`，并用竞态测试验证后台恢复；HTTP 幂等测试还必须覆盖 `request_in_progress`（原 Request ID 与 `Retry-After`）、`request_already_processed`、`idempotency_conflict`，并证明重复请求不会再次调用 Provider。
