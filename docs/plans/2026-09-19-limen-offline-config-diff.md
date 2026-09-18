@@ -10,6 +10,7 @@
 - 两个文件都必须通过 `config.ParseModels` 的字段、能力、价格和路由校验。
 - 输出基线版本、候选版本、是否变化以及稳定排序的变化路径和类型。
 - 目标路径转换为 `catalog.OpaqueTargetID`，不输出配置值。
+- `--fail-on` 支持 `model`、`target`、`provider`、`endpoint`、`policy`、`routing` 和 `any`，命中门禁时先输出安全 JSON 再返回非零退出码。
 - 不读取 API Key，不创建 Provider Client，不连接数据库，不访问网络。
 
 ## 实现约束
@@ -17,6 +18,7 @@
 - 复用 `configstore.Diff`，由 `configstore.PublicDiff` 统一完成安全路径转换，避免 HTTP 控制面和 CLI 各自维护脱敏规则。
 - 生产方法使用简体中文用途注释；测试只覆盖成功 diff、空变化和敏感值不泄露等关键边界。
 - 解析失败或参数错误返回非零退出码，错误消息不得回显密钥、endpoint 原值或完整配置正文。
+- 风险分类只使用结构路径和固定类别，不读取配置值之外的敏感字段。
 
 ## 验收
 

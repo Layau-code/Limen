@@ -24,7 +24,7 @@
 
 执行 `bin/limen validate --models models.json` 可在发布前检查模型目录格式和 endpoint 绑定，并输出稳定的配置版本和 Provider 数量摘要。该命令不读取业务密钥、不连接数据库、不创建 Provider Client；校验失败（包括 endpoint 错绑）时返回非零退出码，适合放入 CI 或容器构建步骤。
 
-执行 `bin/limen diff --base models.current.json --candidate models.next.json` 可在审批前查看配置影响。输出只包含两个配置版本、是否发生变化、排序后的路径和变化类型；目标路径使用 opaque 引用，真实上游模型名、endpoint 原值和密钥不会出现在输出中。
+执行 `bin/limen diff --base models.current.json --candidate models.next.json` 可在审批前查看配置影响。输出只包含两个配置版本、是否发生变化、排序后的路径和变化类型；目标路径使用 opaque 引用，真实上游模型名、endpoint 原值和密钥不会出现在输出中。CI 可增加 `--fail-on provider,endpoint`，命中高风险映射变化时以非零退出码阻止发布，同时保留安全 JSON 供流水线归档。
 
 ## 关闭与日志
 

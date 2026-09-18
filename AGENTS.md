@@ -147,7 +147,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 修改演示场景时还必须运行 `make demo`，并保持输出字段和安全边界稳定。
 - 修改离线 `explain` 命令时必须验证相同模型目录和请求快照得到相同 `plan_hash`，且输出不包含 Prompt、密钥或真实上游模型名。
 - 修改离线 `validate` 命令时必须证明不读取密钥、不访问网络，成功输出只包含 `config_version` 和数量摘要，不泄露 `upstream_model`；endpoint 错绑必须在预检阶段失败且不回显 endpoint 原值。
-- 修改离线 `diff` 命令时必须证明两个配置都经过严格解析，输出版本、变化类型和 opaque 目标引用，不泄露 `upstream_model`、endpoint 原值、价格或密钥；命令不得连接数据库或访问 Provider。
+- 修改离线 `diff` 命令时必须证明两个配置都经过严格解析，输出版本、变化类型和 opaque 目标引用，不泄露 `upstream_model`、endpoint 原值、价格或密钥；命令不得连接数据库或访问 Provider。`--fail-on` 门禁必须只按稳定类别和安全路径判断，命中时输出 JSON 后返回非零退出码。
 
 ## 文档同步
 

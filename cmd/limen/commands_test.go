@@ -190,6 +190,59 @@ func TestRunCommandDiffReportsSafeConfigImpact(t *testing.T) {
 	}
 }
 
+// TestRunCommandDiffFailOnBlocksProviderChange 验证发布门禁能阻止高风险映射变化且只输出安全摘要。
+func TestRunCommandDiffFailOnBlocksProviderChange(t *testing.T) {
+	directory := t.TempDir()
+	basePath := filepath.Join(directory, "base.json")
+	candidatePath := filepath.Join(directory, "candidate.json")
+	if err := os.WriteFile(basePath, []byte(`{"models":[{"id":"smart","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-secret-old"}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidatePath, []byte(`{"models":[{"id":"smart","targets":[{"id":"target","provider":"anthropic","upstream_model":"claude-secret-new"}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	args := []string{"diff", "--base", basePath, "--candidate", candidatePath, "--fail-on", "provider"}
+	if code, handled := runCommand(args, &stdout, &stderr); !handled || code != 1 {
+		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Blocked    bool `json:"blocked"`
+		Violations []struct {
+			Category string `json:"category"`
+			Path     string `json:"path"`
+			Kind     string `json:"kind"`
+		} `json:"violations"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatalf("diff output = %q: %v", stdout.String(), err)
+	}
+	if !result.Blocked || len(result.Violations) != 2 || result.Violations[0].Category != "provider" || result.Violations[0].Kind != "changed" || !strings.Contains(result.Violations[0].Path, "target-") {
+		t.Fatalf("diff gate result = %+v", result)
+	}
+	if !strings.Contains(stderr.String(), "diff 被策略阻止") || strings.Contains(stdout.String(), "gpt-secret-old") || strings.Contains(stdout.String(), "claude-secret-new") {
+		t.Fatalf("gate leaked data or missing error: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// TestRunCommandDiffRejectsUnknownFailOnCategory 验证未知门禁类别不会输出配置摘要。
+func TestRunCommandDiffRejectsUnknownFailOnCategory(t *testing.T) {
+	directory := t.TempDir()
+	basePath := filepath.Join(directory, "base.json")
+	if err := os.WriteFile(basePath, []byte(`{"models":[{"id":"model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-test"}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	args := []string{"diff", "--base", basePath, "--candidate", basePath, "--fail-on", "secret"}
+	if code, handled := runCommand(args, &stdout, &stderr); !handled || code != 1 {
+		t.Fatalf("code=%d handled=%t stdout=%q stderr=%q", code, handled, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "不支持的类别") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 func TestRunCommandExplainIsDeterministicAndHidesPrompt(t *testing.T) {
 	directory := t.TempDir()
 	modelsPath := filepath.Join(directory, "models.json")

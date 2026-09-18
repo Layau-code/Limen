@@ -154,6 +154,8 @@ make build
 
 命令复用严格模型配置解析和控制面结构 diff，输出 `base_version`、`candidate_version`、`changed` 以及按路径排序的 `added`、`removed`、`changed`；目标路径使用 opaque 引用，不返回 `upstream_model`、endpoint 原值、密钥或请求内容。解析失败返回非零退出码，命令不会访问数据库或 Provider。
 
+发布流水线可以用 `--fail-on` 设置人工审核门禁，例如 `--fail-on provider,endpoint`；命中时仍输出完整安全 JSON，但以非零退出码结束。支持 `model`、`target`、`provider`、`endpoint`、`policy`、`routing` 和 `any`，其中 `target` 会覆盖所有目标级变化。
+
 配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider，并复用 endpoint 绑定校验；因此可以在审批或发布前验证模型能力、Fallback 顺序、计划哈希和出站安全边界。错绑 endpoint 返回 `endpoint_binding_mismatch`。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
 
 还可以调用 `POST /v1/limen/configs/{version}/replay`，请求体为 `{"decision_id":"decision_..."}`，把历史决策快照重放到指定草稿，返回原计划、草稿计划和安全结构化差异。它不访问 Provider、不改变线上 Router 或熔断状态，适合回答“这次配置发布会影响哪些既有决策”；该接口只需要 `decisions:read` 和 `configs:read`，响应不会返回真实上游模型名。

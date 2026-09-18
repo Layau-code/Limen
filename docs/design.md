@@ -96,7 +96,7 @@ HTTP Principal/Scope 鉴权与解析
 
 离线 `limen validate` 只读取模型目录，复用严格字段、能力、价格、路由参数和 Provider endpoint 绑定校验，输出规范内容生成的 `config_version` 及数量摘要。它不加载环境密钥、不构造 Provider Client、不访问网络；`--openai-base-url` 与 `--anthropic-base-url` 默认复用进程环境地址，适合在配置发布或容器构建阶段作为前置检查。
 
-离线 `limen diff` 读取基线和候选目录，分别生成规范版本哈希后复用 `configstore.PublicDiff` 输出稳定路径和变化类型。目标标识统一转换为 opaque 引用，变化结果不携带上游模型、endpoint、价格或其他配置值；因此它可以放在发布审批前，而不会把 Provider 绑定信息带入流水线日志。
+离线 `limen diff` 读取基线和候选目录，分别生成规范版本哈希后复用 `configstore.PublicDiff` 输出稳定路径和变化类型。目标标识统一转换为 opaque 引用，变化结果不携带上游模型、endpoint、价格或其他配置值；`--fail-on` 可按 `model`、`target`、`provider`、`endpoint`、`policy`、`routing` 或 `any` 设置发布门禁，命中时仍输出安全 JSON 但返回非零退出码。因此它可以放在发布审批前，而不会把 Provider 绑定信息带入流水线日志。
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。`soft_budget_usd=0` 表示不启用软预算，但仍可使用截止时间和并发治理。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重；重复请求在执行中返回 `request_in_progress`、原 Request ID 和固定 `Retry-After`，已完成请求返回 `request_already_processed`，哈希不同返回 `idempotency_conflict`，三种情况都不会再次调用 Provider。PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。Run 创建时记录的 `config_version` 会在每次受治理 Chat 中重新加载对应的目录和路由参数；版本缺失直接返回 `config_version_unavailable`，不会静默使用新版本。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
