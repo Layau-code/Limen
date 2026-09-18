@@ -18,10 +18,11 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicProvider 将统一聊天请求转换为 Anthropic Messages API 请求。
 type AnthropicProvider struct {
-	client *http.Client
-	url    string
-	mu     sync.RWMutex
-	apiKey string
+	client   *http.Client
+	url      string
+	mu       sync.RWMutex
+	apiKey   string
+	resolver CredentialResolver
 }
 
 // SetAPIKey 原子替换 Anthropic 凭据，供受控轮换流程使用。
@@ -39,6 +40,13 @@ func (p *AnthropicProvider) SetAPIKey(apiKey string) error {
 func (p *AnthropicProvider) ClearAPIKey() {
 	p.mu.Lock()
 	p.apiKey = ""
+	p.mu.Unlock()
+}
+
+// SetCredentialResolver 设置按请求租户解析 Anthropic 密钥的函数。
+func (p *AnthropicProvider) SetCredentialResolver(resolver CredentialResolver) {
+	p.mu.Lock()
+	p.resolver = resolver
 	p.mu.Unlock()
 }
 
@@ -65,8 +73,12 @@ func (p *AnthropicProvider) Chat(parent context.Context, request ChatRequest) (R
 		return Response{}, &RequestError{Operation: "build Anthropic request", Err: err}
 	}
 	p.mu.RLock()
-	apiKey := p.apiKey
+	staticKey, resolver := p.apiKey, p.resolver
 	p.mu.RUnlock()
+	apiKey, err := resolveCredential(parent, request.TenantID, resolver, staticKey)
+	if err != nil {
+		return Response{}, &RequestError{Operation: "resolve Anthropic credential", Err: err}
+	}
 	httpRequest.Header.Set("x-api-key", apiKey)
 	httpRequest.Header.Set("anthropic-version", anthropicVersion)
 	httpRequest.Header.Set("Content-Type", "application/json")

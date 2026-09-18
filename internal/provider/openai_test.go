@@ -63,6 +63,45 @@ func TestOpenAIProviderRotatesAPIKey(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderResolvesCredentialForRequestTenant(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tenant-b-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	client := NewOpenAI(server.Client(), server.URL, "shared-key")
+	client.SetCredentialResolver(func(_ context.Context, tenantID string) (string, error) {
+		if tenantID != "tenant-b" {
+			t.Fatalf("tenant id = %q", tenantID)
+		}
+		return "tenant-b-key", nil
+	})
+	response, err := client.Chat(context.Background(), ChatRequest{TenantID: "tenant-b", Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
+func TestOpenAIProviderDoesNotFallbackWhenTenantCredentialIsMissing(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	client := NewOpenAI(server.Client(), server.URL, "shared-key")
+	client.SetCredentialResolver(func(context.Context, string) (string, error) {
+		return "", errors.New("credential not found")
+	})
+	_, err := client.Chat(context.Background(), ChatRequest{TenantID: "tenant-b", Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err == nil || calls != 0 {
+		t.Fatalf("err=%v upstream calls=%d", err, calls)
+	}
+}
+
 func TestOpenAIChatCollectsUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":2}}`)

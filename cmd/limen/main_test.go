@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -35,6 +36,30 @@ func TestLoadStoredCredentialDoesNotExposeMissingRecordAsSuccess(t *testing.T) {
 	loaded, err := loadStoredCredential(context.Background(), credentialstore.NewMemoryStore(vault), "tenant", "openai", "endpoint", setter)
 	if err != nil || loaded || setter.key != "" {
 		t.Fatalf("loaded=%t key=%q err=%v", loaded, setter.key, err)
+	}
+}
+
+func TestCredentialResolverKeepsTenantCredentialsSeparate(t *testing.T) {
+	vault, err := credentialstore.NewVault([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := credentialstore.NewMemoryStore(vault)
+	if _, err := credentials.Rotate(context.Background(), "tenant-a", "openai", "endpoint", "key-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := credentials.Rotate(context.Background(), "tenant-b", "openai", "endpoint", "key-b"); err != nil {
+		t.Fatal(err)
+	}
+	resolve := newCredentialResolver(credentials, "openai", "endpoint")
+	for tenant, want := range map[string]string{"tenant-a": "key-a", "tenant-b": "key-b"} {
+		got, err := resolve(context.Background(), tenant)
+		if err != nil || got != want {
+			t.Fatalf("tenant=%q credential=%q err=%v", tenant, got, err)
+		}
+	}
+	if _, err := resolve(context.Background(), "tenant-c"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("missing tenant error=%v", err)
 	}
 }
 

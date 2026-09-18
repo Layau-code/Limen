@@ -89,6 +89,37 @@ func TestAnthropicProviderRotatesAPIKey(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderResolvesCredentialForRequestTenant(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "tenant-b-key" {
+			t.Fatalf("x-api-key = %q", r.Header.Get("x-api-key"))
+		}
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+	client := NewAnthropic(server.Client(), server.URL, "shared-key")
+	client.SetCredentialResolver(func(_ context.Context, tenantID string) (string, error) {
+		if tenantID != "tenant-b" {
+			t.Fatalf("tenant id = %q", tenantID)
+		}
+		return "tenant-b-key", nil
+	})
+	response, err := client.Chat(context.Background(), ChatRequest{TenantID: "tenant-b", Model: "claude-test", Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
+func TestCredentialResolverRequiresTenantContext(t *testing.T) {
+	_, err := resolveCredential(context.Background(), "", func(context.Context, string) (string, error) {
+		return "tenant-key", nil
+	}, "shared-key")
+	if err == nil || !strings.Contains(err.Error(), "tenant context") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestAnthropicChatConvertsStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

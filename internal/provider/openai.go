@@ -12,10 +12,11 @@ import (
 
 // OpenAIProvider 将统一聊天请求转发到 OpenAI Chat Completions API。
 type OpenAIProvider struct {
-	client *http.Client
-	url    string
-	mu     sync.RWMutex
-	apiKey string
+	client   *http.Client
+	url      string
+	mu       sync.RWMutex
+	apiKey   string
+	resolver CredentialResolver
 }
 
 // SetAPIKey 原子替换 OpenAI 凭据，供受控轮换流程使用。
@@ -33,6 +34,13 @@ func (p *OpenAIProvider) SetAPIKey(apiKey string) error {
 func (p *OpenAIProvider) ClearAPIKey() {
 	p.mu.Lock()
 	p.apiKey = ""
+	p.mu.Unlock()
+}
+
+// SetCredentialResolver 设置按请求租户解析 OpenAI 密钥的函数。
+func (p *OpenAIProvider) SetCredentialResolver(resolver CredentialResolver) {
+	p.mu.Lock()
+	p.resolver = resolver
 	p.mu.Unlock()
 }
 
@@ -69,8 +77,12 @@ func (p *OpenAIProvider) Chat(parent context.Context, request ChatRequest) (Resp
 		return Response{}, &RequestError{Operation: "build OpenAI request", Err: err}
 	}
 	p.mu.RLock()
-	apiKey := p.apiKey
+	staticKey, resolver := p.apiKey, p.resolver
 	p.mu.RUnlock()
+	apiKey, err := resolveCredential(parent, request.TenantID, resolver, staticKey)
+	if err != nil {
+		return Response{}, &RequestError{Operation: "resolve OpenAI credential", Err: err}
+	}
 	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := p.client.Do(httpRequest)

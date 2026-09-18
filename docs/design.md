@@ -25,7 +25,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。
 - `internal/configstore`：保存不可变配置版本，内存实现用于开发，PostgreSQL 实现用于多实例恢复；发布通过 `limen_config_changes` 通知加速跨实例 Router 刷新，数据库版本仍是唯一事实来源。
 - `internal/approval`：保存可选配置发布审批状态机；审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 配置发布在同一事务中校验并消费审批。
-- `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint。
+- `internal/credentialstore`：使用 AES-GCM 加密 Provider 凭据，并将密文绑定到租户、Provider 和 endpoint；Provider 按每次请求携带的非敏感租户标识解析凭据，缺失时不跨租户回退。
 - `internal/catalog`：保存逻辑模型、目标能力和数据等级；兼容模式匹配 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。
 - `internal/decision`：只消费版本化快照，按硬约束过滤候选并稳定排序，输出 `InputHash`、`PlanHash` 和原因码；算法注册表负责 Replay 的版本解析，未知版本不回退。
 - `internal/journal`：按租户保存不含正文的 DecisionInput/ExecutionPlan；PostgreSQL 实现使用 JSONB 和组合主键，内存实现只用于无数据库开发。
@@ -124,7 +124,7 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 ## 出站安全
 
-生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。Provider Key 只绑定到对应适配器，不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
+生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint；Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
 
 Endpoint allowlist 与 endpoint ID 都拒绝 URL 用户信息、查询参数和片段；安全 Client 的测试会在设置环境代理时确认仍直连 allowlist 目标，并单独验证云元数据地址在 Dial 前被拦截。
 

@@ -153,6 +153,26 @@ func TestAttemptMetricsCountOnlyRealProviderCalls(t *testing.T) {
 	}
 }
 
+func TestChatPassesAuthenticatedTenantToProvider(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tenantID string
+	upstream := testProviderFunc(func(_ context.Context, request provider.ChatRequest) (provider.Response, error) {
+		tenantID = request.TenantID
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+	})
+	handler := NewWithHealthAndRunsForTenantScopes("secret", newTestRouter(upstream, nil, registry), nil, "tenant-b", []auth.Scope{auth.ScopeInference}, nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || tenantID != "tenant-b" {
+		t.Fatalf("status=%d tenant=%q body=%s", response.Code, tenantID, response.Body.String())
+	}
+}
+
 func TestScopesRejectOperationWithoutPermission(t *testing.T) {
 	handler := NewWithHealthAndRunsForTenantScopes("limen-secret", nil, nil, "tenant-1", []auth.Scope{auth.ScopeInference}, run.NewMemoryService(nil))
 	request := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))

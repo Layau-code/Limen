@@ -208,12 +208,12 @@ func main() {
 				logger.Error("Anthropic credential load failed", "error", anthropicError)
 				os.Exit(1)
 			}
-			if registryUsesProvider(registry, "openai") && cfg.OpenAIAPIKey == "" && !openAIStored {
-				logger.Error("OpenAI credential is missing")
+			if registryUsesProvider(registry, "openai") && !openAIStored {
+				logger.Error("OpenAI credential is missing for the configured tenant")
 				os.Exit(1)
 			}
-			if registryUsesProvider(registry, "anthropic") && cfg.AnthropicAPIKey == "" && !anthropicStored {
-				logger.Error("Anthropic credential is missing")
+			if registryUsesProvider(registry, "anthropic") && !anthropicStored {
+				logger.Error("Anthropic credential is missing for the configured tenant")
 				os.Exit(1)
 			}
 		}
@@ -221,6 +221,7 @@ func main() {
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
+	installCredentialResolvers(credentialStore, openAI, anthropic, openAIEndpointID, anthropicEndpointID)
 	if credentialStore == nil {
 		if err := validateRuntimeProviderKeys(registry, cfg); err != nil {
 			logger.Error("provider credential is missing", "error", err)
@@ -441,6 +442,31 @@ func loadStoredCredential(ctx context.Context, store credentialstore.Store, tena
 		return false, err
 	}
 	return true, nil
+}
+
+// installCredentialResolvers 让启用凭据存储的 Provider 按请求租户解析密钥。
+func installCredentialResolvers(credentials credentialstore.Store, openAI *provider.OpenAIProvider, anthropic *provider.AnthropicProvider, openAIEndpointID, anthropicEndpointID string) {
+	if credentials == nil {
+		return
+	}
+	openAI.SetCredentialResolver(newCredentialResolver(credentials, "openai", openAIEndpointID))
+	anthropic.SetCredentialResolver(newCredentialResolver(credentials, "anthropic", anthropicEndpointID))
+}
+
+// newCredentialResolver 读取租户绑定的密钥，并在转换为字符串前清理解密缓冲区。
+func newCredentialResolver(credentials credentialstore.Store, providerName, endpointID string) provider.CredentialResolver {
+	return func(ctx context.Context, tenantID string) (string, error) {
+		secret, _, err := credentials.Resolve(ctx, tenantID, providerName, endpointID)
+		if err != nil {
+			return "", err
+		}
+		defer func() {
+			for index := range secret {
+				secret[index] = 0
+			}
+		}()
+		return string(secret), nil
+	}
 }
 
 // registryUsesProvider 判断当前有效目录是否引用指定 Provider。

@@ -1151,6 +1151,8 @@ func attemptState(report gateway.AttemptReport) run.AttemptState {
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runRequestID string) {
 	tenantID := h.requestTenantID(r)
+	// 仅传递租户标识，Provider 再按绑定的 endpoint 解析实际密钥。
+	request.TenantID = tenantID
 	settledRunRequest := false
 	attempts := make([]trackedAttempt, 0)
 	attemptReports := make([]gateway.AttemptReport, 0)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Message 表示 Limen 内部统一使用的文本消息。
@@ -13,8 +14,12 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// CredentialResolver 按请求租户解析绑定到 Provider endpoint 的临时密钥。
+type CredentialResolver func(context.Context, string) (string, error)
+
 // ChatRequest 表示经过 API 层校验后的聊天请求。
 type ChatRequest struct {
+	TenantID    string
 	Model       string
 	Messages    []Message
 	MaxTokens   int
@@ -105,6 +110,27 @@ func IsRetryableResponse(response Response) bool {
 		return response.ErrorClass == ErrorClassRetryableTransient
 	}
 	return ClassifyHTTPStatus(response.StatusCode) == ErrorClassRetryableTransient
+}
+
+// resolveCredential 解析当前请求的租户密钥，并阻止缺少密钥的调用继续出站。
+func resolveCredential(ctx context.Context, tenantID string, resolver CredentialResolver, fallback string) (string, error) {
+	if resolver != nil {
+		if strings.TrimSpace(tenantID) == "" {
+			return "", errors.New("tenant context is required for credential resolution")
+		}
+		key, err := resolver(ctx, tenantID)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(key) == "" {
+			return "", errors.New("resolved provider credential is empty")
+		}
+		return key, nil
+	}
+	if strings.TrimSpace(fallback) == "" {
+		return "", errors.New("provider credential is unavailable")
+	}
+	return fallback, nil
 }
 
 // Provider 定义统一的聊天调用入口。
