@@ -173,6 +173,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5–6 μs/op`、59 次分配；Fallback 路径 `6–8 μs/op`、70 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5.6 μs/op`、73 次分配；Fallback 路径 `6.1 μs/op`、84 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
