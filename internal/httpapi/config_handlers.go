@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/configstore"
@@ -103,6 +104,7 @@ func (h *Handler) createConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid config document", "invalid_request_error", "invalid_config")
 		return
 	}
+	h.appendAudit(r.Context(), h.requestTenantID(r), audit.ActionConfigCreate, "config", record.Version, "success", record.Version)
 	writeJSON(w, http.StatusCreated, summarizeConfig(record))
 }
 
@@ -154,6 +156,7 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "config could not be activated", "api_error", "config_activation_failed")
 		return
 	}
+	h.appendAudit(r.Context(), tenantID, audit.ActionConfigPublish, "config", record.Version, "success", hash)
 	writeJSON(w, http.StatusOK, summarizeConfig(record))
 }
 

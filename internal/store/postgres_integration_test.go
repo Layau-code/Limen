@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
@@ -163,6 +164,43 @@ func TestPostgresIntegrationConfigPublishNotifiesMetadata(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("config notification timed out")
+	}
+}
+
+// TestPostgresIntegrationAuditTenantIsolation 验证审计摘要在数据库层按租户隔离。
+func TestPostgresIntegrationAuditTenantIsolation(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantA, tenantB := integrationID("tenant-audit-a"), integrationID("tenant-audit-b")
+	ensureIntegrationTenant(t, adminDB, tenantA)
+	ensureIntegrationTenant(t, adminDB, tenantB)
+	store := NewPostgresAuditStore(appDB)
+	for _, event := range []audit.Event{
+		{ID: audit.EventID(tenantA, audit.ActionConfigPublish, "v1", "hash-a"), TenantID: tenantA, Action: audit.ActionConfigPublish, ResourceType: "config", ResourceID: "v1", Outcome: "success", RequestHash: "hash-a", CreatedAt: time.Now().UTC()},
+		{ID: audit.EventID(tenantB, audit.ActionConfigPublish, "v2", "hash-b"), TenantID: tenantB, Action: audit.ActionConfigPublish, ResourceType: "config", ResourceID: "v2", Outcome: "success", RequestHash: "hash-b", CreatedAt: time.Now().UTC()},
+	} {
+		if err := store.Append(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.List(ctx, tenantA, 10)
+	if err != nil || len(items) != 1 || items[0].TenantID != tenantA {
+		t.Fatalf("tenant audit items=%+v err=%v", items, err)
+	}
+	tx, err := appDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := setTenantTx(ctx, tx, tenantA); err != nil {
+		t.Fatal(err)
+	}
+	var visible int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1`, tenantB).Scan(&visible); err != nil {
+		t.Fatal(err)
+	}
+	if visible != 0 {
+		t.Fatalf("cross-tenant audit rows visible=%d", visible)
 	}
 }
 

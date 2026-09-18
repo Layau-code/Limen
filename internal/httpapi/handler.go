@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
@@ -48,6 +49,7 @@ type Handler struct {
 	leaseOwner          string
 	decisions           journal.Store
 	configs             configstore.Store
+	audit               audit.Store
 	metrics             *telemetry.Registry
 	credentials         credentialstore.Store
 	credentialSetters   map[string]ProviderCredentialSetter
@@ -113,6 +115,11 @@ type ProviderCredentialSetter interface {
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials 创建完整数据面和凭据控制面。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, cancellationHubs ...*run.CancellationHub) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator, router, health, tenantID, decisions, configs, credentials, setters, endpoints, runs, audit.NewMemoryStore(), cancellationHubs...)
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit 创建可注入审计存储的完整处理器。
+func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, cancellationHubs ...*run.CancellationHub) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -126,6 +133,9 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 	if configs == nil {
 		configs = configstore.NewMemoryStore()
 	}
+	if audits == nil {
+		audits = audit.NewMemoryStore()
+	}
 	var cancellationHub *run.CancellationHub
 	if len(cancellationHubs) > 0 {
 		cancellationHub = cancellationHubs[0]
@@ -138,6 +148,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 		leaseOwner:          newLeaseOwner(),
 		decisions:           decisions,
 		configs:             configs,
+		audit:               audits,
 		metrics:             telemetry.NewRegistry(),
 		credentials:         credentials,
 		credentialSetters:   setters,
@@ -150,6 +161,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 	mux.HandleFunc("GET /v1/limen/decisions/{decision_id}", handler.getDecision)
 	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
 	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
+	mux.HandleFunc("GET /v1/limen/audit", handler.listAudit)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
@@ -515,6 +527,11 @@ func (h *Handler) mutateRun(w http.ResponseWriter, r *http.Request, cancel bool)
 		writeRunMutationError(w, err)
 		return
 	}
+	action := audit.ActionRunComplete
+	if cancel {
+		action = audit.ActionRunCancel
+	}
+	h.appendAudit(r.Context(), tenantID, action, "run", item.ID, "success", hash)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -584,6 +601,7 @@ func (h *Handler) resolveAccounting(w http.ResponseWriter, r *http.Request) {
 		writeAccountingResolutionError(w, err, r.PathValue("request_id"))
 		return
 	}
+	h.appendAudit(r.Context(), tenantID, audit.ActionAccountingResolve, "run_request", request.ID, "success", hash)
 	writeJSON(w, http.StatusOK, request)
 }
 

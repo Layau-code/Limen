@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/credentialstore"
 )
@@ -49,6 +50,7 @@ func (h *Handler) rotateCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "credential activation failed", "api_error", "credential_activation_failed")
 		return
 	}
+	h.appendAudit(r.Context(), h.requestTenantID(r), audit.ActionCredentialRotate, "credential", record.ID, "success", "")
 	writeJSON(w, http.StatusOK, record)
 }
 
@@ -79,6 +81,7 @@ func (h *Handler) revokeCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setter.ClearAPIKey()
+	h.appendAudit(r.Context(), h.requestTenantID(r), audit.ActionCredentialRevoke, "credential", providerName+":"+endpointID, "success", "")
 	writeJSON(w, http.StatusOK, map[string]string{"provider": providerName, "endpoint_id": endpointID, "state": "revoked"})
 }
 

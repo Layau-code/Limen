@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/buildinfo"
 	"github.com/huz/limen/internal/config"
@@ -96,6 +97,7 @@ func main() {
 	var runService run.Service
 	var decisionStore journal.Store = journal.NewMemoryStore()
 	var configStore configstore.Store = configstore.NewMemoryStore()
+	var auditStore audit.Store = audit.NewMemoryStore()
 	var credentialStore credentialstore.Store
 	var credentialSetters map[string]httpapi.ProviderCredentialSetter
 	var credentialEndpoints map[string]string
@@ -139,6 +141,7 @@ func main() {
 		}
 		decisionStore = store.NewDecisionJournal(database)
 		configStore = store.NewPostgresConfigStore(database)
+		auditStore = store.NewPostgresAuditStore(database)
 		configListener, err = store.NewConfigChangeListener(cfg.DatabaseURL)
 		if err != nil {
 			logger.Warn("config change listener unavailable")
@@ -233,7 +236,7 @@ func main() {
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		logger.Warn("telemetry export failed")
 	}))
-	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, cancellationHub)
+	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, auditStore, cancellationHub)
 	server := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.WithLogging(logger, httpapi.WithTracing(apiHandler)),
