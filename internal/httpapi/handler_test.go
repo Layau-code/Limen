@@ -1113,6 +1113,63 @@ func TestChatRelaysSSE(t *testing.T) {
 	}
 }
 
+func TestRelayStreamReturnsSourceError(t *testing.T) {
+	source := &handlerErrorReader{data: []byte("data: first\n\n"), err: io.ErrUnexpectedEOF}
+	response := httptest.NewRecorder()
+	if err := relayStream(response, source); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("relay error = %v", err)
+	}
+	if got := response.Body.String(); got != "data: first\n\n" {
+		t.Fatalf("stream = %q", got)
+	}
+}
+
+func TestChatMarksInterruptedStreamPartial(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{
+		Provider:      "openai",
+		UpstreamModel: "gpt-test",
+		Pricing:       &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1},
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{
+			StatusCode:  http.StatusOK,
+			ContentType: "text/event-stream",
+			Body:        &handlerErrorReader{data: []byte("data: first\n\n"), err: io.ErrUnexpectedEOF},
+			Usage:       staticUsage{InputTokens: 2, OutputTokens: 1, Complete: true},
+		}, nil
+	})
+	handler := New("limen-secret", newTestRouter(upstream, nil, registry))
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Header().Get("X-Limen-Settlement-Status") != "partial" {
+		t.Fatalf("settlement status = %q, headers=%v", response.Header().Get("X-Limen-Settlement-Status"), response.Header())
+	}
+}
+
+type handlerErrorReader struct {
+	data []byte
+	err  error
+}
+
+func (reader *handlerErrorReader) Read(buffer []byte) (int, error) {
+	if len(reader.data) == 0 {
+		return 0, reader.err
+	}
+	count := copy(buffer, reader.data)
+	reader.data = reader.data[count:]
+	return count, nil
+}
+
+func (reader *handlerErrorReader) Close() error {
+	return nil
+}
+
 func TestChatRelaysProviderError(t *testing.T) {
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

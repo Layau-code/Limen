@@ -37,7 +37,8 @@ type SettlementSummary struct {
 
 // Settlement 汇总一次客户端请求的所有上游响应。
 type Settlement struct {
-	attempts []AttemptSettlement
+	attempts   []AttemptSettlement
+	incomplete bool
 }
 
 // NewSettlement 创建空的请求级结算记录。
@@ -50,11 +51,16 @@ func (settlement *Settlement) AddAttempt(attempt AttemptSettlement) {
 	settlement.attempts = append(settlement.attempts, attempt)
 }
 
+// MarkIncomplete 标记响应传输中断，防止完整用量被误当成完整结算。
+func (settlement *Settlement) MarkIncomplete() {
+	settlement.incomplete = true
+}
+
 // Summary 根据当前已完成的上游读取结果计算结算快照。
 func (settlement *Settlement) Summary() SettlementSummary {
 	var summary SettlementSummary
 	hasUsage := false
-	incomplete := false
+	incomplete := settlement.incomplete
 	priced := true
 	for _, attempt := range settlement.attempts {
 		if attempt.Usage == nil {

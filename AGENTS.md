@@ -64,7 +64,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 2. `context.Context` 必须贯穿 HTTP、Router 和 Provider；客户端断开要取消上游。
 3. 一次请求只创建一个总预算；每个目标最多调用一次；SSE 返回成功后不切换。
 4. 只有 Provider 归一化为 `retryable_transient` 的响应和传输错误触发 Fallback；认证、配额和确定性错误直接返回。
-5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥。
+5. 响应体及时关闭，流式数据有界读取，不复制完整 Prompt、Response 或密钥；普通响应和 SSE 必须传播上游读取或客户端写入错误，已开始的响应不得 Fallback，传输中断必须把 Settlement 标记为 `partial`。
 6. 优先整理和复用旧实现，保持文件职责单一，删除已失效代码。
 7. 金额使用十进制定点整数；缺失用量或价格时省略费用，不把未知值写成零。
 8. Decision Engine 只消费带版本的输入快照，不读取时间、网络或数据库；Router 负责执行计划和并发熔断探测，Provider 只负责协议转换。

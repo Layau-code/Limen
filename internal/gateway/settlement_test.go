@@ -62,3 +62,18 @@ func TestSettlementIgnoresTransportAttemptWithoutResponse(t *testing.T) {
 		t.Fatalf("summary = %+v", summary)
 	}
 }
+
+func TestSettlementMarksInterruptedResponsePartial(t *testing.T) {
+	settlement := NewSettlement()
+	settlement.AddAttempt(AttemptSettlement{
+		StatusCode: 200,
+		Pricing:    &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1},
+		Usage:      fixedUsage{usage: provider.Usage{InputTokens: 2, OutputTokens: 1, Complete: true}},
+	})
+	settlement.MarkIncomplete()
+
+	summary := settlement.Summary()
+	if summary.Status != SettlementPartial || summary.InputTokens != 2 || summary.OutputTokens != 1 || summary.CostAvailable {
+		t.Fatalf("summary = %+v", summary)
+	}
+}

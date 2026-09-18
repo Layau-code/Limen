@@ -1732,9 +1732,13 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	declareSettlementTrailers(w)
 	w.WriteHeader(response.StatusCode)
 	if strings.HasPrefix(response.ContentType, "text/event-stream") {
-		relayStream(w, response.Body)
+		if err := relayStream(w, response.Body); err != nil && result.Settlement != nil {
+			result.Settlement.MarkIncomplete()
+		}
 	} else {
-		_, _ = io.Copy(w, response.Body)
+		if _, err := io.Copy(w, response.Body); err != nil && result.Settlement != nil {
+			result.Settlement.MarkIncomplete()
+		}
 	}
 	if runRequestID != "" {
 		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
@@ -2174,21 +2178,24 @@ func unknownJSONField(err error) string {
 }
 
 // relayStream 逐块转发 SSE 数据，并在每块写入后刷新客户端。
-func relayStream(w http.ResponseWriter, source io.Reader) {
+func relayStream(w http.ResponseWriter, source io.Reader) error {
 	flusher, canFlush := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
 	for {
 		count, err := source.Read(buffer)
 		if count > 0 {
 			if _, writeErr := w.Write(buffer[:count]); writeErr != nil {
-				return
+				return writeErr
 			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
-			return
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		}
 	}
 }

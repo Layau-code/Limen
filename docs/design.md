@@ -36,7 +36,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。
 - `internal/gateway/executor.go`：只消费 ExecutionPlan，管理共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
-- `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；普通 JSON、错误正文、用量观察和 SSE 事件均有固定读取上限；不感知逻辑模型。构造函数未收到 HTTP Client 时仍使用带 endpoint allowlist 的安全默认 Client。
+- `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；普通 JSON、错误正文、用量观察和 SSE 事件均有固定读取上限；不感知逻辑模型。构造函数未收到 HTTP Client 时仍使用带 endpoint allowlist 的安全默认 Client。HTTP 层传播响应体读取/写入错误，已开始响应不 Fallback，并将中断响应的 Settlement 标记为 `partial`。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
 - `internal/telemetry`：提供有界 Prometheus 指标和可选 OTLP/HTTP Trace；遥测失败不参与业务控制流。
 - `cmd/limen validate`：在发布前离线校验模型目录并输出配置版本摘要，不加载密钥或访问 Provider。
@@ -121,7 +121,7 @@ Run 控制面的 HTTP 响应使用独立安全 DTO，只返回生命周期、并
 1. Router 为一次调用创建一个总 Context；每个目标的 Context 只能更早截止，切换不会重新获得预算。
 2. 每个目标最多发起一次调用；瞬时状态固定为 408、409、429、500、502、503、504、529，传输错误同样允许切换。
 3. 确定性状态、请求转换错误、客户端取消和总预算耗尽不触发下一个目标。
-4. 目标返回 `2xx` 后立即交给客户端；即使后续 SSE 读取失败，也不重放请求。
+4. 目标返回 `2xx` 后立即交给客户端；即使后续 SSE 读取失败，也不重放请求，且中断结算标记为 `partial`/未知。
 5. 瞬时失败达到阈值后目标进入 Open；熔断键包含逻辑模型、Provider 和上游模型，冷却后只放行一个 Half-Open 探测，成功或确定性响应关闭，瞬时失败重新计时。
 6. 被放弃的响应体立即关闭；最终响应关闭时释放上游连接和关联 Context。
 
