@@ -184,14 +184,17 @@ func (registry *Registry) Write(writer io.Writer) (int, error) {
 	return written, nil
 }
 
+// knownMetric 判断指标是否属于固定计数器集合。
 func knownMetric(metric Metric) bool {
 	return metric == RequestsTotal || metric == AttemptsTotal || metric == SettlementsTotal
 }
 
+// knownHistogram 判断指标是否属于固定直方图集合。
 func knownHistogram(metric Metric) bool {
 	return metric == RequestDurationSeconds || metric == TimeToFirstByteSeconds
 }
 
+// sortedSampleKeys 返回计数器序列的稳定排序键。
 func sortedSampleKeys(series map[string]*sample) []string {
 	keys := make([]string, 0, len(series))
 	for key := range series {
@@ -201,6 +204,7 @@ func sortedSampleKeys(series map[string]*sample) []string {
 	return keys
 }
 
+// sortedHistogramKeys 返回直方图序列的稳定排序键。
 func sortedHistogramKeys(series map[string]*histogramSample) []string {
 	keys := make([]string, 0, len(series))
 	for key := range series {
@@ -210,6 +214,7 @@ func sortedHistogramKeys(series map[string]*histogramSample) []string {
 	return keys
 }
 
+// normalizeLabels 裁剪所有观测标签，控制基数和输出长度。
 func normalizeLabels(labels Labels) Labels {
 	labels.Endpoint = limit(labels.Endpoint)
 	labels.Status = limit(labels.Status)
@@ -221,6 +226,7 @@ func normalizeLabels(labels Labels) Labels {
 	return labels
 }
 
+// limit 裁剪单个标签并去除首尾空白。
 func limit(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) > 64 {
@@ -229,14 +235,17 @@ func limit(value string) string {
 	return value
 }
 
+// labelsKey 生成固定字段顺序的序列键。
 func labelsKey(labels Labels) string {
 	return strings.Join([]string{labels.Endpoint, labels.Status, labels.Model, labels.Provider, labels.Target, labels.Result, labels.Reason}, "\x00")
 }
 
+// formatLabels 将标签编码为 Prometheus 标签集合。
 func formatLabels(labels Labels) string {
 	return formatLabelsWithExtra(labels, "", "")
 }
 
+// formatLabelsWithExtra 在基础标签上追加直方图边界标签。
 func formatLabelsWithExtra(labels Labels, name, value string) string {
 	pairs := []string{
 		`endpoint="` + escape(labels.Endpoint) + `"`,
@@ -253,16 +262,19 @@ func formatLabelsWithExtra(labels Labels, name, value string) string {
 	return "{" + strings.Join(pairs, ",") + "}"
 }
 
+// formatFloat 使用稳定格式编码 Prometheus 浮点值。
 func formatFloat(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
+// escape 转义 Prometheus 标签中的特殊字符。
 func escape(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `"`, `\"`)
 	return strings.ReplaceAll(value, "\n", `\n`)
 }
 
+// writeString 写入指标文本并忽略底层短写错误。
 func writeString(writer io.Writer, value string) int {
 	count, _ := io.WriteString(writer, value)
 	return count

@@ -102,6 +102,7 @@ func (settlement *Settlement) Summary() SettlementSummary {
 	return summary
 }
 
+// addTokens 安全累加 Token 数量，防止整数溢出。
 func addTokens(target *int64, values ...int64) bool {
 	for _, value := range values {
 		if value < 0 || *target > math.MaxInt64-value {

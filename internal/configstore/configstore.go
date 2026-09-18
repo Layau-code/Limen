@@ -274,6 +274,7 @@ func contextError(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// recordKey 组合租户和版本，隔离内存配置记录。
 func recordKey(tenantID, version string) string {
 	return tenantID + "\x00" + version
 }

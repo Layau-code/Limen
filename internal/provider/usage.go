@@ -182,6 +182,7 @@ func (body *observedSSEBody) Close() error {
 	return err
 }
 
+// feed 按换行边界拆分 SSE 字节，并限制观察缓冲区大小。
 func (body *observedSSEBody) feed(buffer []byte) {
 	for _, character := range buffer {
 		if character == '\n' {
@@ -200,6 +201,7 @@ func (body *observedSSEBody) feed(buffer []byte) {
 	}
 }
 
+// processLine 收集当前 SSE 事件的数据字段。
 func (body *observedSSEBody) processLine(line []byte) {
 	line = bytesTrimSuffixCR(line)
 	if len(line) == 0 {
@@ -223,6 +225,7 @@ func (body *observedSSEBody) processLine(line []byte) {
 	body.event = append(body.event, value...)
 }
 
+// finishEvent 解析已完成的 SSE 事件，记录用量或上游流错误。
 func (body *observedSSEBody) finishEvent() {
 	if !body.eventTooBig && len(body.event) > 0 {
 		if string(body.event) == "[DONE]" {
@@ -242,6 +245,7 @@ func (body *observedSSEBody) finishEvent() {
 	body.eventTooBig = false
 }
 
+// setOpenAIUsage 从普通响应或 SSE 事件提取 OpenAI 用量。
 func setOpenAIUsage(recorder *usageRecorder, body []byte) {
 	var response struct {
 		Usage *struct {
@@ -262,6 +266,7 @@ func setOpenAIUsage(recorder *usageRecorder, body []byte) {
 	}
 }
 
+// bytesTrimSuffixCR 统一处理 CRLF 与 LF 两种换行格式。
 func bytesTrimSuffixCR(value []byte) []byte {
 	if len(value) > 0 && value[len(value)-1] == '\r' {
 		return value[:len(value)-1]

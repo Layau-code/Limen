@@ -206,6 +206,7 @@ func (store *PostgresApprovalStore) Consume(ctx context.Context, binding approva
 	return record, nil
 }
 
+// decide 在事务中完成审批决定、身份分离和操作幂等。
 func (store *PostgresApprovalStore) decide(ctx context.Context, tenantID, configVersion, approvalID, actorID string, mutation approval.Mutation, approve bool) (approval.Record, error) {
 	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" {
 		return approval.Record{}, approval.ErrInvalid
@@ -282,6 +283,7 @@ func (store *PostgresApprovalStore) decide(ctx context.Context, tenantID, config
 	return record, nil
 }
 
+// beginTx 开启带租户上下文的审批事务。
 func (store *PostgresApprovalStore) beginTx(ctx context.Context, tenantID string) (*sql.Tx, error) {
 	if store == nil || store.db == nil {
 		return nil, ErrDatabaseRequired
@@ -294,6 +296,7 @@ type approvalOperation struct {
 	ApprovalID string
 }
 
+// findApprovalOperation 查询审批控制面操作的幂等记录。
 func findApprovalOperation(ctx context.Context, tx *sql.Tx, tenantID, endpoint, key string) (approvalOperation, bool, error) {
 	var operation approvalOperation
 	err := tx.QueryRowContext(ctx, `SELECT request_hash,approval_id FROM config_approval_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, endpoint, key).Scan(&operation.Hash, &operation.ApprovalID)
@@ -303,6 +306,7 @@ func findApprovalOperation(ctx context.Context, tx *sql.Tx, tenantID, endpoint, 
 	return operation, err == nil, err
 }
 
+// getApprovalTx 在事务中读取审批记录，并可选加行锁防止并发决定。
 func getApprovalTx(ctx context.Context, tx *sql.Tx, tenantID, configVersion, approvalID string, lock bool) (approval.Record, error) {
 	query := `SELECT approval_id,config_version,publish_idempotency_key,request_hash,requested_by,approved_by,state,expires_at,created_at,updated_at FROM config_approvals WHERE tenant_id=$1 AND config_version=$2 AND approval_id=$3`
 	if lock {
@@ -331,10 +335,12 @@ func getApprovalTx(ctx context.Context, tx *sql.Tx, tenantID, configVersion, app
 	return record, nil
 }
 
+// invalidApprovalCreate 判断审批申请是否缺少必要字段。
 func invalidApprovalCreate(tenantID, configVersion, publishKey, requestHash, requestedBy string, mutation approval.Mutation) bool {
 	return strings.TrimSpace(tenantID) == "" || strings.TrimSpace(configVersion) == "" || strings.TrimSpace(publishKey) == "" || strings.TrimSpace(requestHash) == "" || strings.TrimSpace(requestedBy) == "" || strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == ""
 }
 
+// validateApprovalBinding 校验发布消费审批的字段完整性。
 func validateApprovalBinding(binding approval.Binding) error {
 	if strings.TrimSpace(binding.TenantID) == "" || strings.TrimSpace(binding.ConfigVersion) == "" || strings.TrimSpace(binding.ApprovalID) == "" || strings.TrimSpace(binding.PublishIdempotencyKey) == "" || strings.TrimSpace(binding.RequestHash) == "" || strings.TrimSpace(binding.Publisher) == "" {
 		return approval.ErrInvalid
@@ -342,6 +348,7 @@ func validateApprovalBinding(binding approval.Binding) error {
 	return nil
 }
 
+// checkApprovalBinding 确认数据库审批记录与发布请求严格匹配。
 func checkApprovalBinding(record approval.Record, binding approval.Binding) error {
 	if record.TenantID != binding.TenantID || record.ConfigVersion != binding.ConfigVersion || record.ID != binding.ApprovalID || record.PublishIdempotencyKey != binding.PublishIdempotencyKey || record.RequestHash != binding.RequestHash {
 		return approval.ErrBindingConflict
@@ -352,6 +359,7 @@ func checkApprovalBinding(record approval.Record, binding approval.Binding) erro
 	return nil
 }
 
+// approvalStateError 将审批状态冲突转换为稳定错误。
 func approvalStateError(state string) error {
 	if state == approval.StateExpired {
 		return approval.ErrExpired
@@ -359,6 +367,7 @@ func approvalStateError(state string) error {
 	return approval.ErrStateConflict
 }
 
+// beginApprovalTx 开启事务并设置 PostgreSQL 租户上下文。
 func beginApprovalTx(ctx context.Context, db *sql.DB, tenantID string) (*sql.Tx, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {

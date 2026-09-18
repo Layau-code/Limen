@@ -117,6 +117,7 @@ func (store *MemoryStore) CreateRun(run Run) error {
 	return store.createRunLocked(run)
 }
 
+// createRunLocked 在已持有互斥锁时校验并保存 Run。
 func (store *MemoryStore) createRunLocked(run Run) error {
 	if run.State == "" {
 		run.State = StateActive
@@ -164,6 +165,7 @@ func (store *MemoryStore) CancelRunWithMutation(tenantID, runID string, mutation
 	return store.mutateRun(tenantID, runID, "cancel_run", mutation, func(item *Run) error { return item.Cancel() })
 }
 
+// mutateRun 在内存锁内幂等执行 Run 状态变更。
 func (store *MemoryStore) mutateRun(tenantID, runID, operation string, mutation Mutation, change func(*Run) error) (Run, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -692,10 +694,12 @@ func (store *MemoryStore) PollCancellationEvents(tenantID string, afterID int64,
 	return events, nil
 }
 
+// resourceKey 组合租户和资源 ID，隔离内存控制面对象。
 func resourceKey(tenantID, resourceID string) string {
 	return tenantID + "\x00" + resourceID
 }
 
+// isRequestInProgress 判断请求是否仍占用在途并发名额。
 func isRequestInProgress(state RequestState) bool {
 	switch state {
 	case RequestAdmitted, RequestDecisionReady, RequestExecuting, RequestSettlementPending:
@@ -705,6 +709,7 @@ func isRequestInProgress(state RequestState) bool {
 	}
 }
 
+// validateMutation 校验控制面幂等操作的最小字段集合。
 func validateMutation(mutation Mutation) error {
 	if mutation.Key == "" || mutation.Hash == "" {
 		return ErrIdempotencyKeyRequired
@@ -720,6 +725,7 @@ func contextError(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// mutationKey 组合租户、操作和幂等键，避免不同接口互相碰撞。
 func mutationKey(tenantID, operation, key string) string {
 	return resourceKey(tenantID, operation+"\x00"+key)
 }

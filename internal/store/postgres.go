@@ -86,6 +86,7 @@ func (store *PostgresStore) CancelRunWithMutation(ctx context.Context, tenantID,
 	return store.mutateRunWithMutation(ctx, tenantID, runID, mutation, "cancel", "POST /v1/limen/runs/"+runID+"/cancel")
 }
 
+// mutateRunWithMutation 在事务中幂等执行 PostgreSQL Run 状态变更。
 func (store *PostgresStore) mutateRunWithMutation(ctx context.Context, tenantID, runID string, mutation run.Mutation, operation, endpoint string) (run.Run, error) {
 	if mutation.Key == "" || mutation.Hash == "" {
 		return run.Run{}, run.ErrIdempotencyKeyRequired

@@ -65,6 +65,7 @@ func safeRequestID(value string) string {
 	return hex.EncodeToString(sum[:12])
 }
 
+// logHeaderKey 将允许记录的响应头转换为稳定日志字段名。
 func logHeaderKey(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(name, "X-Limen-")), "-", "_")
 }

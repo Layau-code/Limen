@@ -104,6 +104,7 @@ func NewMemoryStore() *MemoryStore {
 	return newMemoryStore(time.Now)
 }
 
+// newMemoryStore 创建可注入时钟的内存审批存储，便于测试过期状态。
 func newMemoryStore(now func() time.Time) *MemoryStore {
 	if now == nil {
 		now = time.Now
@@ -280,6 +281,7 @@ func (store *MemoryStore) decide(ctx context.Context, tenantID, configVersion, a
 	return clone(record), nil
 }
 
+// getLocked 在已持有互斥锁时读取并刷新审批状态。
 func (store *MemoryStore) getLocked(tenantID, configVersion, approvalID string) (Record, error) {
 	key := recordKey(tenantID, configVersion, approvalID)
 	record, ok := store.records[key]
@@ -294,6 +296,7 @@ func (store *MemoryStore) getLocked(tenantID, configVersion, approvalID string) 
 	return clone(record), nil
 }
 
+// validateCreate 校验审批申请和幂等参数的最小字段集合。
 func validateCreate(tenantID, configVersion, publishKey, requestHash, requestedBy string, mutation Mutation) error {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(configVersion) == "" || strings.TrimSpace(publishKey) == "" || strings.TrimSpace(requestHash) == "" || strings.TrimSpace(requestedBy) == "" || strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" {
 		return ErrInvalid
@@ -301,6 +304,7 @@ func validateCreate(tenantID, configVersion, publishKey, requestHash, requestedB
 	return nil
 }
 
+// validateBinding 校验发布消费审批所需的绑定字段。
 func validateBinding(binding Binding) error {
 	if strings.TrimSpace(binding.TenantID) == "" || strings.TrimSpace(binding.ConfigVersion) == "" || strings.TrimSpace(binding.ApprovalID) == "" || strings.TrimSpace(binding.PublishIdempotencyKey) == "" || strings.TrimSpace(binding.RequestHash) == "" || strings.TrimSpace(binding.Publisher) == "" {
 		return ErrInvalid
@@ -308,6 +312,7 @@ func validateBinding(binding Binding) error {
 	return nil
 }
 
+// checkBinding 确认审批记录与发布请求属于同一不可变操作。
 func checkBinding(record Record, binding Binding) error {
 	if record.TenantID != binding.TenantID || record.ConfigVersion != binding.ConfigVersion || record.ID != binding.ApprovalID || record.PublishIdempotencyKey != binding.PublishIdempotencyKey || record.RequestHash != binding.RequestHash {
 		return ErrBindingConflict
@@ -318,6 +323,7 @@ func checkBinding(record Record, binding Binding) error {
 	return nil
 }
 
+// stateError 将不允许的审批状态转换为稳定错误。
 func stateError(state string) error {
 	if state == StateExpired {
 		return ErrExpired
@@ -325,6 +331,7 @@ func stateError(state string) error {
 	return ErrStateConflict
 }
 
+// newID 生成不包含业务内容的随机审批标识。
 func newID() (string, error) {
 	var value [12]byte
 	if _, err := rand.Read(value[:]); err != nil {
@@ -338,22 +345,27 @@ func NewID() (string, error) {
 	return newID()
 }
 
+// recordKey 组合租户、配置版本和审批 ID，隔离内存记录。
 func recordKey(tenantID, configVersion, approvalID string) string {
 	return tenantID + "\x00" + configVersion + "\x00" + approvalID
 }
 
+// bindingKey 组合审批绑定的租户、版本和发布键。
 func bindingKey(tenantID, configVersion, publishKey string) string {
 	return tenantID + "\x00" + configVersion + "\x00" + publishKey
 }
 
+// operationKey 组合控制面操作的租户、类型和幂等键。
 func operationKey(tenantID, operation, key string) string {
 	return tenantID + "\x00" + operation + "\x00" + key
 }
 
+// clone 返回审批记录的值副本，避免暴露存储内部状态。
 func clone(record Record) Record {
 	return record
 }
 
+// contextError 保持内存审批存储与数据库实现一致的取消语义。
 func contextError(ctx context.Context) error {
 	if ctx == nil {
 		return nil

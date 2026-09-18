@@ -190,6 +190,7 @@ func applyLegacyDefaults(target *Target) {
 	}
 }
 
+// allDataClasses 返回当前版本允许的数据等级集合。
 func allDataClasses() []string {
 	return []string{"public", "internal", "confidential", "restricted"}
 }

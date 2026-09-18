@@ -1,4 +1,4 @@
-.PHONY: fmt vet test generate-check check compatibility reliability integration build image smoke bench demo validate run
+.PHONY: fmt vet test generate-check comment-check check compatibility reliability integration build image smoke bench demo validate run
 
 fmt:
 	gofmt -w cmd internal
@@ -13,8 +13,12 @@ generate-check:
 	go generate ./internal/decision
 	git diff --exit-code -- internal/decision/testdata/fixtures.json
 
+comment-check:
+	go run ./cmd/commentcheck ./cmd ./internal
+
 check:
 	test -z "$$(gofmt -l cmd internal)"
+	$(MAKE) comment-check
 	go vet ./...
 	$(MAKE) generate-check
 	go test ./... -race

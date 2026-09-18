@@ -119,6 +119,7 @@ func targetPolicyChanged(before, after config.Target) bool {
 		!reflect.DeepEqual(before.Pricing, after.Pricing)
 }
 
+// modelMap 将模型切片转换为按逻辑 ID 索引的映射。
 func modelMap(models []config.Model) map[string]config.Model {
 	result := make(map[string]config.Model, len(models))
 	for _, model := range models {
@@ -127,6 +128,7 @@ func modelMap(models []config.Model) map[string]config.Model {
 	return result
 }
 
+// targetMap 将目标切片转换为按目标 ID 索引的映射。
 func targetMap(targets []config.Target) map[string]config.Target {
 	result := make(map[string]config.Target, len(targets))
 	for _, target := range targets {
@@ -135,10 +137,12 @@ func targetMap(targets []config.Target) map[string]config.Target {
 	return result
 }
 
+// modelPath 生成安全的逻辑模型差异路径。
 func modelPath(id string) string {
 	return fmt.Sprintf("models[%s]", id)
 }
 
+// targetPath 生成安全的模型目标差异路径。
 func targetPath(modelID, targetID string) string {
 	return modelPath(modelID) + fmt.Sprintf(".targets[%s]", targetID)
 }

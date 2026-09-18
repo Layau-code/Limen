@@ -210,10 +210,12 @@ func associatedData(tenantID, provider, endpointID string) []byte {
 	return []byte(tenantID + "\x00" + provider + "\x00" + endpointID)
 }
 
+// activeKey 组合租户、Provider 和 endpoint，定位当前有效凭据。
 func activeKey(tenantID, provider, endpointID string) string {
 	return tenantID + "\x00" + provider + "\x00" + endpointID
 }
 
+// credentialID 根据密文和时间生成不包含明文的凭据摘要标识。
 func credentialID(sealed []byte, now time.Time) string {
 	sum := sha256.Sum256(append(sealed, []byte(now.UTC().Format(time.RFC3339Nano))...))
 	return "cred_" + hex.EncodeToString(sum[:12])
@@ -228,6 +230,7 @@ func NewID() (string, error) {
 	return "cred_" + hex.EncodeToString(bytes), nil
 }
 
+// contextError 保持内存凭据存储与数据库存储一致的取消语义。
 func contextError(ctx context.Context) error {
 	if ctx == nil {
 		return nil

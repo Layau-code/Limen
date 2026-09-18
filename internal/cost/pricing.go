@@ -94,6 +94,7 @@ func FormatUSD(nanoUSD int64) string {
 	return whole + "." + fraction
 }
 
+// parseNanoUSD 将非负十进制定价解析为纳美元整数。
 func parseNanoUSD(raw string) (int64, error) {
 	raw = strings.TrimSpace(raw)
 	parts := strings.Split(raw, ".")
@@ -119,6 +120,7 @@ func parseNanoUSD(raw string) (int64, error) {
 	return whole*nanoUSDPerUSD + fractionValue, nil
 }
 
+// decimalDigits 判断字符串是否只包含十进制数字。
 func decimalDigits(value string) bool {
 	for _, character := range value {
 		if character < '0' || character > '9' {
@@ -128,6 +130,7 @@ func decimalDigits(value string) bool {
 	return true
 }
 
+// roundedCost 按纳美元精度计算并四舍五入 Token 成本。
 func roundedCost(tokens, price int64) (int64, error) {
 	if tokens < 0 || price < 0 {
 		return 0, errors.New("tokens and price must be non-negative")
