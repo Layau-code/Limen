@@ -664,7 +664,7 @@ git diff --check
 
 ### 阶段 B：Run 与可信账本
 
-引入 PostgreSQL、迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询与 LISTEN/NOTIFY 取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。真实 PostgreSQL 已覆盖 RLS、100 并发准入、同键幂等、并发唯一账本、双 Store 租约竞争、独立进程强制终止、数据库暂停/恢复和取消通知/轮询；阶段 B 的关键故障边界已有自动化证据。
+引入 PostgreSQL、事务级 advisory lock 迁移、Tenant、Scope、组合外键与 RLS、Run/Request/Attempt 状态机、Idempotency-Key、调用前 Attempt 持久化、软预算、并发准入、同步/后台结算、Ledger、三十秒租约恢复和跨实例取消事件；当前实现已完成租约获取、续租、释放、未知费用恢复、轮询与 LISTEN/NOTIFY 取消、Provider 凭据加密与 endpoint 绑定，并为凭据变更增加 LISTEN/NOTIFY 刷新。真实 PostgreSQL 已覆盖迁移并发锁、RLS、100 并发准入、同键幂等、并发唯一账本、双 Store 租约竞争、独立进程强制终止、数据库暂停/恢复和取消通知/轮询；阶段 B 的关键故障边界已有自动化证据。
 
 ### 阶段 C：版本化控制面与 Replay
 

@@ -38,6 +38,45 @@ var (
 	integrationSequence  atomic.Uint64
 )
 
+// TestPostgresIntegrationMigrationsSerializeStartup 验证迁移会等待已有事务级 advisory lock。
+func TestPostgresIntegrationMigrationsSerializeStartup(t *testing.T) {
+	adminDB, _, _ := postgresIntegrationDatabases(t)
+	secondDB, err := OpenPostgres(os.Getenv("LIMEN_TEST_DATABASE_ADMIN_URL"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+
+	lockTx, err := adminDB.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockTx.ExecContext(context.Background(), `SELECT pg_advisory_xact_lock($1)`, migrationAdvisoryLockID); err != nil {
+		_ = lockTx.Rollback()
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	go func() { result <- ApplyMigrations(context.Background(), secondDB) }()
+	select {
+	case err := <-result:
+		_ = lockTx.Rollback()
+		t.Fatalf("migration completed before advisory lock release: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lockTx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("migration did not resume after advisory lock release")
+	}
+}
+
 // TestPostgresIntegrationRLSUsesDatabasePolicy 验证受限角色无法绕过租户行策略。
 func TestPostgresIntegrationRLSUsesDatabasePolicy(t *testing.T) {
 	adminDB, appDB, _ := postgresIntegrationDatabases(t)

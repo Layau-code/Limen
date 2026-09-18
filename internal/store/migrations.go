@@ -7,6 +7,8 @@ import (
 	"errors"
 )
 
+const migrationAdvisoryLockID int64 = 0x4c494d454e
+
 //go:embed migrations/001_run_ledger.sql
 var runLedgerMigration string
 
@@ -56,6 +58,10 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
+	// 事务级锁确保多个实例同时启动时只有一个实例执行 DDL。
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationAdvisoryLockID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS limen_schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 		return err
 	}

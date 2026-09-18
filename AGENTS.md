@@ -21,6 +21,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 阶段 B 的 `internal/run` 和 `internal/store` 已定义 Run/Request/Attempt、幂等和账本边界；无 Run Chat 仍走原有内存结算路径。
 - HTTP Run 控制面只有在显式 `LIMEN_RUN_STORE=memory` 时启用；内存实现仅用于开发演示，不能作为生产账本。
 - 配置 `LIMEN_DATABASE_URL` 后必须通过 `database/sql` 和参数化 PostgreSQL Repository 启动；迁移只使用版本表执行一次，DSN 不得进入日志。
+- PostgreSQL 启动迁移必须在同一事务内先获取固定 advisory lock，再检查版本并执行 DDL；多实例并发启动不能依赖应用层互斥或偶然的 DDL 顺序。
 - 主服务必须先成功绑定 `LIMEN_ADDR` 的 TCP socket，再将 Health 标记为 ready；监听失败不得短暂暴露就绪状态，服务使用已绑定的 Listener 调用 `Serve`。
 - 配置发布可选启用 `LIMEN_CONFIG_APPROVAL_REQUIRED=true`；`internal/approval` 负责双人审批状态机，审批绑定租户、配置版本、发布幂等键和请求哈希，PostgreSQL 发布必须在同一事务内消费审批；静态 actor 不能满足身份分离。
 - 鉴权必须先生成带 `tenant_id` 和 Scope 的 Principal；Provider、Router 和 Store 不得读取原始 API Key。静态 Key 由 `LIMEN_API_SCOPES` 限制，也可切换 PostgreSQL Key Store。

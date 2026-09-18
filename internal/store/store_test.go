@@ -16,6 +16,16 @@ func TestMigrationHelpersRequireDatabase(t *testing.T) {
 	}
 }
 
+func TestMigrationsUseTransactionAdvisoryLock(t *testing.T) {
+	contents, err := os.ReadFile("migrations.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "pg_advisory_xact_lock") {
+		t.Fatal("migrations must serialize concurrent startup with a transaction advisory lock")
+	}
+}
+
 // TestRunLedgerMigrationDefinesTenantIsolation 验证迁移中的高风险租户隔离约束。
 func TestRunLedgerMigrationDefinesTenantIsolation(t *testing.T) {
 	contents, err := os.ReadFile("migrations/001_run_ledger.sql")
