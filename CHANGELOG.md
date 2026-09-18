@@ -16,6 +16,7 @@
 - OpenAI 兼容契约支持 `max_completion_tokens`，保留新版 OpenAI 字段语义，并拒绝与 `max_tokens` 同时出现。
 - OpenAI 兼容契约支持 `developer` 消息角色；OpenAI 原样转发，Anthropic 转换为顶层 `system`。
 - Chat 和 Dry Run 响应新增 `X-Limen-Plan-Hash`，并把固定摘要接入安全访问日志和 Trace；无可用目标的错误也保留计划证据。
+- 受治理 Chat 明确幂等重试契约：执行中的重复请求返回原 Request ID 和 `Retry-After`，完成后重试与请求哈希冲突使用稳定错误码，且不会重复调用 Provider。
 - Decision Journal 读取时新增 `plan_hash` 和持久化摘要列校验，检测 JSONB 证据篡改后拒绝 Replay。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。

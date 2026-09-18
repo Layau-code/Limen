@@ -112,7 +112,7 @@ Idempotency-Key: create-agent-run-001
 }
 ~~~
 
-聊天请求通过 X-Limen-Run-ID Header 关联。受治理请求必须同时携带 Idempotency-Key；无 Run 请求可以选择携带。
+聊天请求通过 X-Limen-Run-ID Header 关联。受治理请求必须同时携带 Idempotency-Key；无 Run 请求可以选择携带。相同幂等键在请求执行期间重试返回 `409 request_in_progress`、原 Request ID 和 `Retry-After: 1`；请求完成后重试返回 `409 request_already_processed`；请求哈希不同返回 `409 idempotency_conflict`。这些分支都不会再次调用 Provider，客户端应通过 Request 查询接口读取最终结算状态。
 
 Run 创建时固定模型目录版本、策略版本和价格版本。模型实时健康状态不固定，但每次决策保存实际使用的健康快照。全局模型封禁、密钥撤销和安全策略可以覆盖 Run 的固定配置。
 

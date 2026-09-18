@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -355,6 +357,93 @@ func TestGovernedChatAdmitsAndSettlesRunRequest(t *testing.T) {
 	handler.ServeHTTP(duplicateResponse, duplicate)
 	if duplicateResponse.Code != http.StatusConflict || !strings.Contains(duplicateResponse.Body.String(), "request_already_processed") {
 		t.Fatalf("duplicate = %d %s", duplicateResponse.Code, duplicateResponse.Body.String())
+	}
+}
+
+func TestGovernedChatIdempotencyProvidesRetryContract(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	var calls atomic.Int32
+	upstream := testProviderFunc(func(ctx context.Context, _ provider.ChatRequest) (provider.Response, error) {
+		calls.Add(1)
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+			return provider.Response{StatusCode: http.StatusOK, ContentType: "application/json", Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`)), Usage: staticUsage{InputTokens: 1, OutputTokens: 1, Complete: true}}, nil
+		case <-ctx.Done():
+			return provider.Response{}, ctx.Err()
+		}
+	})
+	runs := run.NewMemoryService(nil)
+	handler := NewWithRuns("limen-secret", newTestRouter(upstream, nil, registry), runs)
+	create := httptest.NewRequest(http.MethodPost, "/v1/limen/runs", strings.NewReader(`{"soft_budget_usd":"1","max_parallelism":1}`))
+	create.Header.Set("Authorization", "Bearer limen-secret")
+	create.Header.Set("Idempotency-Key", "idempotency-run")
+	createdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createdResponse, create)
+	var created run.Run
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+
+	newChat := func(body string) *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer limen-secret")
+		request.Header.Set("X-Limen-Run-ID", created.ID)
+		request.Header.Set("Idempotency-Key", "same-request")
+		return request
+	}
+	body := `{"model":"model","messages":[{"role":"user","content":"hello"}]}`
+	firstResponse := httptest.NewRecorder()
+	finished := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(firstResponse, newChat(body))
+		close(finished)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+
+	duplicateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateResponse, newChat(body))
+	requestID := duplicateResponse.Header().Get("X-Limen-Request-ID")
+	if duplicateResponse.Code != http.StatusConflict || duplicateResponse.Header().Get("Retry-After") != "1" || requestID == "" || !strings.Contains(duplicateResponse.Body.String(), "request_in_progress") {
+		t.Fatalf("in-progress duplicate = %d headers=%v body=%s", duplicateResponse.Code, duplicateResponse.Header(), duplicateResponse.Body.String())
+	}
+
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("first request did not finish")
+	}
+	if firstResponse.Code != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("first response = %d calls=%d body=%s", firstResponse.Code, calls.Load(), firstResponse.Body.String())
+	}
+
+	processedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(processedResponse, newChat(body))
+	if processedResponse.Code != http.StatusConflict || processedResponse.Header().Get("X-Limen-Request-ID") != requestID || processedResponse.Header().Get("Retry-After") != "" || !strings.Contains(processedResponse.Body.String(), "request_already_processed") {
+		t.Fatalf("processed duplicate = %d headers=%v body=%s", processedResponse.Code, processedResponse.Header(), processedResponse.Body.String())
+	}
+
+	conflictResponse := httptest.NewRecorder()
+	handler.ServeHTTP(conflictResponse, newChat(`{"model":"model","messages":[{"role":"user","content":"changed"}]}`))
+	if conflictResponse.Code != http.StatusConflict || conflictResponse.Header().Get("X-Limen-Request-ID") != requestID || !strings.Contains(conflictResponse.Body.String(), "idempotency_conflict") {
+		t.Fatalf("hash conflict = %d headers=%v body=%s", conflictResponse.Code, conflictResponse.Header(), conflictResponse.Body.String())
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls.Load())
 	}
 }
 

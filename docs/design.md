@@ -90,7 +90,7 @@ HTTP Principal/Scope 鉴权与解析
 
 离线 `limen explain` 使用固定评估时间和模型配置版本生成同一套计划哈希；它只返回 Provider 名称、opaque 目标引用、候选原因和哈希，不返回 Prompt 或 `upstream_model`。没有可用目标时命令仍返回候选淘汰原因和 `no_eligible_target`，便于在发布前定位能力契约与模型目录冲突。
 
-阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
+阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重；重复请求在执行中返回 `request_in_progress`、原 Request ID 和固定 `Retry-After`，已完成请求返回 `request_already_processed`，哈希不同返回 `idempotency_conflict`，三种情况都不会再次调用 Provider。PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。
 
 Run 控制面的 HTTP 响应使用独立安全 DTO，只返回生命周期、并发、结算和决策关联状态；`tenant_id`、幂等键、请求哈希、租约字段以及 Provider 内部 Attempt 不进入公共响应。
 

@@ -1350,6 +1350,7 @@ func (h *Handler) startRequestLease(w http.ResponseWriter, r *http.Request, tena
 func writeRunLeaseError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, run.ErrLeaseUnavailable):
+		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusConflict, "request lease is held by another worker", "invalid_request_error", "request_in_progress")
 	case errors.Is(err, run.ErrRequestAlreadyProcessed):
 		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
@@ -1794,6 +1795,7 @@ func writeRunAdmissionError(w http.ResponseWriter, err error, requestID string) 
 	}
 	switch {
 	case errors.Is(err, run.ErrRequestInProgress):
+		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusConflict, "request is in progress", "invalid_request_error", "request_in_progress")
 	case errors.Is(err, run.ErrRequestAlreadyProcessed):
 		writeError(w, http.StatusConflict, "request already processed", "invalid_request_error", "request_already_processed")
