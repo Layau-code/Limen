@@ -258,7 +258,9 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 			attribute.Int("limen.decision.target_count", len(plan.Targets)),
 		)
 		if err == nil {
-			span.SetAttributes(attribute.String("limen.model.id", request.Model))
+			if modelID := traceModelID(request.Model, plan); modelID != "" {
+				span.SetAttributes(attribute.String("limen.model.id", modelID))
+			}
 		}
 	}
 	if err != nil {
@@ -281,6 +283,17 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 	}
 	result.Input = input
 	return result, err
+}
+
+// traceModelID 返回由执行计划确认的稳定模型标识，避免记录任意请求输入。
+func traceModelID(requested string, plan decision.ExecutionPlan) string {
+	if requested == "auto" {
+		return "auto"
+	}
+	if len(plan.Targets) == 0 {
+		return ""
+	}
+	return plan.Targets[0].ModelID
 }
 
 // ChatWithContractHook 在 Provider 调用前执行一次决策审计回调。

@@ -134,6 +134,32 @@ func TestTraceOmitsRejectedModelAndUnmatchedPath(t *testing.T) {
 	}
 }
 
+func TestCompatibilityTraceUsesStableModelPattern(t *testing.T) {
+	recorder := installRecordingTracer(t)
+	upstream := testProviderFunc(func(context.Context, provider.ChatRequest) (provider.Response, error) {
+		return provider.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"ok"}`))}, nil
+	})
+	handler := WithTracing(New("secret", newTestRouter(upstream, nil, gateway.NewCompatibilityRegistry())))
+	requestedModel := "gpt-client-supplied-opaque-9f4c"
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"`+requestedModel+`","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	decisionSpan := findSpan(t, recorder.Ended(), "limen.decision")
+	if got := spanAttribute(decisionSpan, "limen.model.id"); got != "gpt-*" {
+		t.Fatalf("model trace attribute=%q, want stable compatibility pattern", got)
+	}
+	for _, span := range recorder.Ended() {
+		if strings.Contains(fmt.Sprint(span.Attributes()), requestedModel) {
+			t.Fatalf("trace contains raw compatibility model %q", requestedModel)
+		}
+	}
+}
+
 // installRecordingTracer 为测试安装内存 Span 记录器，并在结束时恢复全局状态。
 func installRecordingTracer(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()

@@ -127,7 +127,7 @@ Chat API 当前支持 `model`、文本 `messages`（包括 `developer` 角色）
 
 响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`、`X-Limen-Decision-ID` 和 `X-Limen-Plan-Hash`；计划摘要可将一次调用关联到 Decision Journal 和 Replay。响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志和 Trace 只读取固定白名单，不记录动态 Path、API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
-配置 OTLP 端点后，每个请求建立 `limen.http.request` 根 Span；受治理请求继续产生 `limen.run.admission`、`limen.decision`、每次真实调用的 `limen.provider.attempt` 和 `limen.settlement`。属性只允许稳定标识、有限枚举、状态和计数，不写入 Prompt、Response、Authorization、API Key、Provider Key、原始错误正文或上游模型名。入口只提取 W3C `traceparent`，不接受 Baggage。Exporter 使用后台批处理，初始化失败会禁用 Trace，运行时导出失败只写通用告警。
+配置 OTLP 端点后，每个请求建立 `limen.http.request` 根 Span；受治理请求继续产生 `limen.run.admission`、`limen.decision`、每次真实调用的 `limen.provider.attempt` 和 `limen.settlement`。属性只允许稳定标识、有限枚举、状态和计数，不写入 Prompt、Response、Authorization、API Key、Provider Key、原始错误正文或上游模型名。`limen.model.id` 只取执行计划确认的逻辑模型 ID；兼容模式统一记录 `gpt-*`、`o1-*`、`o3-*` 或 `claude-*` 固定模式，不直接记录请求模型字符串。入口只提取 W3C `traceparent`，不接受 Baggage。Exporter 使用后台批处理，初始化失败会禁用 Trace，运行时导出失败只写通用告警。
 
 HTTP 根 Span 和结构化日志在第一次写出响应正文时记录 `ttfb_ms`；SSE 的首段因此可以独立于完整响应和结算耗时进行排障，没有正文的响应不伪造 TTFB。
 

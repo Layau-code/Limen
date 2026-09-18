@@ -67,7 +67,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 12. Run 创建后固定 `strategy` 和 `config_version`；每次受治理 Chat 必须按该版本加载目录和路由参数，不能因线上发布切换配置；请求中的策略只能与 Run 一致，冲突必须返回 `strategy_conflict`，不能静默覆盖。
 13. `suspended_accounting` 期间允许记录 `complete_requested` 但不得直接完成；所有未知费用处置完毕后才按固定优先级恢复或进入 `completed`。
 14. 生产 PostgreSQL 事务连接池必须通过 `store.OpenPostgres` 设置有限 I/O 期限；`LISTEN/NOTIFY` 专用监听器除外，禁止为业务 Store 重新使用裸 `sql.Open("postgres", ...)`。
-15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。Metrics、Trace 和日志中的目标标识必须使用 `catalog.OpaqueTargetID`；内部 Attempt/结算记录可保留真实映射，但观测字段不能通过派生 `target_id` 间接泄露上游模型名。
+15. Trace 属性必须采用固定白名单；禁止记录上游模型名、原始错误、正文和密钥，也禁止传播可能携带任意用户数据的 Baggage。`limen.model.id` 必须来自执行计划中的逻辑模型或兼容模式固定前缀，不能直接写入请求中的模型字符串。Metrics、Trace 和日志中的目标标识必须使用 `catalog.OpaqueTargetID`；内部 Attempt/结算记录可保留真实映射，但观测字段不能通过派生 `target_id` 间接泄露上游模型名。
 
 ## Provider 与路由
 
@@ -99,6 +99,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Decision Engine 测试必须覆盖能力、质量下限、流式、上下文、数据等级等硬过滤、策略排序、稳定原因码和软预算策略切换；100 组已提交 golden fixture 必须验证重建 Engine 后的规范计划字节与 `plan_hash`，不得静默更新预期值。
 - API 测试必须覆盖未知字段和暂不支持字段的 `unsupported_field`、Limen 契约错误，以及 `model=auto` 的可观察计划结果。
 - API 测试必须验证成功、Dry Run 和 `no_eligible_target` 响应的 `X-Limen-Plan-Hash` 与计划摘要一致；日志和 Trace 只能通过固定白名单记录该摘要。
+- Trace 测试必须验证兼容模式的 `limen.model.id` 使用固定前缀而非原始客户端模型名；显式模型也必须以执行计划确认的逻辑 ID 为准。
 - Dry Run 测试必须证明不调用 Provider、不改变熔断状态，并返回稳定的计划哈希和候选原因。
 - 配置版本预演测试必须证明读取指定草稿、返回对应 `config_version`，且不改变当前 Router、熔断状态或 Provider 调用计数。
 - 配置影响分析测试必须证明历史输入和草稿目标均被正确使用，返回 Provider/策略变化但不泄露上游模型名，且不调用 Provider、不改变当前 Router。
