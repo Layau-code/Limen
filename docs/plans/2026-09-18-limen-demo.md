@@ -25,4 +25,4 @@
 make demo
 ```
 
-输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`selection.rejected[0]=basic-model:quality_tier_too_low`、`draft_provider=anthropic`、`impact_detected=true`、`provider_calls=2`、`run.state=active`、`run.settlement_status=complete`、`run.in_flight=0` 和 `run.settled_cost_nano_usd=250000`。
+输出必须稳定包含 `openai:503>anthropic:200`、`attempts=2`、`selection.requested_model=auto`、`selection.selected_model=smart-model`、`selection.data_class=internal`、`selection.rejected[0]=basic-model:quality_tier_too_low`、`draft_provider=anthropic`、`impact_detected=true`、`provider_calls=2`、`run.state=active`、`run.settlement_status=complete`、`run.in_flight=0`、`run.settled_cost_nano_usd=250000` 和 `run.decision_bound=true`。

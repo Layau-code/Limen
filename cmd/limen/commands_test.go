@@ -76,6 +76,7 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 			SettlementStatus   string `json:"settlement_status"`
 			InFlight           int    `json:"in_flight"`
 			SettledCostNanoUSD int64  `json:"settled_cost_nano_usd"`
+			DecisionBound      bool   `json:"decision_bound"`
 		} `json:"run"`
 	}
 	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
@@ -90,7 +91,7 @@ func TestRunCommandDemoReportsFallbackAndDraftImpact(t *testing.T) {
 	if len(result.Selection.Rejected) != 1 || result.Selection.Rejected[0] != "basic-model:quality_tier_too_low" {
 		t.Fatalf("demo rejected candidates = %v", result.Selection.Rejected)
 	}
-	if result.Run.State != "active" || result.Run.SettlementStatus != "complete" || result.Run.InFlight != 0 || result.Run.SettledCostNanoUSD != 250000 {
+	if result.Run.State != "active" || result.Run.SettlementStatus != "complete" || result.Run.InFlight != 0 || result.Run.SettledCostNanoUSD != 250000 || !result.Run.DecisionBound {
 		t.Fatalf("demo run = %+v", result.Run)
 	}
 	if strings.Contains(stdout.String(), "gpt-") || strings.Contains(stdout.String(), "claude-") {

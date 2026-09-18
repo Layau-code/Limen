@@ -51,6 +51,7 @@ type demoRun struct {
 	SettlementStatus   string `json:"settlement_status"`
 	InFlight           int    `json:"in_flight"`
 	SettledCostNanoUSD int64  `json:"settled_cost_nano_usd"`
+	DecisionBound      bool   `json:"decision_bound"`
 }
 
 // runDemo 展示一次 Fallback 和配置草稿影响分析，不读取配置或访问外部网络。
@@ -154,7 +155,7 @@ func demoRunSummary(decisionID string) (demoRun, error) {
 	if !ok {
 		return demoRun{}, errors.New("demo run not found")
 	}
-	return demoRun{State: string(item.State), SettlementStatus: settled.SettlementStatus, InFlight: item.InFlight, SettledCostNanoUSD: item.SettledCostNanoUSD}, nil
+	return demoRun{State: string(item.State), SettlementStatus: settled.SettlementStatus, InFlight: item.InFlight, SettledCostNanoUSD: item.SettledCostNanoUSD, DecisionBound: settled.DecisionID == decisionID}, nil
 }
 
 // rejectedCandidates 返回逻辑模型及稳定原因码，不暴露目标内部映射。
