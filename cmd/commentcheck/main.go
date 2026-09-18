@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // main 检查命令行指定目录中的非测试 Go 文件。
@@ -34,7 +35,7 @@ func main() {
 			}
 			for _, declaration := range file.Decls {
 				function, ok := declaration.(*ast.FuncDecl)
-				if !ok || function.Doc != nil {
+				if !ok || hasChineseComment(function.Doc) {
 					continue
 				}
 				position := fset.Position(function.Pos())
@@ -51,4 +52,17 @@ func main() {
 	if missing > 0 {
 		os.Exit(1)
 	}
+}
+
+// hasChineseComment 判断用途注释是否至少包含简体中文字符。
+func hasChineseComment(comment *ast.CommentGroup) bool {
+	if comment == nil {
+		return false
+	}
+	for _, character := range comment.Text() {
+		if unicode.Is(unicode.Han, character) {
+			return true
+		}
+	}
+	return false
 }
