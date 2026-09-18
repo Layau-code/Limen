@@ -120,6 +120,28 @@ func TestRouterIncludesRunSnapshotInDecision(t *testing.T) {
 	}
 }
 
+func TestRouterUsesExecutionPolicyForBreakerObservation(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newRouter(nil, registry, Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 3, Cooldown: time.Minute}, func() time.Time { return now })
+	model := registry.List()[0]
+	breaker := router.breakers[targetKey(model, model.Targets[0])]
+	breaker.recordFailureWith(1)
+	now = now.Add(2 * time.Second)
+	policy := router.Policy()
+	policy.Cooldown = time.Second
+	input, _, err := router.planWithInputAndRunPolicy(provider.ChatRequest{Model: "model"}, decision.Contract{}, decision.RunSnapshot{}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := input.Candidates[0].Health.State; got != "half_open" || !input.Candidates[0].Health.ProbeAvailable {
+		t.Fatalf("health=%+v, want half-open probe under execution policy", input.Candidates[0].Health)
+	}
+}
+
 func TestRouterRejectsRunWithInsufficientDeadline(t *testing.T) {
 	registry, err := NewModelRegistry([]Model{{ID: "model", Targets: []Target{{ID: "target", Provider: "openai", UpstreamModel: "gpt-test", Pricing: &cost.Pricing{InputPerMillionNanoUSD: 1, OutputPerMillionNanoUSD: 1}}}}})
 	if err != nil {

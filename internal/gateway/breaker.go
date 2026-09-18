@@ -11,8 +11,6 @@ type circuitBreaker struct {
 	failures    int
 	openedAt    time.Time
 	probeActive bool
-	threshold   int
-	cooldown    time.Duration
 	now         func() time.Time
 }
 
@@ -22,33 +20,33 @@ type breakerObservation struct {
 	probeAvailable bool
 }
 
-// newCircuitBreaker 创建使用指定阈值、冷却时间和时钟的熔断器。
-func newCircuitBreaker(threshold int, cooldown time.Duration, now func() time.Time) *circuitBreaker {
-	return &circuitBreaker{threshold: threshold, cooldown: cooldown, now: now}
+// newCircuitBreaker 创建使用指定时钟的目标健康状态。
+func newCircuitBreaker(now func() time.Time) *circuitBreaker {
+	return &circuitBreaker{now: now}
 }
 
-// allow 判断目标当前能否调用，并保证 Half-Open 只放行一个探测请求。
-func (breaker *circuitBreaker) allow() bool {
+// allowWithCooldown 按本次执行的冷却策略判断目标能否调用。
+func (breaker *circuitBreaker) allowWithCooldown(cooldown time.Duration) bool {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 	if breaker.openedAt.IsZero() {
 		return true
 	}
-	if breaker.now().Sub(breaker.openedAt) < breaker.cooldown || breaker.probeActive {
+	if breaker.now().Sub(breaker.openedAt) < cooldown || breaker.probeActive {
 		return false
 	}
 	breaker.probeActive = true
 	return true
 }
 
-// observe 在不改变熔断状态的前提下返回当前健康观察结果。
-func (breaker *circuitBreaker) observe() breakerObservation {
+// observeWithCooldown 按本次执行的冷却策略读取目标健康状态。
+func (breaker *circuitBreaker) observeWithCooldown(cooldown time.Duration) breakerObservation {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 	if breaker.openedAt.IsZero() {
 		return breakerObservation{state: "closed"}
 	}
-	if breaker.now().Sub(breaker.openedAt) < breaker.cooldown {
+	if breaker.now().Sub(breaker.openedAt) < cooldown {
 		return breakerObservation{state: "open"}
 	}
 	return breakerObservation{state: "half_open", probeAvailable: !breaker.probeActive}
@@ -63,18 +61,18 @@ func (breaker *circuitBreaker) recordSuccess() {
 	breaker.probeActive = false
 }
 
-// recordFailure 累计瞬时失败，并在达到阈值或探测失败时打开熔断器。
-func (breaker *circuitBreaker) recordFailure() {
+// recordFailureWith 按本次执行的失败阈值更新目标熔断状态。
+func (breaker *circuitBreaker) recordFailureWith(threshold int) {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 	if breaker.probeActive {
-		breaker.failures = breaker.threshold
+		breaker.failures = threshold
 		breaker.openedAt = breaker.now()
 		breaker.probeActive = false
 		return
 	}
 	breaker.failures++
-	if breaker.failures >= breaker.threshold {
+	if breaker.failures >= threshold {
 		breaker.openedAt = breaker.now()
 	}
 }

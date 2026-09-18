@@ -83,9 +83,9 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: "target_unavailable"})
 			continue
 		}
-		if !breaker.allow() {
+		if !breaker.allowWithCooldown(policy.Cooldown) {
 			outcome := "circuit_open"
-			if breaker.observe().state == "half_open" {
+			if breaker.observeWithCooldown(policy.Cooldown).state == "half_open" {
 				outcome = "skipped_due_to_race"
 			}
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
@@ -174,7 +174,7 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 			}
 			decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 			attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome})
-			breaker.recordFailure()
+			breaker.recordFailureWith(policy.FailureThreshold)
 			lastErr = err
 			continue
 		}
@@ -187,7 +187,7 @@ func (executor *Executor) execute(parent context.Context, request provider.ChatR
 		decision.Steps = append(decision.Steps, DecisionStep{Provider: target.Provider, Outcome: outcome})
 		attemptReports = append(attemptReports, AttemptReport{TargetID: target.ID, Provider: target.Provider, UpstreamModel: target.UpstreamModel, Outcome: outcome, StatusCode: response.StatusCode, ErrorClass: response.ErrorClass, ProviderRequestID: response.ProviderRequestID})
 		if provider.IsRetryableResponse(response) {
-			breaker.recordFailure()
+			breaker.recordFailureWith(policy.FailureThreshold)
 			lastErr = nil
 			pendingResponse = response
 			pendingCancel = cancelAttempt

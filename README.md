@@ -24,7 +24,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - Provider 凭据可选使用 AES-GCM 加密存储，密文绑定租户、Provider 和 endpoint；启用后每次出站调用按请求租户解析凭据，缺失凭据不会回退到其他租户。
 - 一次请求共享总时间预算；每个目标最多调用一次，避免重试风暴和重复计费。
 - 仅对 Provider 归一化的 `retryable_transient` 和传输错误执行 Fallback；SSE 开始后不重放。
-- 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志。
+- 进程内并发安全熔断器、可解释路由响应头和不记录敏感正文的结构化日志；熔断状态按目标共享，但阈值与冷却时间从当前 Run 固定的路由策略读取，配置发布不会把旧策略悄悄带入新请求。
 - Provider 出站默认使用 HTTPS、关闭环境代理和自动重定向，并按 endpoint allowlist 与解析后的 IP 阻断内部地址；即使构造函数未注入 Client，也不会回退到 `http.DefaultClient`。
 - Provider 用量采集与按目标价格的定点成本结算；普通响应和 SSE 都保持实时转发。
 - 核心 HTTP 数据面不使用 Web 框架或 ORM；外部依赖只用于 PostgreSQL 与 OpenTelemetry 等明确边界，并包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。

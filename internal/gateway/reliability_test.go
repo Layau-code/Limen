@@ -148,7 +148,7 @@ func TestRouterReturnsLastResponseWhenRemainingTargetIsOpen(t *testing.T) {
 		FailureThreshold: 1, Cooldown: time.Hour,
 	})
 	model, _ := router.registry.Resolve("smart-model")
-	router.breakers[targetKey(model, model.Targets[1])].recordFailure()
+	router.breakers[targetKey(model, model.Targets[1])].recordFailureWith(1)
 
 	result, err := router.Chat(context.Background(), provider.ChatRequest{Model: "smart-model"})
 	if err != nil {

@@ -123,7 +123,7 @@ func newRouter(providers map[string]provider.Provider, registry *ModelRegistry, 
 		for _, target := range model.Targets {
 			key := targetKey(model, target)
 			if _, exists := router.breakers[key]; !exists {
-				router.breakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, now)
+				router.breakers[key] = newCircuitBreaker(now)
 			}
 		}
 	}
@@ -166,7 +166,7 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 				nextBreakers[key] = breaker
 				continue
 			}
-			nextBreakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, router.now)
+			nextBreakers[key] = newCircuitBreaker(router.now)
 		}
 	}
 	// 只保留仍有执行引用的历史目标，避免配置发布次数导致熔断器无界增长。
@@ -303,10 +303,14 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 	var input decision.Input
 	var plan decision.ExecutionPlan
 	var err error
+	policy := router.Policy()
+	if options.Policy != nil {
+		policy = *options.Policy
+	}
 	if options.Registry == nil {
-		input, plan, err = router.planWithInputAndRun(request, contract, options.Run)
+		input, plan, err = router.planWithInputAndRunPolicy(request, contract, options.Run, policy)
 	} else {
-		input, plan, err = router.planWithRegistryAndRun(request, contract, options.Registry, options.ConfigVersion, options.Run)
+		input, plan, err = router.planWithRegistryAndRunPolicy(request, contract, options.Registry, options.ConfigVersion, options.Run, policy)
 	}
 	if span.IsRecording() {
 		span.SetAttributes(
@@ -432,7 +436,13 @@ func (router *Router) planWithInput(request provider.ChatRequest, contract decis
 // planWithInputAndRun 将注册表和固定 Run 快照组装为决策输入。
 func (router *Router) planWithInputAndRun(request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
 	registry, configVersion := router.registrySnapshot()
-	return router.planWithRegistryAndRun(request, contract, registry, configVersion, runSnapshot)
+	return router.planWithRegistryAndRunPolicy(request, contract, registry, configVersion, runSnapshot, router.Policy())
+}
+
+// planWithInputAndRunPolicy 使用固定路由策略生成受治理请求的决策计划。
+func (router *Router) planWithInputAndRunPolicy(request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, policy Policy) (decision.Input, decision.ExecutionPlan, error) {
+	registry, configVersion := router.registrySnapshot()
+	return router.planWithRegistryAndRunPolicy(request, contract, registry, configVersion, runSnapshot, policy)
 }
 
 // planWithRegistry 将指定目录和当前熔断快照组装为可持久化的 DecisionInput。
@@ -442,7 +452,12 @@ func (router *Router) planWithRegistry(request provider.ChatRequest, contract de
 
 // planWithRegistryAndRun 使用指定目录和 Run 快照生成决策计划。
 func (router *Router) planWithRegistryAndRun(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
-	return router.planWithRegistryAtAndRun(request, contract, registry, configVersion, router.now(), runSnapshot)
+	return router.planWithRegistryAndRunPolicy(request, contract, registry, configVersion, runSnapshot, router.Policy())
+}
+
+// planWithRegistryAndRunPolicy 使用指定目录和路由策略生成决策计划。
+func (router *Router) planWithRegistryAndRunPolicy(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, runSnapshot decision.RunSnapshot, policy Policy) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistryAtAndRunPolicy(request, contract, registry, configVersion, router.now(), runSnapshot, policy)
 }
 
 // planWithRegistryAt 将指定目录和评估时间组装为可持久化的决策输入。
@@ -452,6 +467,11 @@ func (router *Router) planWithRegistryAt(request provider.ChatRequest, contract 
 
 // planWithRegistryAtAndRun 使用指定时间和 Run 快照生成可复现计划。
 func (router *Router) planWithRegistryAtAndRun(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, evaluatedAt time.Time, runSnapshot decision.RunSnapshot) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistryAtAndRunPolicy(request, contract, registry, configVersion, evaluatedAt, runSnapshot, router.Policy())
+}
+
+// planWithRegistryAtAndRunPolicy 使用指定时间、Run 快照和路由策略生成可复现计划。
+func (router *Router) planWithRegistryAtAndRunPolicy(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string, evaluatedAt time.Time, runSnapshot decision.RunSnapshot, policy Policy) (decision.Input, decision.ExecutionPlan, error) {
 	if registry == nil {
 		return decision.Input{}, decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
 	}
@@ -477,7 +497,7 @@ func (router *Router) planWithRegistryAtAndRun(request provider.ChatRequest, con
 			breaker := router.breakerFor(targetKey(model, target))
 			observation := breakerObservation{}
 			if breaker != nil {
-				observation = breaker.observe()
+				observation = breaker.observeWithCooldown(policy.Cooldown)
 			}
 			candidates = append(candidates, decision.Candidate{
 				ModelID:         model.ID,
@@ -639,7 +659,7 @@ func (router *Router) acquireBreakers(plan decision.ExecutionPlan, policy Policy
 		seen[key] = struct{}{}
 		keys = append(keys, key)
 		if _, ok := router.breakers[key]; !ok {
-			router.breakers[key] = newCircuitBreaker(policy.FailureThreshold, policy.Cooldown, router.now)
+			router.breakers[key] = newCircuitBreaker(router.now)
 		}
 		router.breakerRefs[key]++
 	}

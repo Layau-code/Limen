@@ -343,7 +343,7 @@ Run 策略可以配置 economy_threshold_percent，默认 20。balanced Run 的�
 
 model=auto 搜索整个租户可用目录；显式逻辑模型只在其目标内筛选。显式模型不满足契约时返回 capability_mismatch，不静默换到无关模型。
 
-熔断快照只表示 Decision 时的 observed_eligible。Half-Open 探测资格在 Executor 调用前原子占用；如果计划生成后资格被其他请求占用，Executor 记录 skipped_due_to_race 并继续下一个计划目标。Replay 重现原计划，ExecutionReport 负责说明运行时竞态。
+熔断快照只表示 Decision 时的 observed_eligible。Half-Open 探测资格在 Executor 调用前原子占用；如果计划生成后资格被其他请求占用，Executor 记录 skipped_due_to_race 并继续下一个计划目标。熔断器状态按目标共享，但失败阈值和冷却时间由本次固定 Policy 显式传入决策观察和执行更新，不能从历史配置对象隐式继承。Replay 重现原计划，ExecutionReport 负责说明运行时竞态。
 
 Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`、`deterministic_request`、`authentication`、`quota`、`cancelled` 和 `internal`。当前 OpenAI/Anthropic 适配器已把上游 HTTP 状态归一化到该边界；只有 `retryable_transient` 允许执行计划中的下一个目标，具体分类由 Provider 契约测试固定。
 

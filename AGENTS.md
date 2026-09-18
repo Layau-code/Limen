@@ -84,7 +84,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `Router.ChatWithContract` 先生成 ExecutionPlan，再按计划执行；Half-Open 探测权在执行前再次原子获取，竞争失败记录 `skipped_due_to_race`。
 - Provider 映射使用名称到实例的只读映射。Provider 适配层必须把上游状态归一为稳定错误分类，只有 `retryable_transient` 允许 Fallback；新增真实 Provider 时必须覆盖请求转换、普通响应、SSE、错误分类、超时和取消测试。
 - Provider 的 `ChatRequest` 只携带非敏感 `EndpointID` 绑定标识，不携带 URL；新增或修改目标映射时必须测试 endpoint ID 传播、发布阶段错绑拒绝和 Provider 调用前错绑拒绝。
-- `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，只保留当前目录目标和仍有执行引用的历史目标。Executor 开始执行计划时获取熔断器引用，结束后释放；配置发布次数不能导致历史熔断器无界增长，也不能回收仍在执行旧 Run 的目标。
+- `Router.ReplaceRegistryWithPolicy` 是配置发布的唯一切换入口；切换必须在锁内替换目录、路由策略和熔断器快照，只保留当前目录目标和仍有执行引用的历史目标。Executor 开始执行计划时获取熔断器引用，结束后释放；配置发布次数不能导致历史熔断器无界增长，也不能回收仍在执行旧 Run 的目标。熔断器只保存目标健康状态，阈值和冷却时间必须从本次固定 Policy 读取，不能依赖熔断器首次创建时的旧配置。
 - `Router.ExplainWithRegistry` 和 `ReplayWithRegistry` 必须复用与发布相同的 endpoint 绑定校验。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
