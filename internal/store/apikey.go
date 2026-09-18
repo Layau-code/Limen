@@ -39,7 +39,7 @@ func (authenticator *APIKeyAuthenticator) AuthenticateContext(ctx context.Contex
 	var scopesJSON []byte
 	var active bool
 	var expiresAt sql.NullTime
-	err := authenticator.db.QueryRowContext(ctx, `SELECT tenant_id,digest,scopes,active,expires_at FROM api_keys WHERE public_prefix=$1`, prefix).Scan(&tenantID, &expectedDigest, &scopesJSON, &active, &expiresAt)
+	err := authenticator.db.QueryRowContext(ctx, `SELECT tenant_id,digest,scopes,active,expires_at FROM public.limen_lookup_api_key($1)`, prefix).Scan(&tenantID, &expectedDigest, &scopesJSON, &active, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.Principal{}, false, nil
 	}
@@ -75,7 +75,11 @@ func splitAPIKey(header string) (string, string, bool) {
 	if separator <= 0 || separator == len(rest)-1 {
 		return "", "", false
 	}
-	return rest[:separator], token, true
+	prefix := rest[:separator]
+	if !auth.ValidatePublicPrefix(prefix) {
+		return "", "", false
+	}
+	return prefix, token, true
 }
 
 // hmacDigest 计算数据库保存的 API Key HMAC-SHA-256 摘要。

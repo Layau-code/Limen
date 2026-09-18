@@ -30,3 +30,14 @@ func TestStaticAuthenticatorCopiesScopes(t *testing.T) {
 		t.Fatal("principal mutation changed authenticator")
 	}
 }
+
+func TestValidatePublicPrefixRequiresFixedHex(t *testing.T) {
+	if !ValidatePublicPrefix("0123456789abcdef") {
+		t.Fatal("valid public prefix rejected")
+	}
+	for _, prefix := range []string{"public123", "0123456789abcdeg", "0123456789abcdef0"} {
+		if ValidatePublicPrefix(prefix) {
+			t.Fatalf("invalid public prefix accepted: %q", prefix)
+		}
+	}
+}

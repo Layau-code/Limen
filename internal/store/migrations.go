@@ -37,6 +37,9 @@ var configOperationsMigration string
 //go:embed migrations/010_audit_events.sql
 var auditEventsMigration string
 
+//go:embed migrations/011_api_key_management.sql
+var apiKeyManagementMigration string
+
 // ApplyMigrations 以版本表和单事务方式执行内置 PostgreSQL 迁移。
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	if db == nil {
@@ -64,6 +67,7 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 		{version: "008_force_rls", source: forceRLSMigration},
 		{version: "009_config_operations", source: configOperationsMigration},
 		{version: "010_audit_events", source: auditEventsMigration},
+		{version: "011_api_key_management", source: apiKeyManagementMigration},
 	} {
 		var applied bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM limen_schema_migrations WHERE version=$1)`, migration.version).Scan(&applied); err != nil {

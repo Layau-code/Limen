@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/audit"
+	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
@@ -202,6 +203,61 @@ func TestPostgresIntegrationAuditTenantIsolation(t *testing.T) {
 	if visible != 0 {
 		t.Fatalf("cross-tenant audit rows visible=%d", visible)
 	}
+}
+
+// TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation 验证 Key 只返回一次明文且数据库按租户隔离。
+func TestPostgresIntegrationAPIKeyLifecycleAndTenantIsolation(t *testing.T) {
+	adminDB, appDB, _ := postgresIntegrationDatabases(t)
+	ctx := context.Background()
+	tenantA, tenantB := integrationID("tenant-key-a"), integrationID("tenant-key-b")
+	ensureIntegrationTenant(t, adminDB, tenantA)
+	ensureIntegrationTenant(t, adminDB, tenantB)
+	manager := NewPostgresAPIKeyManager(appDB, "integration-hmac-secret")
+	record, plaintext, err := manager.Create(ctx, tenantA, []auth.Scope{auth.ScopeInference, auth.ScopeRunsRead}, authTimePtr(time.Now().UTC().Add(time.Hour)), auth.APIKeyMutation{Key: "create-1", Hash: "hash-1"})
+	if err != nil || plaintext == "" || record.PublicPrefix == "" || !record.Active {
+		t.Fatalf("create record=%+v plaintext=%q err=%v", record, plaintext, err)
+	}
+	repeated, repeatedPlaintext, err := manager.Create(ctx, tenantA, record.Scopes, record.ExpiresAt, auth.APIKeyMutation{Key: "create-1", Hash: "hash-1"})
+	if err != nil || repeated.PublicPrefix != record.PublicPrefix || repeatedPlaintext != "" {
+		t.Fatalf("repeated create record=%+v plaintext=%q err=%v", repeated, repeatedPlaintext, err)
+	}
+	if _, _, err := manager.Create(ctx, tenantA, []auth.Scope{auth.ScopeInference}, nil, auth.APIKeyMutation{Key: "create-1", Hash: "hash-other"}); !errors.Is(err, auth.ErrAPIKeyConflict) {
+		t.Fatalf("create conflict=%v", err)
+	}
+	keys, err := manager.List(ctx, tenantA)
+	if err != nil || len(keys) != 1 || keys[0].PublicPrefix != record.PublicPrefix {
+		t.Fatalf("tenant keys=%+v err=%v", keys, err)
+	}
+	authenticator := NewAPIKeyAuthenticator(appDB, "integration-hmac-secret")
+	principal, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+plaintext)
+	if err != nil || !ok || principal.TenantID != tenantA {
+		t.Fatalf("key authentication principal=%+v ok=%v err=%v", principal, ok, err)
+	}
+	if err := manager.Revoke(ctx, tenantA, record.PublicPrefix, auth.APIKeyMutation{Key: "revoke-1", Hash: "revoke-hash"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := authenticator.AuthenticateContext(ctx, "Bearer "+plaintext); err != nil || ok {
+		t.Fatalf("revoked key authenticated ok=%v err=%v", ok, err)
+	}
+	if _, err := manager.List(ctx, tenantB); err != nil {
+		t.Fatal(err)
+	}
+	visible := tenantRowCount(t, appDB, tenantA, `SELECT count(*) FROM api_keys WHERE tenant_id=$1`, tenantB)
+	if visible != 0 {
+		t.Fatalf("cross-tenant api keys visible=%d", visible)
+	}
+	var digest []byte
+	if err := adminDB.QueryRowContext(ctx, `SELECT digest FROM api_keys WHERE public_prefix=$1`, record.PublicPrefix).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	if len(digest) != 32 || strings.Contains(string(digest), plaintext) {
+		t.Fatalf("stored digest is unsafe: len=%d", len(digest))
+	}
+}
+
+// authTimePtr 返回 API Key 测试使用的可选过期时间副本。
+func authTimePtr(value time.Time) *time.Time {
+	return &value
 }
 
 // TestPostgresIntegrationConcurrentAdmissionBound 验证数据库行锁严格限制 Run 并发名额。

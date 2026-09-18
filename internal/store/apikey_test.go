@@ -3,11 +3,11 @@ package store
 import "testing"
 
 func TestSplitAPIKey(t *testing.T) {
-	prefix, token, ok := splitAPIKey("Bearer lmn_live_public123_secret456")
-	if !ok || prefix != "public123" || token != "lmn_live_public123_secret456" {
+	prefix, token, ok := splitAPIKey("Bearer lmn_live_0123456789abcdef_secret456")
+	if !ok || prefix != "0123456789abcdef" || token != "lmn_live_0123456789abcdef_secret456" {
 		t.Fatalf("prefix=%q token=%q ok=%v", prefix, token, ok)
 	}
-	for _, header := range []string{"Bearer secret", "Bearer lmn_live__secret", "Bearer lmn_live_public_", "Basic lmn_live_public_secret"} {
+	for _, header := range []string{"Bearer secret", "Bearer lmn_live__secret", "Bearer lmn_live_public_", "Bearer lmn_live_public123_secret456", "Basic lmn_live_public_secret"} {
 		if _, _, ok := splitAPIKey(header); ok {
 			t.Fatalf("invalid key accepted: %q", header)
 		}

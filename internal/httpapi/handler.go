@@ -50,6 +50,7 @@ type Handler struct {
 	decisions           journal.Store
 	configs             configstore.Store
 	audit               audit.Store
+	apiKeys             auth.APIKeyManager
 	metrics             *telemetry.Registry
 	credentials         credentialstore.Store
 	credentialSetters   map[string]ProviderCredentialSetter
@@ -120,6 +121,11 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenti
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit 创建可注入审计存储的完整处理器。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, cancellationHubs ...*run.CancellationHub) http.Handler {
+	return NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys(authenticator, router, health, tenantID, decisions, configs, credentials, setters, endpoints, runs, audits, nil, cancellationHubs...)
+}
+
+// NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys 创建包含 API Key 控制面的完整处理器。
+func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, apiKeys auth.APIKeyManager, cancellationHubs ...*run.CancellationHub) http.Handler {
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -149,6 +155,7 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(
 		decisions:           decisions,
 		configs:             configs,
 		audit:               audits,
+		apiKeys:             apiKeys,
 		metrics:             telemetry.NewRegistry(),
 		credentials:         credentials,
 		credentialSetters:   setters,
@@ -162,6 +169,9 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(
 	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
 	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
 	mux.HandleFunc("GET /v1/limen/audit", handler.listAudit)
+	mux.HandleFunc("GET /v1/limen/keys", handler.listAPIKeys)
+	mux.HandleFunc("POST /v1/limen/keys", handler.createAPIKey)
+	mux.HandleFunc("POST /v1/limen/keys/{public_prefix}/revoke", handler.revokeAPIKey)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)

@@ -106,6 +106,7 @@ func main() {
 	var cancellationListener *store.CancellationEventListener
 	cancellationHub := run.NewCancellationHub()
 	var authenticator auth.Authenticator = auth.NewStaticAuthenticator(cfg.LimenAPIKey, cfg.TenantID, cfg.Scopes)
+	var apiKeyManager auth.APIKeyManager
 	var database *sql.DB
 	if cfg.DatabaseURL != "" {
 		database, err = store.OpenPostgres(cfg.DatabaseURL, 5*time.Second)
@@ -170,6 +171,7 @@ func main() {
 		}
 		if cfg.APIKeyStore == "postgres" {
 			authenticator = store.NewAPIKeyAuthenticator(database, cfg.APIKeyHMACSecret)
+			apiKeyManager = store.NewPostgresAPIKeyManager(database, cfg.APIKeyHMACSecret)
 		}
 		if cfg.CredentialMasterKey != "" {
 			masterKey, keyErr := credentialstore.ParseMasterKey(cfg.CredentialMasterKey)
@@ -236,7 +238,7 @@ func main() {
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		logger.Warn("telemetry export failed")
 	}))
-	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, auditStore, cancellationHub)
+	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeys(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, auditStore, apiKeyManager, cancellationHub)
 	server := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.WithLogging(logger, httpapi.WithTracing(apiHandler)),

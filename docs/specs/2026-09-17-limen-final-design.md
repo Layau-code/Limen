@@ -496,7 +496,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 
 固定 Scope：inference、runs:read、runs:write、decisions:read、configs:read、configs:write 和 admin。鉴权后生成统一 Principal，后续模块不接触原始 Key。
 
-当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀查询 HMAC-SHA-256 摘要、租户和 Scope，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；Key 创建、轮换和管理 API 仍待后续控制面阶段实现。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
+当前实现同时支持静态和 PostgreSQL API Key Store：静态模式使用 `LIMEN_API_KEY`、`LIMEN_TENANT_ID` 和 `LIMEN_API_SCOPES`；PostgreSQL 模式按公开前缀通过受控数据库函数读取最小字段，再用 HMAC-SHA-256 摘要和常量时间比较校验完整 Key，成功后生成统一 Principal。HTTP 层在入口校验接口所需 Scope，并把 Principal 租户传入 Run 哈希、准入和结算路径；首个 `admin` Key 由部署初始化流程预置，之后 `admin` 可创建、列出和撤销 API Key，创建使用幂等键，明文只在首次响应返回，管理查询受 RLS 保护。Provider 凭据可通过 `LIMEN_CREDENTIAL_MASTER_KEY` 启用 AES-GCM 加密存储，密文附加认证数据绑定 tenant、Provider 和 endpoint，Provider 适配器支持原子替换密钥。启用凭据存储后，`admin` 可调用凭据轮换和撤销 API；接口只接受配置绑定的 endpoint_id，响应不返回明文密钥。
 
 | 接口 | 所需 Scope |
 | --- | --- |
@@ -511,6 +511,7 @@ Request 查询返回执行状态、decision_id 和结算状态，不返回 Promp
 | 创建和发布配置 | configs:write |
 | 轮换和撤销 Provider 凭据 | admin |
 | 查询控制面审计摘要 | admin |
+| 创建、列出和撤销 API Key | admin |
 
 Provider 凭据在单机开发中可使用环境变量；多租户部署从阶段 B 起使用 AES-GCM 加密存储，主密钥来自部署环境或 Secret Manager。每份凭据绑定 tenant_id、provider 和经过校验的 endpoint_id，不能只按 Provider 名称复用。当前已提供管理员轮换和撤销接口；轮换立即更新当前实例，跨实例变更通过 `NOTIFY` 加速且通知失败不回滚事务，Secret Manager 仍后置。
 
@@ -644,7 +645,7 @@ git diff --check
 
 ### 阶段 C：版本化控制面与 Replay
 
-把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、结构化配置 diff、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面、租户隔离安全审计、显式 Replay 保留截止时间、结构化路径 diff 和 100 组 golden Replay 量化验收；审批流仍待后续生产化阶段。
+把文件内容哈希升级为不可变配置发布流程；实现持久化 Decision Journal、Explain/Dry Run/Replay API、配置版本创建/发布、结构化配置 diff、input_hash/plan_hash、Request 结算查询、管理审计和旧算法不可用语义。当前实现已完成配置版本基础控制面、租户隔离安全审计、显式 Replay 保留截止时间、结构化路径 diff、API Key 生命周期控制和 100 组 golden Replay 量化验收；审批流仍待后续生产化阶段。
 
 ### 阶段 D：生产化与 1.0
 

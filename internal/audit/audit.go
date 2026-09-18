@@ -22,6 +22,8 @@ var (
 const (
 	ActionConfigCreate      = "config.create"
 	ActionConfigPublish     = "config.publish"
+	ActionAPIKeyCreate      = "api_key.create"
+	ActionAPIKeyRevoke      = "api_key.revoke"
 	ActionCredentialRotate  = "credential.rotate"
 	ActionCredentialRevoke  = "credential.revoke"
 	ActionRunComplete       = "run.complete"

@@ -144,6 +144,19 @@ func TestAuditMigrationDefinesTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestAPIKeyManagementMigrationDefinesSecureLookupAndRLS(t *testing.T) {
+	contents, err := os.ReadFile("migrations/011_api_key_management.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE api_key_operations", "PRIMARY KEY (tenant_id, endpoint, idempotency_key)", "FORCE ROW LEVEL SECURITY", "ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY", "CREATE POLICY api_keys_tenant_isolation", "public.limen_lookup_api_key", "SECURITY DEFINER", "SET search_path = pg_catalog, pg_temp", "FROM public.api_keys"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
+
 func TestForceRLSPolicyMigrationCoversTenantTables(t *testing.T) {
 	contents, err := os.ReadFile("migrations/008_force_rls.sql")
 	if err != nil {
