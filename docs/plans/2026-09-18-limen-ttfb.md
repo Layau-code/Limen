@@ -9,9 +9,11 @@
 1. 在现有 `statusRecorder` 第一次 `Write` 时记录时间戳。
 2. 结构化日志增加 `ttfb_ms`；HTTP 根 Trace 增加 `limen.ttfb_ms`。
 3. 没有响应正文时省略字段，避免把 Header/状态误报为首字节。
+4. 访问日志中的动态和未知 Path 归并为固定路由类别。
 
 ## 验收
 
 - 普通响应首字节和 SSE 首段都能被观测。
 - TTFB 不包含 Prompt、Response 或密钥。
+- 未知 Path 不会原样进入日志。
 - 既有流式 Flush、响应状态和取消语义不变。

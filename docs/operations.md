@@ -16,7 +16,7 @@
 
 ## 关闭与日志
 
-收到 `SIGINT` 或 `SIGTERM` 后，服务先标记未就绪，再等待已有请求在最多 10 秒内完成并关闭 HTTP Server。日志使用 JSON 格式，包含 request ID、方法、路径、状态、耗时和安全路由摘要；不会记录鉴权头、API Key、Prompt、响应正文或上游模型名。
+收到 `SIGINT` 或 `SIGTERM` 后，服务先标记未就绪，再等待已有请求在最多 10 秒内完成并关闭 HTTP Server。日志使用 JSON 格式，包含 request ID、方法、固定路由类别、状态、耗时、TTFB 和安全路由摘要；不会记录鉴权头、API Key、Prompt、响应正文、动态路径或上游模型名。
 
 `X-Limen-Route` 例如 `openai:503>anthropic:200`，可用于解释是否发生 Fallback。`X-Limen-Attempts` 是实际发出的上游请求数，不代表同一目标重试次数。
 

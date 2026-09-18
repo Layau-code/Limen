@@ -103,7 +103,7 @@ Provider 将本地构造错误标记为 `RequestError`，网络和 Context 错�
 
 Chat API 当前支持 `model`、文本 `messages`、`max_tokens`、`temperature`、`stream` 和 Limen 能力契约。Tools、tool calls、`response_format`、`n`、`logprobs`、多模态内容以及未知字段均显式返回 `400`；这组边界在引入 Responses、Tools 或 Vision 前保持稳定。
 
-响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`；响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志读取这些字段，不记录 API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
+响应头包含安全路由摘要：`X-Limen-Provider`、`X-Limen-Attempts`、`X-Limen-Route`；响应结束后通过 Trailer 增加结算状态、Token 和可用成本。日志读取这些字段，只记录固定路由类别，不记录动态 Path、API Key、上游模型、Prompt 或完整 Response。路径长度受每个模型最多四个目标限制。
 
 配置 OTLP 端点后，每个请求建立 `limen.http.request` 根 Span；受治理请求继续产生 `limen.run.admission`、`limen.decision`、每次真实调用的 `limen.provider.attempt` 和 `limen.settlement`。属性只允许稳定标识、有限枚举、状态和计数，不写入 Prompt、Response、Authorization、API Key、Provider Key、原始错误正文或上游模型名。入口只提取 W3C `traceparent`，不接受 Baggage。Exporter 使用后台批处理，初始化失败会禁用 Trace，运行时导出失败只写通用告警。
 

@@ -77,3 +77,14 @@ func TestLoggingIncludesTTFBWhenResponseHasBody(t *testing.T) {
 		t.Fatalf("missing TTFB field: %s", output.String())
 	}
 }
+
+func TestLoggingRedactsUnmatchedPath(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	WithLogging(logger, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/private-prompt-value", nil))
+	if strings.Contains(output.String(), "private-prompt-value") || !strings.Contains(output.String(), `"path":"unmatched"`) {
+		t.Fatalf("unsafe path in log: %s", output.String())
+	}
+}

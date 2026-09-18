@@ -22,7 +22,7 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		attrs := []any{
 			"request_id", requestID,
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", safeLogPath(r.URL.Path),
 			"status", recorder.status,
 			"duration_ms", time.Since(started).Milliseconds(),
 		}
@@ -41,6 +41,19 @@ func WithLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 		logger.Info("request completed", attrs...)
 	})
+}
+
+// safeLogPath 将动态或未知路径归并为固定类别，避免用户输入进入日志。
+func safeLogPath(path string) string {
+	switch path {
+	case "/v1/chat/completions", "/v1/models", "/metrics", "/livez", "/readyz":
+		return path
+	default:
+		if strings.HasPrefix(path, "/v1/limen/") {
+			return "/v1/limen/*"
+		}
+		return "unmatched"
+	}
 }
 
 // safeRequestID 将客户端标识压缩为不可逆摘要，避免任意输入进入日志和 Trace。
