@@ -549,9 +549,9 @@ Replay 校验 input_hash 后，使用历史 DecisionInput 和对应算法版本�
 - 客户端不能把 Trailer 当成最终账本，也不能假设收到 DONE 时结算已经完成。
 - Request 在结算终态前继续占用 Run 并发名额；不确定时暂停 Run 后续准入。
 
-日志使用 Go slog，记录 request_id、run_id、decision_id、逻辑模型、目标 ID、Attempt、状态、耗时、TTFB、结算状态和原因码。禁止记录 API Key、Authorization、Prompt、Response、Tool 正文、Provider 凭据和原始错误正文。基础 `/metrics` 仅输出固定计数器和有界标签，并要求 `admin` Scope。
+日志使用 Go slog，记录 request_id、run_id、decision_id、逻辑模型、目标 ID、Attempt、状态、耗时、TTFB、结算状态和原因码。禁止记录 API Key、Authorization、Prompt、Response、Tool 正文、Provider 凭据和原始错误正文。基础 `/metrics` 输出固定计数器和固定桶直方图，标签有界并要求 `admin` Scope。
 
-Metrics 使用有界 Label：endpoint、状态类别、逻辑模型、目标 ID、结果类别和拒绝原因；不使用 request ID、Run ID、用户 ID 或原始错误作为 Label。
+Metrics 使用有界 Label：endpoint、状态类别、逻辑模型、目标 ID、结果类别和拒绝原因；不使用 request ID、Run ID、用户 ID 或原始错误作为 Label。请求总耗时和 TTFB 使用固定桶直方图，非法、负数和无穷值不进入指标；固定桶和单指标序列上限共同限制内存与 Prometheus 基数。
 
 Trace 包含请求、准入、决策、Attempt 和结算 Span；Telemetry 导出失败不能影响模型请求。
 

@@ -76,7 +76,7 @@ func TestMetricsRequiresAdminScope(t *testing.T) {
 	metrics.Header.Set("Authorization", "Bearer secret")
 	metricsResponse := httptest.NewRecorder()
 	handler.ServeHTTP(metricsResponse, metrics)
-	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "limen_chat_requests_total") {
+	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), "limen_chat_requests_total") || !strings.Contains(metricsResponse.Body.String(), "limen_chat_request_duration_seconds") {
 		t.Fatalf("metrics = %d %s", metricsResponse.Code, metricsResponse.Body.String())
 	}
 }

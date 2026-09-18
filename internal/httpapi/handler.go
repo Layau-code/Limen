@@ -637,15 +637,21 @@ func writeRunMutationError(w http.ResponseWriter, err error) {
 
 // chatCompletions 鉴权并处理一次 Chat Completions 请求。
 func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	metricModel := "unparsed"
 	defer func() {
-		h.metrics.Inc(telemetry.RequestsTotal, telemetry.Labels{
+		labels := telemetry.Labels{
 			Endpoint: "/v1/chat/completions",
 			Status:   metricStatus(recorder.status),
 			Model:    metricModel,
 			Reason:   recorder.errorCode,
-		})
+		}
+		h.metrics.Inc(telemetry.RequestsTotal, labels)
+		h.metrics.Observe(telemetry.RequestDurationSeconds, labels, time.Since(started).Seconds())
+		if firstByte := recorder.FirstByteAt(); !firstByte.IsZero() {
+			h.metrics.Observe(telemetry.TimeToFirstByteSeconds, labels, firstByte.Sub(started).Seconds())
+		}
 	}()
 	h.handleChatCompletions(recorder, r, &metricModel)
 }
