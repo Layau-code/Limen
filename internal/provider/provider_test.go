@@ -94,6 +94,35 @@ func TestAnthropicChatMapsModernCompletionTokenLimit(t *testing.T) {
 	_ = response.Body.Close()
 }
 
+func TestAnthropicChatMapsDeveloperMessageToSystem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			System   string             `json:"system"`
+			Messages []anthropicMessage `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.System != "be precise" || len(request.Messages) != 1 || request.Messages[0].Role != "user" {
+			t.Fatalf("request = %+v", request)
+		}
+		_, _ = io.WriteString(w, `{"id":"msg-1","model":"claude-test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`)
+	}))
+	defer server.Close()
+
+	response, err := NewAnthropic(server.Client(), server.URL, "anthropic-secret").Chat(context.Background(), ChatRequest{
+		Model: "claude-test",
+		Messages: []Message{
+			{Role: "developer", Content: "be precise"},
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
 func TestAnthropicProviderRotatesAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-api-key") != "rotated" {

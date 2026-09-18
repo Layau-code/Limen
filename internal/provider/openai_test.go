@@ -41,6 +41,31 @@ func TestOpenAIChatBuildsProviderRequest(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderPreservesDeveloperMessageRole(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if len(request.Messages) != 1 || request.Messages[0].Role != "developer" {
+			t.Fatalf("messages = %+v", request.Messages)
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	response, err := NewOpenAI(server.Client(), server.URL, "openai-secret").Chat(context.Background(), ChatRequest{
+		Model:    "o1-test",
+		Messages: []Message{{Role: "developer", Content: "be precise"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+}
+
 func TestOpenAIProviderRotatesAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer rotated" {

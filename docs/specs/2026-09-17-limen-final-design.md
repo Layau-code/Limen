@@ -356,7 +356,7 @@ Provider Adapter 把厂商状态和传输错误归一为 `retryable_transient`�
 | 字段/行为 | 1.0 |
 | --- | --- |
 | model | 支持逻辑模型和 auto |
-| messages | 支持 system、user、assistant 的纯文本 |
+| messages | 支持 system、developer、user、assistant 的纯文本；Anthropic 将 developer 转为顶层 system |
 | max_tokens | 支持 |
 | max_completion_tokens | 支持；与 max_tokens 互斥，按 Provider 保留或转换字段语义 |
 | temperature | 支持 |

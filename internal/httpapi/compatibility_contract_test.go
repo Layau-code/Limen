@@ -26,6 +26,11 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			status: http.StatusOK,
 		},
 		{
+			name:   "developer message role",
+			body:   `{"model":"o1-contract","messages":[{"role":"developer","content":"be precise"},{"role":"user","content":"hello"}]}`,
+			status: http.StatusOK,
+		},
+		{
 			name:   "modern completion token limit",
 			body:   `{"model":"gpt-contract","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
 			status: http.StatusOK,
@@ -117,8 +122,8 @@ func TestOpenAICompatibilityRequestContract(t *testing.T) {
 			}
 		})
 	}
-	if providerCalls != 3 {
-		t.Fatalf("provider calls = %d, want 3", providerCalls)
+	if providerCalls != 4 {
+		t.Fatalf("provider calls = %d, want 4", providerCalls)
 	}
 }
 

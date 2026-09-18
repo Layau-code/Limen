@@ -949,6 +949,16 @@ func TestParseChatRequestAcceptsModernCompletionTokenLimit(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestAcceptsDeveloperMessage(t *testing.T) {
+	request, err := parseChatRequest([]byte(`{"model":"o1-test","messages":[{"role":"developer","content":"be precise"},{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Messages) != 2 || request.Messages[0].Role != "developer" {
+		t.Fatalf("messages = %+v", request.Messages)
+	}
+}
+
 func TestParseChatRequestRejectsTwoCompletionTokenLimits(t *testing.T) {
 	_, err := parseChatRequest([]byte(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"max_tokens":16,"max_completion_tokens":32}`))
 	if err == nil || err.Error() != "max_tokens and max_completion_tokens are mutually exclusive" {

@@ -26,7 +26,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `LIMEN_API_KEY_FILE`、`OPENAI_API_KEY_FILE` 和 `ANTHROPIC_API_KEY_FILE` 只读一次启动时的文件密钥；对应明文变量与 `_FILE` 冲突必须拒绝，空文件或读取失败不能静默回退，日志不得输出密钥内容。
 - PostgreSQL API Key 控制面只允许 `admin` 创建、列出、原子轮换和撤销 Key；创建与轮换必须带幂等键，明文只在首次成功响应返回，重试和列表只能返回公开前缀与 Scope。轮换必须在同一事务内创建新摘要并停用旧 Key。认证查询必须走受控数据库函数，管理查询必须设置租户上下文并通过 RLS。
 - `internal/credentialstore` 使用 AES-GCM 保存 Provider 凭据密文，附加认证数据绑定租户、Provider 和 endpoint；Provider 支持并发安全的密钥替换。启用数据库和主密钥后，Chat 必须把 Principal 的 `tenant_id` 传入 Provider，Provider 每次出站按租户解析凭据，缺失凭据不得回退到其他租户或进程共享密钥。
-- Chat API 当前只承诺文本消息、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
+- Chat API 当前只承诺文本消息（`system`、`developer`、`user`、`assistant`）、普通/SSE、`model`、`max_tokens`、`max_completion_tokens`、`temperature`、`stream` 和 `stream_options.include_usage`；两个输出上限字段互斥。Tools、tool calls、Vision、多模态、Responses API 与未知字段必须明确返回 `400`。
 - 共享请求预算、单次尝试超时、按目标熔断、瞬时故障 Fallback、路由摘要和安全日志。
 - 受治理 Request 必须在准入后取得租约，默认 30 秒过期、每 10 秒续租；租约丢失时取消本地 Context，恢复任务只能进入未知费用/暂停账本，不得盲目重放 Provider。结算存储失败时必须写入持久化 `settlement_jobs`，由带租约的后台任务幂等恢复。
 - 每次真实 Provider 调用前必须写入独立 Attempt；上游返回的非敏感 request ID 可在响应后补写，不能记录 Prompt、Response 或凭据。

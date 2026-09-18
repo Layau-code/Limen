@@ -127,7 +127,7 @@ func marshalAnthropicRequest(request ChatRequest) ([]byte, error) {
 		converted.MaxTokens = 4096
 	}
 	for _, message := range request.Messages {
-		if message.Role == "system" {
+		if message.Role == "system" || message.Role == "developer" {
 			if converted.System != "" {
 				converted.System += "\n"
 			}

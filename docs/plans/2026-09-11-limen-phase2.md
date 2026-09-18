@@ -7,7 +7,7 @@
 ## 边界
 
 - 保持 `POST /v1/chat/completions` 不变。
-- 支持文本 system、user、assistant 消息，以及 `max_tokens`、`temperature` 和 `stream`。
+- 支持文本 system、developer、user、assistant 消息，以及 `max_tokens`、`temperature` 和 `stream`。
 - 暂不支持 tools、tool calls、音频、多模态、Retry/Fallback、限流、Usage 和成本统计。
 - Provider 只接收标准化请求，不依赖 HTTP Handler。
 

@@ -1988,7 +1988,7 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 		if len(message.ToolCalls) > 0 {
 			return parsedChatRequest{}, &unsupportedFieldError{Field: "messages.tool_calls"}
 		}
-		if message.Role != "system" && message.Role != "user" && message.Role != "assistant" {
+		if message.Role != "system" && message.Role != "developer" && message.Role != "user" && message.Role != "assistant" {
 			return parsedChatRequest{}, fmt.Errorf("unsupported message role: %s", message.Role)
 		}
 		var content string

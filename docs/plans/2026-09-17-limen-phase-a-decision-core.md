@@ -251,7 +251,7 @@ git commit -m "refactor: execute deterministic routing plans"
 
 - [ ] **Step 1: 写失败测试**
 
-增加请求字段矩阵测试：未知字段、tools、tool_choice、response_format、图片内容、n 和 logprobs 都返回 400 unsupported_field；合法 text/system/user/assistant 请求继续通过；limen 未知子字段同样拒绝。
+增加请求字段矩阵测试：未知字段、tools、tool_choice、response_format、图片内容、n 和 logprobs 都返回 400 unsupported_field；合法 text/system/developer/user/assistant 请求继续通过；limen 未知子字段同样拒绝。
 
 - [ ] **Step 2: 运行失败测试**
 

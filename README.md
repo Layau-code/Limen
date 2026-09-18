@@ -117,7 +117,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 启用 `LIMEN_API_KEY_STORE=postgres` 后，管理员可以使用 `POST /v1/limen/keys` 创建 Key、`GET /v1/limen/keys` 查看元数据、`POST /v1/limen/keys/{public_prefix}/rotate` 原子轮换 Key，以及 `POST /v1/limen/keys/{public_prefix}/revoke` 撤销 Key。创建和轮换请求必须带 `Idempotency-Key` 和明确的 `scopes`；完整 `lmn_live_...` Key 只在首次成功响应返回，重试不会再次返回明文。轮换在一个事务内创建新 Key 并停用旧 Key，旧 Key 在提交后立即失效。数据库只保存 HMAC 摘要，认证查询通过受控函数执行，管理查询受 PostgreSQL RLS 保护。
 
-配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；受治理 Run 创建时固定的策略优先，冲突请求返回 `400 strategy_conflict`。输出上限支持 `max_tokens` 或新版 `max_completion_tokens`，两者不能同时出现。当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
+配置模式下客户端只能使用注册表中的逻辑模型 ID。也可以使用 `model=auto`，并在请求的可选 `limen` 对象中声明 `required_capabilities`、`minimum_quality_tier`、`required_context_tokens`、`data_class` 和 `strategy`（`balanced` 或 `economy`）；受治理 Run 创建时固定的策略优先，冲突请求返回 `400 strategy_conflict`。输出上限支持 `max_tokens` 或新版 `max_completion_tokens`，两者不能同时出现。文本消息支持 `system`、`developer`、`user` 和 `assistant` 角色；转发 Anthropic 时 `developer` 会转换为顶层 `system`。当前仅支持文本消息和流式文本，Tools、Vision、Responses API 等字段会明确返回 `400 unsupported_field`。
 
 可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，目标引用使用稳定的 opaque ID，不返回真实上游模型名，适合在 Agent 调用前解释路由选择。
 

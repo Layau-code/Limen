@@ -7,7 +7,7 @@ Limen 兼容的是 OpenAI Chat Completions 的受支持子集，不宣称完整�
 | 字段 | 状态 | 说明 |
 | --- | --- | --- |
 | `model` | 支持 | 配置模式使用逻辑模型 ID；兼容模式透传 `gpt-*`、`o1-*`、`o3-*`、`claude-*`。 |
-| `messages[].role` | 支持 | `system`、`user`、`assistant`。 |
+| `messages[].role` | 支持 | `system`、`developer`、`user`、`assistant`；Anthropic 将 `developer` 与 `system` 合并到顶层 `system`。 |
 | `messages[].content` | 支持 | 纯文本字符串。 |
 | `max_tokens` | 支持 | 由 Provider 适配器转换。 |
 | `max_completion_tokens` | 支持 | 与 `max_tokens` 互斥；OpenAI 保留新版字段，Anthropic 转换为 `max_tokens`。 |
