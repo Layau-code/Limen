@@ -1,4 +1,4 @@
-.PHONY: fmt vet test generate-check check integration build image smoke bench run
+.PHONY: fmt vet test generate-check check integration build image smoke bench demo run
 
 fmt:
 	gofmt -w cmd internal
@@ -34,6 +34,9 @@ smoke:
 
 bench:
 	go test ./internal/gateway -run '^$$' -bench 'BenchmarkRouter' -benchmem
+
+demo:
+	go run ./cmd/limen demo
 
 run:
 	go run ./cmd/limen

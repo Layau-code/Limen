@@ -134,6 +134,8 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 `/livez` 只表示进程可响应；`/readyz` 表示启动依赖已完成，关闭时先变为未就绪再执行 `Server.Shutdown`。`limen version` 和 `limen healthcheck` 不读取业务密钥；Docker 使用静态非 root 运行时。完整运维说明见 [`docs/operations.md`](operations.md)。
 
+`limen demo` 使用进程内固定 Provider 演示 Fallback 和草稿影响分析，不读取密钥、不访问网络，作为可重复的端到端验收入口。
+
 ## 出站安全
 
 生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint；Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。

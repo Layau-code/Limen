@@ -27,6 +27,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 预算感知路由 → 
 - Provider 用量采集与按目标价格的定点成本结算；普通响应和 SSE 都保持实时转发。
 - 核心 HTTP 数据面不使用 Web 框架或 ORM；外部依赖只用于 PostgreSQL 与 OpenTelemetry 等明确边界，并包含竞态测试、真实二进制冒烟测试、Docker 和 CI 资产。
 - `/metrics` 提供固定指标和有界标签，必须使用 `admin` Scope，避免把请求标识和正文带入观测系统。
+- `limen demo` / `make demo` 提供完全离线的确定性演示，展示一次 Fallback 和配置草稿影响分析，不读取密钥或访问网络。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
@@ -175,7 +176,10 @@ make check   # gofmt、go vet、竞态测试
 make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
 make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
+make demo    # 离线演示 Fallback 与草稿影响分析
 ```
+
+`make demo` 输出一行 JSON，包含 `openai:503>anthropic:200` 路由、实际 Attempt 数、草稿 Provider 和影响分析结果；演示不需要数据库、模型密钥或外部网络。
 
 本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5–6 μs/op`、73 次分配；Fallback 路径 `6–7 μs/op`、84 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
 

@@ -41,6 +41,16 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 		}
 		_, _ = fmt.Fprintln(stdout, "ok")
 		return 0, true
+	case "demo":
+		if len(args) != 1 {
+			_, _ = fmt.Fprintln(stderr, "用法: limen demo")
+			return 2, true
+		}
+		if err := runDemo(stdout); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1, true
+		}
+		return 0, true
 	default:
 		_, _ = fmt.Fprintln(stderr, "未知命令:", args[0])
 		return 2, true

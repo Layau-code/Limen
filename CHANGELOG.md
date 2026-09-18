@@ -6,6 +6,7 @@
 
 - 新增配置版本预演接口，可在发布前对指定草稿生成决策计划而不切换 Router 或访问 Provider。
 - 新增配置影响分析接口，可将历史决策重放到指定草稿并返回安全结构化差异，不访问 Provider 或改变线上路由。
+- 新增完全离线的 `limen demo`，展示 Fallback 和配置草稿影响分析，便于重复验收。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
 - PostgreSQL Run 取消支持 `LISTEN/NOTIFY` 低延迟广播，并保留事件表轮询兜底。
