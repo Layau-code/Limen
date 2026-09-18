@@ -9,6 +9,7 @@
 - `/livez` 可响应，`/readyz` 在监听成功后返回成功。
 - 未鉴权的 `/v1/models` 被拒绝，带占位 Bearer Key 时返回 OpenAI 风格列表。
 - 未注册模型的 Chat 请求返回 `unsupported_model`，且错误不回显请求中的模型名。
+- 收到 `SIGTERM` 后 `/readyz` 变为不可用并且进程正常退出。
 
 ## 边界
 

@@ -146,7 +146,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - 流式测试必须证明首段 Flush 不等待完整响应，并且日志/Trace 的 TTFB 在有正文时出现、无正文时省略。
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
 - 提交前运行 `make check`；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
-- `make smoke` 必须保持离线，只使用占位密钥和未知模型请求验证真实二进制的 `/readyz`、鉴权、OpenAI 风格模型列表和安全错误边界，不能调用真实 Provider。
+- `make smoke` 必须保持离线，只使用占位密钥和未知模型请求验证真实二进制的 `/readyz`、鉴权、OpenAI 风格模型列表、安全错误边界以及 `SIGTERM` 后撤销就绪并退出，不能调用真实 Provider。
 - `make bench` 必须同时覆盖固定 100 个候选目标的纯决策路径和 Router 主/Fallback 路径；决策基准不得访问网络或数据库，文档记录的机器与结果必须来自实际运行。
 - 兼容性相关改动还必须运行 `make compatibility`，并确认不访问真实 Provider 网络。
 - Fallback、超时、取消、熔断或 Provider 错误分类相关改动还必须运行 `make reliability`，并确认不访问真实 Provider 网络。

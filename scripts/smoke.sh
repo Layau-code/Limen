@@ -62,3 +62,19 @@ if grep -q 'smoke-unknown-model' "$body"; then
 	echo "chat error echoed the requested model" >&2
 	exit 1
 fi
+
+kill -TERM "$pid"
+shutdown_observed=0
+i=0
+while [ "$i" -lt 50 ]; do
+	status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/readyz" 2>/dev/null || true)
+	if [ "$status" = "503" ] || [ "$status" = "000" ]; then
+		shutdown_observed=1
+		break
+	fi
+	i=$((i + 1))
+	sleep 0.1
+done
+wait "$pid"
+pid=
+[ "$shutdown_observed" = 1 ]

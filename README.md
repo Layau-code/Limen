@@ -217,7 +217,7 @@ make check   # gofmt、go vet、竞态测试
 make compatibility # OpenAI Chat 请求、错误和 SSE 兼容契约
 make reliability # 故障注入与取消/Fallback 可靠性契约
 make integration # 真实 PostgreSQL 并发、RLS 与恢复测试
-make smoke   # 真实二进制启动、就绪、鉴权和安全错误冒烟
+make smoke   # 真实二进制启动、就绪、鉴权、安全错误和关闭冒烟
 make bench   # 100 候选决策与 Router 主路径/Fallback 基准
 make demo    # 离线演示 Fallback 与草稿影响分析
 make validate # 离线预检示例模型目录
