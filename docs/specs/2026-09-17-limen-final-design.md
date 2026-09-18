@@ -572,7 +572,7 @@ Trace 包含请求、准入、决策、Attempt 和结算 Span；Telemetry 导出
 
 持久化使用字段白名单而不是对请求对象做通用序列化。DecisionInput 只保存契约元数据、目录、版本、健康状态和定点数值；messages、工具正文、原始 Header 和 Provider 错误正文在类型层面不属于可持久化 Schema。
 
-多租户出站网络使用专用安全 HTTP Client：
+多租户出站网络使用专用安全 HTTP Client；Provider 构造函数未注入 Client 时仍自动创建该安全 Client，不回退到 `http.DefaultClient`：
 
 - 生产只允许 HTTPS；HTTP 只能在显式开发模式使用。
 - 默认拒绝所有重定向，不能把 Authorization 或 x-api-key 带到新地址。

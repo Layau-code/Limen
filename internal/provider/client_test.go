@@ -113,3 +113,17 @@ func TestEndpointForBaseURLRejectsUserInfo(t *testing.T) {
 		t.Fatal("endpoint helper accepted URL user info")
 	}
 }
+
+func TestProviderConstructorsUseSecureClientByDefault(t *testing.T) {
+	for name, client := range map[string]*http.Client{
+		"openai":    NewOpenAI(nil, "https://api.example/v1", "key").client,
+		"anthropic": NewAnthropic(nil, "https://api.example", "key").client,
+	} {
+		if client == http.DefaultClient {
+			t.Fatalf("%s constructor returned http.DefaultClient", name)
+		}
+		if _, ok := client.Transport.(*secureRoundTripper); !ok {
+			t.Fatalf("%s constructor transport = %T, want *secureRoundTripper", name, client.Transport)
+		}
+	}
+}

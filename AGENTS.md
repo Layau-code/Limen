@@ -86,7 +86,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - `Router.ExplainWithRegistry` 和 `ReplayWithRegistry` 必须复用与发布相同的 endpoint 绑定校验。
 - `internal/auth` 负责常量时间校验静态 Bearer Key，并生成带租户和 Scope 的 Principal；HTTP 层按接口声明所需 Scope，控制面不信任请求中的租户字段。
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
-- Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
+- Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；构造函数未注入 Client 时也必须自动创建带 endpoint allowlist 的安全 Client，禁止回退到 `http.DefaultClient`；测试可注入 `httptest` Client。
 - 配置发布通知只允许携带租户和版本哈希；实例收到通知后必须从数据库重新读取配置，不能信任通知正文，且必须保留通知丢失后的轮询或重启恢复路径。
 - 配置发布必须携带 `Idempotency-Key`；幂等记录绑定租户、固定操作和请求哈希，重试不得重复切换版本，冲突必须返回稳定错误。
 - 控制面 `Idempotency-Key` 先裁剪首尾空白，再限制为最多 256 字节的可见 ASCII；空值、超长值和控制字符统一按缺少幂等键拒绝，避免索引膨胀和跨客户端规范化差异。

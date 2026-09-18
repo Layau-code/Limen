@@ -57,6 +57,15 @@ func NewSecureHTTPClient(options HTTPClientOptions) *http.Client {
 	}
 }
 
+// providerHTTPClient 选择调用方 Client；未注入时使用受 endpoint 限制的安全 Client。
+func providerHTTPClient(client *http.Client, baseURL string) *http.Client {
+	if client != nil {
+		return client
+	}
+	endpoint, _ := EndpointForBaseURL(baseURL)
+	return NewSecureHTTPClient(HTTPClientOptions{AllowedEndpoints: []string{endpoint}})
+}
+
 // EndpointForBaseURL 将 Provider 根地址转换为 allowlist 使用的 host:port。
 func EndpointForBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)

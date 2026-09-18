@@ -36,7 +36,7 @@ HTTP Principal/Scope 鉴权与解析
 - `internal/gateway/router.go`：解析只读目录、构造版本化 DecisionInput，并负责配置快照和熔断状态切换。
 - `internal/gateway/executor.go`：只消费 ExecutionPlan，管理共享总预算、单次超时、Fallback 和 Provider 执行，不解析逻辑模型或重新决定策略。
 - `internal/gateway/breaker.go`：按逻辑模型目标隔离的进程内并发安全熔断器。
-- `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；普通 JSON、错误正文、用量观察和 SSE 事件均有固定读取上限；不感知逻辑模型。
+- `internal/provider`：OpenAI 与 Anthropic 的鉴权、请求转换、响应转换和 SSE 转换；普通 JSON、错误正文、用量观察和 SSE 事件均有固定读取上限；不感知逻辑模型。构造函数未收到 HTTP Client 时仍使用带 endpoint allowlist 的安全默认 Client。
 - `internal/cost`：解析每百万 Token 的十进制定价，使用定点整数计算成本；不负责路由或存储。
 - `internal/telemetry`：提供有界 Prometheus 指标和可选 OTLP/HTTP Trace；遥测失败不参与业务控制流。
 - `cmd/limen validate`：在发布前离线校验模型目录并输出配置版本摘要，不加载密钥或访问 Provider。
@@ -151,7 +151,7 @@ Prometheus 指标使用独立的可信标签边界：显式配置只记录目录
 
 ## 出站安全
 
-生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。模型目标的 `endpoint_id` 只能匹配进程已配置的 Provider endpoint；启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint。Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
+生产 Provider Client 使用 HTTPS allowlist，配置层拒绝非 HTTPS 基础地址，禁用环境代理和自动重定向，解析目标地址时拒绝 loopback、私网、CGNAT、保留测试网、链路本地、组播、未指定和云元数据地址。Provider 构造函数未注入 Client 时也自动创建该安全默认值，不回退到 `http.DefaultClient`。模型目标的 `endpoint_id` 只能匹配进程已配置的 Provider endpoint；启用加密凭据存储后，Provider Key 同时绑定租户、Provider 和 endpoint。Chat 只传递非敏感 `tenant_id`，实际密钥不进入决策输入、路由头或日志。测试通过注入 `httptest` Client 和解析器覆盖这些边界。
 
 Endpoint allowlist 与 endpoint ID 都拒绝 URL 用户信息、查询参数和片段；安全 Client 的测试会在设置环境代理时确认仍直连 allowlist 目标，并单独验证云元数据地址在 Dial 前被拦截。
 

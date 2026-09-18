@@ -47,9 +47,7 @@ func (p *OpenAIProvider) SetCredentialResolver(resolver CredentialResolver) {
 
 // NewOpenAI 创建 OpenAI Provider。
 func NewOpenAI(client *http.Client, baseURL, apiKey string) *OpenAIProvider {
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client = providerHTTPClient(client, baseURL)
 	endpointID, _ := EndpointIDForBaseURL(baseURL)
 	return &OpenAIProvider{
 		client:     client,

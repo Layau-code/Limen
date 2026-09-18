@@ -56,9 +56,7 @@ func (p *AnthropicProvider) SetCredentialResolver(resolver CredentialResolver) {
 
 // NewAnthropic 创建 Anthropic Provider。
 func NewAnthropic(client *http.Client, baseURL, apiKey string) *AnthropicProvider {
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client = providerHTTPClient(client, baseURL)
 	endpointID, _ := EndpointIDForBaseURL(baseURL)
 	return &AnthropicProvider{
 		client:     client,
