@@ -37,6 +37,28 @@ if [ "$i" -eq 50 ]; then
 	exit 1
 fi
 
+curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null
+
 status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/v1/models")
 [ "$status" = 401 ]
-curl -fsS -H 'Authorization: Bearer smoke-limen-key' "http://127.0.0.1:$port/v1/models" >/dev/null
+models=$(curl -fsS -H 'Authorization: Bearer smoke-limen-key' "http://127.0.0.1:$port/v1/models")
+case "$models" in
+	*'"object":"list"'*) ;;
+	*)
+		echo "models response is not OpenAI-compatible" >&2
+		exit 1
+		;;
+esac
+
+body="$tmp/chat-error.json"
+status=$(curl -sS -o "$body" -w '%{http_code}' \
+	-H 'Authorization: Bearer smoke-limen-key' \
+	-H 'Content-Type: application/json' \
+	-d '{"model":"smoke-unknown-model","messages":[{"role":"user","content":"hello"}]}' \
+	"http://127.0.0.1:$port/v1/chat/completions")
+[ "$status" = 400 ]
+grep -q '"code":"unsupported_model"' "$body"
+if grep -q 'smoke-unknown-model' "$body"; then
+	echo "chat error echoed the requested model" >&2
+	exit 1
+fi
