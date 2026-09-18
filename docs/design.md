@@ -19,7 +19,7 @@ HTTP Principal/Scope 鉴权与解析
   → OpenTelemetry 将请求、准入、决策、Attempt 和结算关联为证据链
 ```
 
-- `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志。
+- `internal/httpapi`：鉴权、请求校验、错误映射、响应转发和安全日志；生产装配通过 `HandlerOptions` 显式注入依赖，避免长参数列表造成错位。
 - `internal/auth`：常量时间校验静态 Bearer Key，生成不携带原始 Key 的租户 Principal，并集中定义 Scope；`internal/store` 提供 PostgreSQL HMAC Key Store 实现。
 - `internal/store/apikey_manager.go`：在 PostgreSQL 中创建、列出、原子轮换和撤销租户 API Key；首个 admin Key 由部署初始化流程预置，后续明文只返回一次，认证读取通过受控函数，管理操作使用幂等记录和 RLS。
 - `internal/config`：严格解析环境变量和模型 JSON，只在启动时校验密钥与路由参数。

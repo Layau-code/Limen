@@ -117,6 +117,25 @@ type ProviderCredentialSetter interface {
 	ClearAPIKey()
 }
 
+// HandlerOptions 汇总 HTTP 层依赖，避免构造函数参数顺序造成装配错误。
+type HandlerOptions struct {
+	Authenticator          auth.Authenticator
+	Router                 *gateway.Router
+	Health                 *Health
+	TenantID               string
+	Decisions              journal.Store
+	Configs                configstore.Store
+	Credentials            credentialstore.Store
+	CredentialSetters      map[string]ProviderCredentialSetter
+	CredentialEndpoints    map[string]string
+	Runs                   run.Service
+	Audit                  audit.Store
+	APIKeys                auth.APIKeyManager
+	Approvals              approval.Store
+	ConfigApprovalRequired bool
+	Cancellations          *run.CancellationHub
+}
+
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials 创建完整数据面和凭据控制面。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, cancellationHubs ...*run.CancellationHub) http.Handler {
 	return NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAudit(authenticator, router, health, tenantID, decisions, configs, credentials, setters, endpoints, runs, audit.NewMemoryStore(), cancellationHubs...)
@@ -134,6 +153,46 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditA
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval 创建包含可选配置审批控制面的处理器。
 func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval(authenticator auth.Authenticator, router *gateway.Router, health *Health, tenantID string, decisions journal.Store, configs configstore.Store, credentials credentialstore.Store, setters map[string]ProviderCredentialSetter, endpoints map[string]string, runs run.Service, audits audit.Store, apiKeys auth.APIKeyManager, approvals approval.Store, configApprovalRequired bool, cancellationHubs ...*run.CancellationHub) http.Handler {
+	var cancellationHub *run.CancellationHub
+	if len(cancellationHubs) > 0 {
+		cancellationHub = cancellationHubs[0]
+	}
+	return NewWithOptions(HandlerOptions{
+		Authenticator:          authenticator,
+		Router:                 router,
+		Health:                 health,
+		TenantID:               tenantID,
+		Decisions:              decisions,
+		Configs:                configs,
+		Credentials:            credentials,
+		CredentialSetters:      setters,
+		CredentialEndpoints:    endpoints,
+		Runs:                   runs,
+		Audit:                  audits,
+		APIKeys:                apiKeys,
+		Approvals:              approvals,
+		ConfigApprovalRequired: configApprovalRequired,
+		Cancellations:          cancellationHub,
+	})
+}
+
+// NewWithOptions 创建完整 HTTP 处理器，并在内部补齐开发模式默认依赖。
+func NewWithOptions(options HandlerOptions) http.Handler {
+	authenticator := options.Authenticator
+	router := options.Router
+	health := options.Health
+	tenantID := options.TenantID
+	decisions := options.Decisions
+	configs := options.Configs
+	credentials := options.Credentials
+	setters := options.CredentialSetters
+	endpoints := options.CredentialEndpoints
+	runs := options.Runs
+	audits := options.Audit
+	apiKeys := options.APIKeys
+	approvals := options.Approvals
+	configApprovalRequired := options.ConfigApprovalRequired
+	cancellationHub := options.Cancellations
 	if health == nil {
 		health = NewHealth()
 		health.SetReady(true)
@@ -149,10 +208,6 @@ func NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditA
 	}
 	if audits == nil {
 		audits = audit.NewMemoryStore()
-	}
-	var cancellationHub *run.CancellationHub
-	if len(cancellationHubs) > 0 {
-		cancellationHub = cancellationHubs[0]
 	}
 	handler := &Handler{
 		authenticator:          authenticator,

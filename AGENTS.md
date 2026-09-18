@@ -75,6 +75,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - API Key 控制 API 只接受 `admin` Scope；创建、列表、轮换和撤销不接受请求中的租户字段，租户必须来自 Principal。创建或轮换明文只在首次成功响应出现，重试不能从数据库恢复明文。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。
 - 生产方法必须有简体中文用途注释，说明职责、边界或非显然原因；注释保持简短，代码优先通过命名和拆分保证可读性。
+- HTTP Handler 依赖装配统一使用 `httpapi.HandlerOptions`；旧的长构造函数只保留兼容包装，不在业务代码中继续增加位置参数。
 
 ## 测试与验证
 

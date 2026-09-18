@@ -242,7 +242,23 @@ func main() {
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		logger.Warn("telemetry export failed")
 	}))
-	apiHandler := httpapi.NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentialsAndAuditAndAPIKeysAndApproval(authenticator, router, health, cfg.TenantID, decisionStore, configStore, credentialStore, credentialSetters, credentialEndpoints, runService, auditStore, apiKeyManager, approvalStore, cfg.ConfigApprovalRequired, cancellationHub)
+	apiHandler := httpapi.NewWithOptions(httpapi.HandlerOptions{
+		Authenticator:          authenticator,
+		Router:                 router,
+		Health:                 health,
+		TenantID:               cfg.TenantID,
+		Decisions:              decisionStore,
+		Configs:                configStore,
+		Credentials:            credentialStore,
+		CredentialSetters:      credentialSetters,
+		CredentialEndpoints:    credentialEndpoints,
+		Runs:                   runService,
+		Audit:                  auditStore,
+		APIKeys:                apiKeyManager,
+		Approvals:              approvalStore,
+		ConfigApprovalRequired: cfg.ConfigApprovalRequired,
+		Cancellations:          cancellationHub,
+	})
 	server := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.WithLogging(logger, httpapi.WithTracing(apiHandler)),
