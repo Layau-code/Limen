@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/catalog"
+	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/journal"
@@ -140,8 +141,16 @@ func TestPostgresIntegrationConfigPublishNotifiesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := configs.Publish(ctx, tenantID, record.Version); err != nil {
+	mutation := configstore.Mutation{Key: "publish-config-1", Hash: "sha256:publish-config"}
+	if _, err := configs.PublishWithMutation(ctx, tenantID, record.Version, mutation); err != nil {
 		t.Fatal(err)
+	}
+	repeated, err := configs.PublishWithMutation(ctx, tenantID, record.Version, mutation)
+	if err != nil || repeated.Version != record.Version {
+		t.Fatalf("repeated config publish = %+v, err=%v", repeated, err)
+	}
+	if _, err := configs.PublishWithMutation(ctx, tenantID, record.Version, configstore.Mutation{Key: mutation.Key, Hash: "sha256:other"}); !errors.Is(err, configstore.ErrIdempotencyConflict) {
+		t.Fatalf("config publish conflict = %v", err)
 	}
 	select {
 	case notification := <-listener.Notify:

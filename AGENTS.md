@@ -65,6 +65,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Provider 负责协议级 Usage 采集，Gateway 负责 attempt 汇总和成本计算；新增 Provider 必须覆盖普通/SSE 用量、缺失用量和取消场景。
 - Provider 出站统一使用 `internal/provider/client.go` 的安全 HTTP Client；测试可注入 `httptest` Client，但生产装配不得退回 `http.DefaultClient`。
 - 配置发布通知只允许携带租户和版本哈希；实例收到通知后必须从数据库重新读取配置，不能信任通知正文，且必须保留通知丢失后的轮询或重启恢复路径。
+- 配置发布必须携带 `Idempotency-Key`；幂等记录绑定租户、固定操作和请求哈希，重试不得重复切换版本，冲突必须返回稳定错误。
 - Provider 密钥通过 `SetAPIKey` 原子替换；加密存储只能返回短暂明文给对应适配器，禁止写入日志、决策快照或 HTTP 响应。
 - 凭据控制 API 只接受 `admin` Scope，并强制校验固定 provider 与 endpoint 绑定；轮换先加密持久化再更新内存 Provider，撤销同时清除当前实例密钥，响应只返回元数据。PostgreSQL `NOTIFY` 只用于跨实例刷新且失败不得回滚事务，数据库记录仍是唯一事实来源。
 - PostgreSQL Repository 只能使用参数化 SQL 和事务锁；不保存 Prompt、Response、Tool 正文或明文 Provider Key。迁移必须保留组合外键、RLS 和状态约束。

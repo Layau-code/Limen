@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/huz/limen/internal/config"
@@ -124,6 +125,19 @@ func (store *PostgresConfigStore) GetPublished(ctx context.Context, tenantID str
 
 // Publish 原子切换租户当前版本，并保留旧版本审计记录。
 func (store *PostgresConfigStore) Publish(ctx context.Context, tenantID, version string) (configstore.Record, error) {
+	return store.publish(ctx, tenantID, version, nil)
+}
+
+// PublishWithMutation 幂等发布配置版本并返回首次发布结果。
+func (store *PostgresConfigStore) PublishWithMutation(ctx context.Context, tenantID, version string, mutation configstore.Mutation) (configstore.Record, error) {
+	if strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" {
+		return configstore.Record{}, configstore.ErrIdempotencyConflict
+	}
+	return store.publish(ctx, tenantID, version, &mutation)
+}
+
+// publish 在同一事务中切换配置并保存跨实例幂等记录。
+func (store *PostgresConfigStore) publish(ctx context.Context, tenantID, version string, mutation *configstore.Mutation) (configstore.Record, error) {
 	tx, err := store.beginTenantTx(ctx, tenantID)
 	if err != nil {
 		return configstore.Record{}, err
@@ -132,6 +146,45 @@ func (store *PostgresConfigStore) Publish(ctx context.Context, tenantID, version
 	record, err := getConfigTxForUpdate(ctx, tx, tenantID, version)
 	if err != nil {
 		return configstore.Record{}, err
+	}
+	if mutation != nil {
+		var existingHash, existingVersion string
+		err = tx.QueryRowContext(ctx, `SELECT request_hash,version FROM config_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, "publish_config", mutation.Key).Scan(&existingHash, &existingVersion)
+		if err == nil {
+			if existingHash != mutation.Hash {
+				return configstore.Record{}, configstore.ErrIdempotencyConflict
+			}
+			record, err = getConfigTx(ctx, tx, tenantID, existingVersion)
+			if err != nil {
+				return configstore.Record{}, err
+			}
+			if err := tx.Commit(); err != nil {
+				return configstore.Record{}, err
+			}
+			return record, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return configstore.Record{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO config_operations (tenant_id,endpoint,idempotency_key,request_hash,version,created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id,endpoint,idempotency_key) DO NOTHING`, tenantID, "publish_config", mutation.Key, mutation.Hash, version, time.Now().UTC()); err != nil {
+			return configstore.Record{}, err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT request_hash,version FROM config_operations WHERE tenant_id=$1 AND endpoint=$2 AND idempotency_key=$3`, tenantID, "publish_config", mutation.Key).Scan(&existingHash, &existingVersion); err != nil {
+			return configstore.Record{}, err
+		}
+		if existingHash != mutation.Hash {
+			return configstore.Record{}, configstore.ErrIdempotencyConflict
+		}
+		if existingVersion != version {
+			record, err = getConfigTx(ctx, tx, tenantID, existingVersion)
+			if err != nil {
+				return configstore.Record{}, err
+			}
+			if err := tx.Commit(); err != nil {
+				return configstore.Record{}, err
+			}
+			return record, nil
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE config_versions SET state=$1 WHERE tenant_id=$2 AND state=$3`, configstore.StateSuperseded, tenantID, configstore.StatePublished); err != nil {
 		return configstore.Record{}, err
@@ -220,3 +273,4 @@ func parseConfig(document []byte) (string, []config.Model, config.Routing, error
 }
 
 var _ configstore.Store = (*PostgresConfigStore)(nil)
+var _ configstore.MutationStore = (*PostgresConfigStore)(nil)

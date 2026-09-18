@@ -39,3 +39,23 @@ func TestMemoryStoreRejectsInvalidDocument(t *testing.T) {
 		t.Fatal("expected invalid config error")
 	}
 }
+
+func TestMemoryStorePublishWithMutationIsIdempotent(t *testing.T) {
+	store := NewMemoryStore()
+	first, err := store.Create(context.Background(), "tenant-a", []byte(testConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := Mutation{Key: "publish-1", Hash: "sha256:request"}
+	published, err := store.PublishWithMutation(context.Background(), "tenant-a", first.Version, mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := store.PublishWithMutation(context.Background(), "tenant-a", first.Version, mutation)
+	if err != nil || repeated.PublishedAt == nil || published.PublishedAt == nil || !repeated.PublishedAt.Equal(*published.PublishedAt) {
+		t.Fatalf("repeat = %+v, err=%v", repeated, err)
+	}
+	if _, err := store.PublishWithMutation(context.Background(), "tenant-a", first.Version, Mutation{Key: mutation.Key, Hash: "sha256:other"}); err != ErrIdempotencyConflict {
+		t.Fatalf("conflict error = %v", err)
+	}
+}

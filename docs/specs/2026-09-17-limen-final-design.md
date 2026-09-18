@@ -399,6 +399,7 @@ ledger_entries
 settlement_jobs
 cancellation_events
 accounting_operations
+config_operations
 ~~~
 
 关键约束：
@@ -466,7 +467,7 @@ POST /v1/limen/decisions/{decision_id}/replay
 GET  /v1/limen/configs
 GET  /v1/limen/configs/{version}/diff/{base_version}
 POST /v1/limen/configs
-POST /v1/limen/configs/{version}/publish
+POST /v1/limen/configs/{version}/publish   # 需要 Idempotency-Key
 
 POST /v1/limen/credentials/{provider}
 POST /v1/limen/credentials/{provider}/revoke

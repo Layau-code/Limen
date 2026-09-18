@@ -9,6 +9,7 @@ import (
 	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/gateway"
+	"github.com/huz/limen/internal/run"
 )
 
 // configSummary 是配置控制面返回的安全摘要，不暴露真实上游模型名。
@@ -114,6 +115,17 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "config control is unavailable", "api_error", "config_control_unavailable")
 		return
 	}
+	key, ok := idempotencyKey(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Idempotency-Key is required", "invalid_request_error", "idempotency_key_required")
+		return
+	}
+	tenantID := h.requestTenantID(r)
+	hash, err := run.HashRequest(tenantID, "POST "+r.URL.Path, key, nil, map[string]string{"x-limen-config-version": r.PathValue("version")})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid idempotency request", "invalid_request_error", "invalid_idempotency_request")
+		return
+	}
 	record, err := h.configs.Get(r.Context(), h.requestTenantID(r), r.PathValue("version"))
 	if err != nil {
 		writeConfigStoreError(w, err)
@@ -124,7 +136,12 @@ func (h *Handler) publishConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid config document", "invalid_request_error", "invalid_config")
 		return
 	}
-	record, err = h.configs.Publish(r.Context(), h.requestTenantID(r), record.Version)
+	mutator, supported := h.configs.(configstore.MutationStore)
+	if !supported {
+		writeError(w, http.StatusServiceUnavailable, "config idempotency is unavailable", "api_error", "config_control_unavailable")
+		return
+	}
+	record, err = mutator.PublishWithMutation(r.Context(), tenantID, record.Version, configstore.Mutation{Key: key, Hash: hash})
 	if err != nil {
 		writeConfigStoreError(w, err)
 		return
@@ -175,6 +192,10 @@ func registryFromConfig(models []config.Model) (*gateway.ModelRegistry, error) {
 func writeConfigStoreError(w http.ResponseWriter, err error) {
 	if errors.Is(err, configstore.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "config version not found", "invalid_request_error", "config_not_found")
+		return
+	}
+	if errors.Is(err, configstore.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "idempotency key conflict", "invalid_request_error", "idempotency_conflict")
 		return
 	}
 	writeError(w, http.StatusBadGateway, "config store unavailable", "api_error", "config_store_unavailable")

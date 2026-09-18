@@ -37,6 +37,7 @@ func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
 	}
 	publish := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+created.Version+"/publish", nil)
 	publish.Header.Set("Authorization", "Bearer secret")
+	publish.Header.Set("Idempotency-Key", "publish-1")
 	publishedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(publishedResponse, publish)
 	if publishedResponse.Code != http.StatusOK || router.ConfigVersion() != created.Version {
@@ -45,6 +46,48 @@ func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
 	models := router.Models()
 	if len(models) != 1 || models[0].ID != "new" {
 		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestConfigPublishRejectsIdempotencyConflict(t *testing.T) {
+	configs := configstore.NewMemoryStore()
+	record, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-test"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"other","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-other"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := gateway.NewModelRegistry([]gateway.Model{{ID: "old", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(
+		auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeConfigsWrite}),
+		gateway.NewRouter(nil, router, gateway.Policy{}), nil, "tenant-a", journal.NewMemoryStore(), configs, nil,
+	)
+	request := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+record.Version+"/publish", nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Idempotency-Key", key)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	if response := request("publish-1"); response.Code != http.StatusOK {
+		t.Fatalf("first publish status = %d", response.Code)
+	}
+	if response := request("publish-1"); response.Code != http.StatusOK {
+		t.Fatalf("repeat publish status = %d", response.Code)
+	}
+	conflictRequest := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+other.Version+"/publish", nil)
+	conflictRequest.Header.Set("Authorization", "Bearer secret")
+	conflictRequest.Header.Set("Idempotency-Key", "publish-1")
+	conflictResponse := httptest.NewRecorder()
+	handler.ServeHTTP(conflictResponse, conflictRequest)
+	if conflictResponse.Code != http.StatusConflict || !strings.Contains(conflictResponse.Body.String(), "idempotency_conflict") {
+		t.Fatalf("conflict response = %d %s", conflictResponse.Code, conflictResponse.Body.String())
 	}
 }
 

@@ -26,7 +26,15 @@ var (
 	ErrNotFound = errors.New("config version not found")
 	// ErrConflict 表示相同版本标识对应了不同配置操作。
 	ErrConflict = errors.New("config version conflict")
+	// ErrIdempotencyConflict 表示发布幂等键对应了不同请求哈希。
+	ErrIdempotencyConflict = errors.New("config publish idempotency conflict")
 )
+
+// Mutation 保存配置发布的幂等键和规范请求哈希。
+type Mutation struct {
+	Key  string
+	Hash string
+}
 
 // Record 是配置版本的持久化表示。
 type Record struct {
@@ -49,17 +57,29 @@ type Store interface {
 	Publish(context.Context, string, string) (Record, error)
 }
 
+// MutationStore 为配置发布提供跨实例幂等语义。
+type MutationStore interface {
+	Store
+	PublishWithMutation(context.Context, string, string, Mutation) (Record, error)
+}
+
 // MemoryStore 是开发环境和单元测试使用的进程内配置存储。
 type MemoryStore struct {
-	mu      sync.RWMutex
-	records map[string]Record
-	active  map[string]string
-	now     func() time.Time
+	mu        sync.RWMutex
+	records   map[string]Record
+	active    map[string]string
+	mutations map[string]publishMutation
+	now       func() time.Time
+}
+
+type publishMutation struct {
+	hash   string
+	record Record
 }
 
 // NewMemoryStore 创建空的内存配置存储。
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{records: make(map[string]Record), active: make(map[string]string), now: time.Now}
+	return &MemoryStore{records: make(map[string]Record), active: make(map[string]string), mutations: make(map[string]publishMutation), now: time.Now}
 }
 
 // Create 校验并保存一个不可变配置版本，重复提交相同版本保持幂等。
@@ -141,11 +161,33 @@ func (store *MemoryStore) GetPublished(ctx context.Context, tenantID string) (Re
 
 // Publish 将一个草稿设为当前版本，并把旧版本标记为已替代。
 func (store *MemoryStore) Publish(ctx context.Context, tenantID, version string) (Record, error) {
+	return store.publish(ctx, tenantID, version, nil)
+}
+
+// PublishWithMutation 幂等发布配置版本并返回首次发布结果。
+func (store *MemoryStore) PublishWithMutation(ctx context.Context, tenantID, version string, mutation Mutation) (Record, error) {
+	if strings.TrimSpace(mutation.Key) == "" || strings.TrimSpace(mutation.Hash) == "" {
+		return Record{}, ErrIdempotencyConflict
+	}
+	return store.publish(ctx, tenantID, version, &mutation)
+}
+
+// publish 在同一内存临界区内完成配置切换和幂等记录。
+func (store *MemoryStore) publish(ctx context.Context, tenantID, version string, mutation *Mutation) (Record, error) {
 	if err := contextError(ctx); err != nil {
 		return Record{}, err
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if mutation != nil {
+		key := recordKey(tenantID, mutation.Key)
+		if existing, ok := store.mutations[key]; ok {
+			if existing.hash != mutation.Hash {
+				return existing.record, ErrIdempotencyConflict
+			}
+			return cloneRecord(existing.record), nil
+		}
+	}
 	key := recordKey(tenantID, version)
 	record, ok := store.records[key]
 	if !ok {
@@ -162,6 +204,9 @@ func (store *MemoryStore) Publish(ctx context.Context, tenantID, version string)
 	record.PublishedAt = &now
 	store.records[key] = record
 	store.active[tenantID] = version
+	if mutation != nil {
+		store.mutations[recordKey(tenantID, mutation.Key)] = publishMutation{hash: mutation.Hash, record: record}
+	}
 	return cloneRecord(record), nil
 }
 

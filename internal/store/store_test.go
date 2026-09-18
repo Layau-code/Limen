@@ -118,6 +118,19 @@ func TestAccountingOperationMigrationDefinesIdempotencyAndTenantBinding(t *testi
 	}
 }
 
+func TestConfigOperationMigrationDefinesIdempotencyAndTenantBinding(t *testing.T) {
+	contents, err := os.ReadFile("migrations/009_config_operations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{"CREATE TABLE config_operations", "PRIMARY KEY (tenant_id, endpoint, idempotency_key)", "FOREIGN KEY (tenant_id, version)", "ENABLE ROW LEVEL SECURITY", "FORCE ROW LEVEL SECURITY", "current_setting('limen.tenant_id'"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("migration missing %q", required)
+		}
+	}
+}
+
 func TestForceRLSPolicyMigrationCoversTenantTables(t *testing.T) {
 	contents, err := os.ReadFile("migrations/008_force_rls.sql")
 	if err != nil {
