@@ -74,6 +74,7 @@
 
 ### 修复
 
+- 修复受治理请求在租约获取失败且尚未调用 Provider 时错误进入未知费用的问题；现在按零成本完成并释放 Run 并发名额。
 - 修复受治理 Chat 的结算失败清理路径：已知成本不会被延迟重试降级为未知费用，非重试型未知结算也不会重复创建结算 Trace；没有发起 Provider Attempt 的请求按零成本完成，不会误暂停 Run。
 - PostgreSQL Request 读取可正确处理尚未生成 `decision_id` 的准入状态。
 - 过期租约恢复会把遗留的 `Attempt started` 标记为 `abandoned`；PostgreSQL 事务连接池设置 5 秒网络 I/O 期限，避免断连时永久阻塞。

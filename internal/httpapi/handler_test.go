@@ -42,6 +42,15 @@ type settlementProbe struct {
 	costs     []*int64
 }
 
+type rejectingLeaseService struct {
+	*run.MemoryService
+}
+
+// AcquireRequestLease 模拟多实例竞争下租约已被其他执行实例持有。
+func (service *rejectingLeaseService) AcquireRequestLease(context.Context, string, string, string, time.Time, time.Duration) (run.Request, error) {
+	return run.Request{}, run.ErrLeaseUnavailable
+}
+
 // SettleRequest 记录结算输入并模拟已知成本的暂时性存储失败。
 func (probe *settlementProbe) SettleRequest(ctx context.Context, tenantID, requestID string, costNanoUSD *int64, now time.Time) (run.Request, error) {
 	probe.mu.Lock()
@@ -491,6 +500,39 @@ func TestGovernedChatIdempotencyProvidesRetryContract(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("provider calls = %d, want 1", calls.Load())
+	}
+}
+
+// TestGovernedChatLeaseFailureSettlesZeroCost 验证未调用 Provider 的租约失败不会暂停 Run 账本。
+func TestGovernedChatLeaseFailureSettlesZeroCost(t *testing.T) {
+	registry, err := gateway.NewModelRegistry([]gateway.Model{{ID: "model", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-test"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := run.NewMemoryService(nil)
+	created := run.Run{ID: "run-lease-rejected", State: run.StateActive, MaxParallelism: 1}
+	if err := base.CreateRun(context.Background(), "local", created); err != nil {
+		t.Fatal(err)
+	}
+	runs := &rejectingLeaseService{MemoryService: base}
+	handler := NewWithRuns("limen-secret", newTestRouter(nil, nil, registry), runs)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer limen-secret")
+	request.Header.Set("X-Limen-Run-ID", created.ID)
+	request.Header.Set("Idempotency-Key", "lease-rejected")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "request_in_progress") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	requestID := response.Header().Get("X-Limen-Request-ID")
+	storedRequest, err := base.GetRequest(context.Background(), "local", requestID)
+	if err != nil || storedRequest.State != run.RequestSettled || storedRequest.SettlementStatus != "complete" || !storedRequest.LedgerRecorded {
+		t.Fatalf("request = %+v err=%v", storedRequest, err)
+	}
+	storedRun, err := base.GetRun(context.Background(), "local", created.ID)
+	if err != nil || storedRun.State != run.StateActive || storedRun.InFlight != 0 || storedRun.SettledCostNanoUSD != 0 {
+		t.Fatalf("run = %+v err=%v", storedRun, err)
 	}
 }
 

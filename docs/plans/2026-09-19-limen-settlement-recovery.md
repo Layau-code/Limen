@@ -10,10 +10,12 @@
 - 持久化任务和延迟清理不会重复调用 Provider，也不会把已知费用写成未知费用。
 - 非重试型未知费用只进入 `suspended_accounting`，不重复创建无意义的结算 Trace。
 - 决策或 Provider 准备阶段没有创建 Attempt 时按已知零成本结算，不污染 Run 的账本状态。
+- 租约获取失败且尚未创建 Attempt 时也按已知零成本结算，不把执行实例竞争误判为 Provider 费用不确定。
 
 ## 验收
 
 - HTTP 回归测试模拟三次暂时性结算失败，确认后续清理仍携带非空成本。
 - HTTP 回归测试确认未发起 Provider 的错误请求会释放并发名额并写入零成本 Ledger。
+- HTTP 回归测试模拟租约竞争，确认 Request 完成结算且 Run 保持 active。
 - Trace 回归测试确认正常的未知费用路径只产生一个结算 Span。
 - `go test ./internal/httpapi -race` 与全量 `make check` 通过。

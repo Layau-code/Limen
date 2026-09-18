@@ -1377,8 +1377,9 @@ func (h *Handler) admitRunRequest(w http.ResponseWriter, r *http.Request, body [
 	w.Header().Set("X-Limen-Request-ID", item.ID)
 	release, ok = h.startRequestLease(w, r, tenantID, item.ID, now)
 	if !ok {
-		_, _ = h.runs.BeginSettlement(r.Context(), tenantID, item.ID, time.Now().UTC())
-		_, _ = h.runs.SettleRequest(r.Context(), tenantID, item.ID, nil, time.Now().UTC())
+		settlementContext, cancelSettlement := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+		_ = h.settleRunRequestWithMode(settlementContext, item.ID, nil, true)
+		cancelSettlement()
 		return "", nil, false
 	}
 	return item.ID, release, true
