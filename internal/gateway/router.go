@@ -248,6 +248,11 @@ func (router *Router) Explain(request provider.ChatRequest, contract decision.Co
 	return router.planWithInput(request, contract)
 }
 
+// ExplainWithRegistry 使用指定配置版本生成只读决策计划，不访问 Provider 或修改当前目录。
+func (router *Router) ExplainWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
+	return router.planWithRegistry(request, contract, registry, configVersion)
+}
+
 // Replay 使用历史输入重算计划，不读取当前熔断状态，也不访问 Provider。
 func (router *Router) Replay(input decision.Input) (decision.ExecutionPlan, error) {
 	engine, ok := router.algorithms.Resolve(input.AlgorithmVersion)
@@ -266,6 +271,14 @@ func (router *Router) plan(request provider.ChatRequest, contract decision.Contr
 // planWithInput 将注册表和熔断器快照组装为可持久化的 DecisionInput。
 func (router *Router) planWithInput(request provider.ChatRequest, contract decision.Contract) (decision.Input, decision.ExecutionPlan, error) {
 	registry, configVersion := router.registrySnapshot()
+	return router.planWithRegistry(request, contract, registry, configVersion)
+}
+
+// planWithRegistry 将指定目录和当前熔断快照组装为可持久化的 DecisionInput。
+func (router *Router) planWithRegistry(request provider.ChatRequest, contract decision.Contract, registry *ModelRegistry, configVersion string) (decision.Input, decision.ExecutionPlan, error) {
+	if registry == nil {
+		return decision.Input{}, decision.ExecutionPlan{}, &decision.DecisionError{Code: "model_registry_unavailable"}
+	}
 	models := registry.List()
 	if request.Model != "auto" {
 		model, found := registry.Resolve(request.Model)

@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 新增配置版本预演接口，可在发布前对指定草稿生成决策计划而不切换 Router 或访问 Provider。
 - Decision Engine 将 `minimum_quality_tier` 作为硬约束，并新增稳定 Provider 错误分类。
 - Fallback 的每次真实 Provider 调用都在调用前写入独立 Attempt，Run 策略不能被请求覆盖。
 - PostgreSQL Run 取消支持 `LISTEN/NOTIFY` 低延迟广播，并保留事件表轮询兜底。

@@ -81,6 +81,8 @@ HTTP Principal/Scope 鉴权与解析
 
 阶段 A 已提供 `POST /v1/limen/decisions/dry-run`：它复用同一解析和决策路径，只返回不含正文的计划，不访问 Provider、不改变熔断和结算状态。模型文件经规范化 JSON 计算 `config_version`，供后续 Run 固定配置版本。
 
+配置控制面额外提供 `POST /v1/limen/configs/{version}/dry-run`。它基于租户隔离的草稿配置构造临时只读目录，复用同一 Decision Engine 生成计划，不切换当前 Router、不访问 Provider，并把草稿版本写入 `config_version`，用于发布前验证路由行为。
+
 当前 Decision Journal 在真实 Chat 调用 Provider 前写入决策快照，并通过 `X-Limen-Decision-ID` 暴露不含正文的标识。`GET /v1/limen/decisions/{decision_id}`、Dry Run 和 Replay 使用安全响应视图，只返回逻辑模型、能力依据和稳定 opaque 目标引用，不返回真实上游模型名；内部完整快照只用于租户隔离的 Replay。`POST /v1/limen/decisions/{decision_id}/replay` 只使用历史输入调用无状态 Decision Engine，对比 `plan_hash` 并返回策略、目标顺序、候选原因等结构化差异，不访问 Provider 或当前熔断器。算法注册表可为每个版本设置 `retainUntil`，到期后返回 `algorithm_version_unavailable`，不会用新算法冒充历史结果。
 
 阶段 B 已建立 `internal/run` 领域状态机和 `internal/store` 持久化边界。Run 的 `Admit` 只检查 active、截止时间、已结算软预算和在途并发数；`Settle` 才累计费用，未知费用进入 `suspended_accounting`。同一租户、接口和 Idempotency-Key 使用规范请求哈希去重，PostgreSQL 迁移通过租户组合键、RLS 和唯一账本约束阻止跨租户访问。无 Run 的兼容 Chat 路径不读取该状态；显式启用内存控制面后，受治理 Chat 才会执行 Run 准入和请求结算。

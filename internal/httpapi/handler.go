@@ -241,6 +241,7 @@ func NewWithOptions(options HandlerOptions) http.Handler {
 	mux.HandleFunc("POST /v1/limen/keys/{public_prefix}/revoke", handler.revokeAPIKey)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/diff/{base_version}", handler.diffConfig)
 	mux.HandleFunc("POST /v1/limen/configs", handler.createConfig)
+	mux.HandleFunc("POST /v1/limen/configs/{version}/dry-run", handler.dryRunConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/publish", handler.publishConfig)
 	mux.HandleFunc("POST /v1/limen/configs/{version}/approvals", handler.createApproval)
 	mux.HandleFunc("GET /v1/limen/configs/{version}/approvals/{approval_id}", handler.getApproval)
@@ -266,6 +267,33 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticateScopes(w, r, auth.ScopeInference, auth.ScopeDecisions) {
 		return
 	}
+	h.dryRunWithRegistry(w, r, nil, "")
+}
+
+// dryRunConfig 使用指定配置草稿预演路由，不切换当前 Router 或访问 Provider。
+func (h *Handler) dryRunConfig(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateScopes(w, r, auth.ScopeInference, auth.ScopeDecisions, auth.ScopeConfigsRead) {
+		return
+	}
+	if h.configs == nil || h.router == nil {
+		writeError(w, http.StatusServiceUnavailable, "config preview unavailable", "api_error", "config_preview_unavailable")
+		return
+	}
+	record, err := h.configs.Get(r.Context(), h.requestTenantID(r), r.PathValue("version"))
+	if err != nil {
+		writeConfigStoreError(w, err)
+		return
+	}
+	registry, err := registryFromConfig(record.Models)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid config document", "invalid_request_error", "invalid_config")
+		return
+	}
+	h.dryRunWithRegistry(w, r, registry, record.Version)
+}
+
+// dryRunWithRegistry 解析请求、记录决策快照并返回安全计划视图。
+func (h *Handler) dryRunWithRegistry(w http.ResponseWriter, r *http.Request, registry *gateway.ModelRegistry, configVersion string) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "invalid_body")
@@ -285,7 +313,13 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
-	input, plan, err := h.router.Explain(envelope.Request, envelope.Contract)
+	var input decision.Input
+	var plan decision.ExecutionPlan
+	if registry == nil {
+		input, plan, err = h.router.Explain(envelope.Request, envelope.Contract)
+	} else {
+		input, plan, err = h.router.ExplainWithRegistry(envelope.Request, envelope.Contract, registry, configVersion)
+	}
 	if err != nil {
 		var unsupported *gateway.UnsupportedModelError
 		if errors.As(err, &unsupported) {
@@ -311,6 +345,9 @@ func (h *Handler) dryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("X-Limen-Decision-ID", decisionID)
+	if plan.ConfigVersion != "" {
+		w.Header().Set("X-Limen-Config-Version", plan.ConfigVersion)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(publicExecutionPlan(plan))
 }

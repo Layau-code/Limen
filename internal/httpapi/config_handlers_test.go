@@ -53,6 +53,36 @@ func TestConfigControlPublishesAndReplacesRouter(t *testing.T) {
 	}
 }
 
+func TestConfigDryRunUsesDraftWithoutChangingRouter(t *testing.T) {
+	initial, err := gateway.NewModelRegistry([]gateway.Model{{ID: "old", Targets: []gateway.Target{{Provider: "openai", UpstreamModel: "gpt-old"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs := configstore.NewMemoryStore()
+	record, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"draft-model","targets":[{"provider":"openai","upstream_model":"gpt-preview"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gateway.NewRouter(nil, initial, gateway.Policy{RequestTimeout: time.Second, AttemptTimeout: time.Second, FailureThreshold: 1, Cooldown: time.Second})
+	authenticator := auth.NewStaticAuthenticator("secret", "tenant-a", []auth.Scope{auth.ScopeInference, auth.ScopeDecisions, auth.ScopeConfigsRead})
+	handler := NewWithHealthAndRunsForTenantAuthenticatorJournalAndConfig(authenticator, router, nil, "tenant-a", journal.NewMemoryStore(), configs, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/limen/configs/"+record.Version+"/dry-run", strings.NewReader(`{"model":"draft-model","messages":[{"role":"user","content":"hello"}]}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("X-Limen-Config-Version") != record.Version || response.Header().Get("X-Limen-Decision-ID") == "" {
+		t.Fatalf("preview status=%d headers=%v body=%s", response.Code, response.Header(), body)
+	}
+	if strings.Contains(body, "gpt-preview") || !strings.Contains(body, catalog.OpaqueTargetID("openai:gpt-preview")) {
+		t.Fatalf("preview leaked target mapping: %s", body)
+	}
+	if models := router.Models(); len(models) != 1 || models[0].ID != "old" {
+		t.Fatalf("preview changed active router: %+v", models)
+	}
+}
+
 func TestConfigPublishRejectsIdempotencyConflict(t *testing.T) {
 	configs := configstore.NewMemoryStore()
 	record, err := configs.Create(nil, "tenant-a", []byte(`{"models":[{"id":"model","targets":[{"id":"target","provider":"openai","upstream_model":"gpt-test"}]}]}`))

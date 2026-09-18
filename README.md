@@ -118,6 +118,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 可以调用 `POST /v1/limen/decisions/dry-run` 使用同一请求格式只生成执行计划，不访问 Provider、不计入用量；返回内容包含候选目标、淘汰原因和 `input_hash`/`plan_hash`，目标引用使用稳定的 opaque ID，不返回真实上游模型名，适合在 Agent 调用前解释路由选择。
 
+配置发布前还可以调用 `POST /v1/limen/configs/{version}/dry-run` 预演指定草稿版本。它读取租户隔离的配置版本，生成同样的决策快照和计划，但不切换当前 Router、不访问 Provider；因此可以在审批或发布前验证模型能力、Fallback 顺序和计划哈希。该接口需要 `inference`、`decisions:read` 和 `configs:read`。
+
 决策记录可通过 `GET /v1/limen/decisions/{decision_id}` 查询，或调用 `POST /v1/limen/decisions/{decision_id}/replay` 使用历史输入重新生成计划。Replay 不访问 Provider、不读取当前熔断状态，只返回原计划、重放计划、`match` 和结构化差异（策略、目标顺序、候选原因和哈希）；差异中不包含真实上游模型名。真实 Chat 与 Dry Run 会在响应头返回 `X-Limen-Decision-ID`；对外快照只包含逻辑模型、能力契约、opaque 目标引用和哈希，不保存 Prompt 或 Response。内部快照仍保留协议转换所需字段，仅供租户隔离的 Replay 使用。
 
 `internal/decision/testdata/fixtures.json` 保存 100 组版本化 Replay 语料，覆盖契约、数据等级、流式、上下文、健康状态、预算和排序。当前新请求使用 `decision.v2`：无序能力集合会排序去重，显式模型的 Fallback 目标优先级保持不变；`decision.v1` 仍注册用于历史 Replay。算法注册表支持为旧版本设置 `retainUntil`，超过保留截止时间后返回 `algorithm_version_unavailable`，不会静默使用新算法。`go generate ./internal/decision` 可确定性重建文件；测试要求数量不能减少，且规范计划字节和已提交哈希都保持一致。
@@ -154,7 +156,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 启用数据库和 `LIMEN_CREDENTIAL_MASTER_KEY` 后，管理员可使用 `POST /v1/limen/credentials/{provider}` 轮换 Provider 凭据，或调用 `POST /v1/limen/credentials/{provider}/revoke` 撤销。请求必须提供匹配当前配置的 `endpoint_id`，响应只返回凭据元数据，不返回密钥；endpoint ID 可由 `provider.EndpointIDForBaseURL` 生成。凭据轮换在当前实例立即生效，其他实例通过 PostgreSQL `NOTIFY` 刷新；通知故障不会回滚数据库变更，实例可重启重新加载。
 
-静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；Dry Run 需要 `inference,decisions:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
+静态 Key 支持 `inference`、`runs:read`、`runs:write`、`decisions:read`、`configs:read`、`configs:write` 和 `admin`。Chat/Models 需要 `inference`；当前目录 Dry Run 需要 `inference,decisions:read`；配置版本预演需要 `inference,decisions:read,configs:read`；Run 创建、完成、取消以及带 `X-Limen-Run-ID` 的 Chat 需要 `runs:write`；Run 和 Request 查询需要 `runs:read`。鉴权通过后下游只接收租户 Principal，不读取原始 Key。
 
 未知费用处置接口需要 `admin`，并且必须携带 `Idempotency-Key`；它只返回 Request 状态，不返回 Prompt、Response 或 Provider 凭据。
 
@@ -173,6 +175,6 @@ make smoke   # 真实二进制启动与 API 冒烟
 make bench   # Router 主路径与 Fallback 基准
 ```
 
-本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5.6 μs/op`、73 次分配；Fallback 路径 `6.1 μs/op`、84 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
+本机 Apple M5、darwin/arm64 的近期基准大致为：主路径 `5–6 μs/op`、73 次分配；Fallback 路径 `6–7 μs/op`、84 次分配。该数字包含未启用导出时的 Trace 边界，只用于描述测量环境，不构成性能承诺。
 
 设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
