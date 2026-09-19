@@ -103,6 +103,9 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - OpenAI 兼容边界以 `docs/openai-compatibility.md` 为单一文档来源；新增或拒绝字段必须同步解析器、测试和矩阵，不能静默丢弃未知字段。
 - `make compatibility` 必须覆盖矩阵中的支持字段（包括 `max_completion_tokens` 和 `stream_options.include_usage`）、字段互斥、明确拒绝字段、OpenAI 错误 envelope 和 SSE 结束语义；兼容行为变化必须先更新矩阵与契约测试。
 - `make reliability` 必须保持为离线、确定性的故障注入入口，覆盖瞬时错误 Fallback、确定性错误不切换、总预算、客户端取消、流式不重放和 Provider 错误分类；可靠性边界变化必须同步更新对应契约测试。
+- `make release-check` 是 CI 和提交前的离线 RC 门禁，必须汇总 `check`、兼容性、可靠性、PostgreSQL、构建、冒烟、配置预检、演示、基准和差异检查；它不得访问真实 Provider。
+- `make release-live` 只能由人工在受保护环境显式设置 `LIMEN_LIVE_TEST=1` 后运行，使用最小请求验证真实 OpenAI/Anthropic 普通与 SSE；Provider Key 只能来自环境或外部 Secret，脚本不得输出 Key、Prompt、完整 Response 或错误正文。真实瞬时故障不在该脚本中主动制造，Fallback 证据由离线故障注入测试提供。
+- 发布构建必须通过 `make release-build` 注入非 `dev` 的 `VERSION`、真实提交短 SHA 和 UTC `BUILD_DATE`，并用 `limen version` 验证；未注入元数据的二进制不能作为发布产物。
 
 ## 测试与验证
 
@@ -145,7 +148,7 @@ Limen 是面向 Agent 的 Go AI Gateway：以 OpenAI 兼容 API 接收请求，�
 - Trace 测试必须覆盖同一 Trace ID 的请求、准入、决策、Fallback Attempt 和结算，并用哨兵值证明正文、密钥和上游模型名不会进入 Span。
 - 流式测试必须证明首段 Flush 不等待完整响应，并且日志/Trace 的 TTFB 在有正文时出现、无正文时省略。
 - PostgreSQL 集成测试必须使用非超级用户验证 RLS，并覆盖 100 并发准入、并发幂等、唯一账本、强制终止独立执行进程、数据库暂停/恢复、多个 Store 竞争租约恢复以及取消通知的轮询兜底；不得用 SQL Mock 代替数据库不变量。
-- 提交前运行 `make check`；该命令还会检查 `cmd` 和 `internal` 中每个生产方法是否有简体中文用途注释；交付前额外运行 `go clean -testcache`、`make integration`、`make build`、`make smoke`、`make bench` 和 `git diff --check`。
+- 提交前运行 `make release-check`；该命令还会检查 `cmd` 和 `internal` 中每个生产方法是否有简体中文用途注释。创建 RC 前在受保护环境额外运行 `make release-live`，并保留成功摘要与提交 SHA，不把真实 Key 写入仓库、CI 或日志。
 - `make smoke` 必须保持离线，只使用占位密钥和未知模型请求验证真实二进制的 `/readyz`、鉴权、OpenAI 风格模型列表、安全错误边界以及 `SIGTERM` 后撤销就绪并退出，不能调用真实 Provider。
 - `make bench` 必须同时覆盖固定 100 个候选目标的纯决策路径和 Router 主/Fallback 路径；决策基准不得访问网络或数据库，文档记录的机器与结果必须来自实际运行。
 - 兼容性相关改动还必须运行 `make compatibility`，并确认不访问真实 Provider 网络。

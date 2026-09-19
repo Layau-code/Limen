@@ -14,6 +14,7 @@ Limen 是一个以 Agent Run 为治理边界、以能力契约驱动模型选择
 | Agent 治理 | 单请求超时或限额 | Run 级软预算、并发准入、幂等、租约、取消和诚实的未知费用状态 | `make integration` |
 | 可解释性 | 日志和指标 | Decision Journal、`input_hash`/`plan_hash`、Explain、Replay 和配置影响分析 | `limen explain`、Replay API |
 | 发布安全 | 配置文件或管理 API | 不可变配置版本、endpoint 绑定、离线 validate/diff、审批和草稿预演 | `make validate`、`limen diff` |
+| 发布证据 | 单元测试或手工验证 | 离线可靠性门禁加受保护的真实 Provider 普通/SSE 联调 | `make release-check`、`make release-live` |
 | 安全边界 | Bearer Key 和日志脱敏 | 租户 Principal、Scope、RLS、凭据隔离、安全出站 Client 和稳定错误视图 | PostgreSQL 集成测试 |
 
 ## 真正的差异化
@@ -55,6 +56,7 @@ make compatibility # 验证 OpenAI Chat 兼容边界
 make reliability   # 验证取消、超时、Fallback 和流式不重放
 make integration   # 验证 PostgreSQL、RLS、幂等和崩溃恢复
 make bench         # 测量决策和路由热路径
+make release-check # 运行 RC 离线发布门禁
 ```
 
-所有演示和测试均不需要真实 Provider Key，也不会输出 Prompt、Response 或凭据。
+上述演示和离线测试不需要真实 Provider Key，也不会输出 Prompt、Response 或凭据。发布候选版本还应在受保护环境中手动运行 `make release-live`，取得真实 OpenAI/Anthropic 普通和 SSE 链路证据。

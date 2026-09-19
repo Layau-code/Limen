@@ -52,6 +52,24 @@ Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导�
 6. PostgreSQL 暂时不可用：事务连接池的单次网络 I/O 最多等待 5 秒；已持久化的结算任务在连接恢复后继续处理，未完成且租约过期的请求进入 `suspended_accounting`，不会自动重放 Provider。
 7. API Key 创建或轮换响应丢失：出于安全边界，Limen 不从数据库恢复明文；使用仍有效的管理员 Key 再次执行新的幂等操作，并撤销无法确认是否交付的旧 Key。轮换提交后旧 Key 不再有效。
 
+## RC 发布门禁
+
+`make release-check` 是默认的离线门禁，汇总格式、注释、静态分析、竞态、OpenAI 兼容、故障注入、PostgreSQL、构建、冒烟、配置预检、离线演示和基准检查；它不访问真实 Provider，但会使用 Docker 启动临时 PostgreSQL。
+
+创建 `v1.0.0-rc1` 前，再手动设置 `LIMEN_LIVE_TEST=1`、`LIMEN_LIVE_OPENAI_MODEL`、`LIMEN_LIVE_ANTHROPIC_MODEL` 以及两组 Provider Key，运行 `make release-live`。脚本会用最小文本验证两个 Provider 的普通和 SSE 链路，Key、Prompt、完整响应和上游错误正文不会写入日志。真实联调不主动制造 Provider 故障；Fallback 的瞬时错误证据由离线故障注入门禁提供。完整变量和发布证据要求见 [`docs/plans/2026-09-19-limen-release-gate.md`](plans/2026-09-19-limen-release-gate.md)。
+
+发布二进制必须注入版本元数据：
+
+```bash
+VERSION=v1.0.0-rc1 \
+COMMIT=$(git rev-parse --short HEAD) \
+BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+make release-build
+./bin/limen version
+```
+
+`release-build` 会拒绝 `dev`、`unknown` 等未注入值，避免把开发构建误当成发布产物。
+
 ## 交付检查
 
-提交前运行 `go clean -testcache && make check && make integration && make build && make smoke && make bench && git diff --check`。其中 `make check` 还会验证 `cmd` 和 `internal` 中每个生产方法都有简体中文用途注释。`make smoke` 使用临时二进制和占位密钥，验证 `/readyz`、Bearer 鉴权、OpenAI 风格 `/v1/models`、未知模型错误不会回显请求模型，以及收到 `SIGTERM` 后就绪状态撤销并正常退出；脚本不访问真实 Provider。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。
+提交前运行 `make release-check`；它还会验证 `cmd` 和 `internal` 中每个生产方法都有简体中文用途注释。`make smoke` 使用临时二进制和占位密钥，验证 `/readyz`、Bearer 鉴权、OpenAI 风格 `/v1/models`、未知模型错误不会回显请求模型，以及收到 `SIGTERM` 后就绪状态撤销并正常退出；脚本不访问真实 Provider。Docker 可用时再运行 `make image`，不要把真实 Provider Key 写入脚本或 CI。

@@ -37,7 +37,8 @@ docker run -d \
   postgres:17-alpine >/dev/null
 
 attempt=0
-until docker exec "$container_name" pg_isready -U limen_admin -d limen_test >/dev/null 2>&1; do
+until docker exec "$container_name" pg_isready -U limen_admin -d limen_test >/dev/null 2>&1 \
+	&& docker exec "$container_name" psql -U limen_admin -d limen_test -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 60 ]; then
     docker logs "$container_name" >&2

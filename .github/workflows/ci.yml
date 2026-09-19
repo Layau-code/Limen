@@ -12,19 +12,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - name: 检查格式、静态分析和竞态
-        run: make check
-      - name: 验证 OpenAI 兼容契约
-        run: make compatibility
-      - name: 验证故障注入可靠性契约
-        run: make reliability
-      - name: 验证 PostgreSQL 多实例不变量
-        run: make integration
-      - name: 构建二进制
-        run: make build
-      - name: 预检示例模型目录
-        run: make validate
-      - name: 冒烟测试
-        run: make smoke
-      - name: 运行决策与路由基准
-        run: make bench
+      - name: 执行离线 RC 发布门禁
+        run: make release-check
+      - name: 说明真实 Provider 联调边界
+        run: echo 'CI 不读取 Provider Key；发布候选需在受保护环境手动运行 make release-live'

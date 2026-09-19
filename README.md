@@ -35,6 +35,7 @@ Agent / 应用 → Limen API Key → 模型注册表 → 软预算感知路由 �
 - `limen explain` 可读取模型目录和 Chat 请求快照，离线输出候选目标、淘汰原因、策略和 `plan_hash`；输出不包含 Prompt 或真实上游模型名，适合演示和发布前排障。
 - `limen validate` 可在不读取密钥、不访问网络的情况下预检模型目录，输出稳定 `config_version` 和 Provider/目标数量，适合接入发布流水线。
 - `limen diff` 可在不读取密钥、不访问网络的情况下比较基线与候选模型目录，只输出配置版本和安全结构差异，适合接入发布审批前的影响检查。
+- `make release-check` 汇总离线可靠性、PostgreSQL、构建、冒烟、配置预检、演示和基准门禁；`make release-live` 仅在显式开关下验证真实 OpenAI/Anthropic 普通与流式链路。
 - 可选 OTLP/HTTP Trace 把 HTTP、Run 准入、Decision、每次 Attempt 和 Settlement 串成同一证据链；只传播 `traceparent`，不记录正文、密钥或上游模型名。
 - 结构化日志和 HTTP Trace 记录安全的 `ttfb_ms`，可区分 SSE 首段延迟与完整响应/结算延迟。
 - 控制面变更写入租户隔离的安全审计摘要，包含非敏感的凭据身份标识；`GET /v1/limen/audit` 仅允许 `admin` Scope，事件不含正文、密钥或真实上游模型名。
@@ -194,7 +195,7 @@ PostgreSQL 迁移还会对租户表启用 `FORCE ROW LEVEL SECURITY`，即使表
 
 `LIMEN_CONFIG_APPROVAL_REQUIRED` 只接受 `true` 或 `false`，默认关闭；开启后配置发布必须先完成双人审批，静态 Key 无法满足身份分离。
 
-环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY` 或 `OPENAI_API_KEY_FILE`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` 或 `ANTHROPIC_API_KEY_FILE`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。配置数据库后，启动会 Ping 数据库并在事务级 advisory lock 下执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，`LIMEN_API_KEY_FILE` 只适用于静态 Key 模式；API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。当前进程只服务 `LIMEN_TENANT_ID`，数据库中属于其他租户的 Key 会返回 `tenant_not_served`，不会进入本进程的 Router、配置或 Provider；需要服务多个租户时应为每个租户运行独立实例。未启用凭据主密钥时，Provider 使用对应环境变量或文件密钥；启用后，Provider 只使用当前进程绑定租户和 endpoint 解析出的加密凭据，默认租户也必须先完成凭据配置。文件密钥会去除首尾空白，空文件、无法读取或同时设置明文和文件来源都会让启动失败。
+环境变量包括 `LIMEN_ADDR`（默认 `:8080`）、`LIMEN_API_KEY` 或 `LIMEN_API_KEY_FILE`、`LIMEN_API_KEY_STORE`（`static` 或 `postgres`，默认 `static`）、`LIMEN_API_KEY_HMAC_SECRET`（PostgreSQL Key Store 必填）、`LIMEN_API_SCOPES`（静态 Key 可选，逗号分隔，默认全部 Scope）、`LIMEN_MODELS_FILE`、`OPENAI_API_KEY` 或 `OPENAI_API_KEY_FILE`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` 或 `ANTHROPIC_API_KEY_FILE`、`ANTHROPIC_BASE_URL`、`LIMEN_REQUEST_TIMEOUT`（默认 `60s`）、`LIMEN_DATABASE_URL`（可选 PostgreSQL DSN）、`LIMEN_TENANT_ID`（默认 `local`）和 `LIMEN_CREDENTIAL_MASTER_KEY`（可选，32 字节十六进制/Base64/原文主密钥）。真实 Provider 联调额外使用 `LIMEN_LIVE_TEST=1`、`LIMEN_LIVE_OPENAI_MODEL`、`LIMEN_LIVE_ANTHROPIC_MODEL`、可选 `LIMEN_LIVE_PORT` 和 `LIMEN_LIVE_REQUEST_TIMEOUT`；这些变量只供 `make release-live` 手动使用。配置数据库后，启动会 Ping 数据库并在事务级 advisory lock 下执行版本化迁移，使用 PostgreSQL 持久化 Run、Request、Attempt、Ledger、待结算任务、Decision Journal、配置版本、API Key 摘要和控制面操作；启动日志不会输出 DSN。PostgreSQL Key Store 模式要求同时配置数据库和 HMAC Secret，`LIMEN_API_KEY_FILE` 只适用于静态 Key 模式；API Key 格式为 `lmn_live_<public_prefix>_<random_secret>`，Key 由 `admin` 控制面按需创建。当前进程只服务 `LIMEN_TENANT_ID`，数据库中属于其他租户的 Key 会返回 `tenant_not_served`，不会进入本进程的 Router、配置或 Provider；需要服务多个租户时应为每个租户运行独立实例。未启用凭据主密钥时，Provider 使用对应环境变量或文件密钥；启用后，Provider 只使用当前进程绑定租户和 endpoint 解析出的加密凭据，默认租户也必须先完成凭据配置。文件密钥会去除首尾空白，空文件、无法读取或同时设置明文和文件来源都会让启动失败。
 
 `limen healthcheck` 默认根据 `LIMEN_ADDR` 检查回环地址上的 `/readyz`；容器或代理场景可用 `LIMEN_HEALTH_URL` 覆盖检查地址。仅设置 `LIMEN_RUN_STORE=memory` 才启用内存 Run 控制面，该模式只适合本地演示。
 
@@ -225,10 +226,22 @@ make smoke   # 真实二进制启动、就绪、鉴权、安全错误和关闭�
 make bench   # 100 候选决策与 Router 主路径/Fallback 基准
 make demo    # 离线演示 Fallback 与草稿影响分析
 make validate # 离线预检示例模型目录
+make release-check # RC 离线发布门禁，不访问真实 Provider
+# LIMEN_LIVE_TEST=1 make release-live # 手动真实 Provider 联调，需先设置测试模型和两组 Key
+```
+
+发布构建需要显式注入版本、提交和 UTC 构建时间；开发构建默认显示 `dev`：
+
+```bash
+VERSION=v1.0.0-rc1 \
+COMMIT=$(git rev-parse --short HEAD) \
+BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+make release-build
+./bin/limen version
 ```
 
 `make demo` 输出一行 JSON，包含 `model=auto` 的能力契约选模结果、被排除目标的稳定原因码、`openai:503>anthropic:200` 路由、实际 Attempt 数、草稿 Provider、影响分析、Decision 绑定和 Run 结算摘要；演示不需要数据库、模型密钥或外部网络。
 
 本机 Apple M5、darwin/arm64 的本次实测基准大致为：100 个候选目标的完整决策路径 `约 365 μs/op`、约 562 KB 和 1962 次分配；Router 主路径 `约 7.6 μs/op`、约 10.6 KB 和 91 次分配；Fallback 路径 `约 16.2 μs/op`、约 11.3 KB 和 102 次分配。决策基准包含候选过滤、稳定排序、计划复制和哈希计算；这些数字只用于描述测量环境，不构成性能承诺。基准不访问网络或数据库。
 
-设计决策见 [`docs/design.md`](docs/design.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
+设计决策见 [`docs/design.md`](docs/design.md)，RC 发布门禁见 [`docs/plans/2026-09-19-limen-release-gate.md`](docs/plans/2026-09-19-limen-release-gate.md)，本次发布说明见 [`docs/releases/v1.0.0-rc1.md`](docs/releases/v1.0.0-rc1.md)，开发规范见 [`AGENTS.md`](AGENTS.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
