@@ -2,6 +2,8 @@
 
 ## v1.0.0-rc1 - 2026-09-19
 
+- 精简公开 README，突出能力契约路由、可重放决策、Run 治理和可靠 Fallback。
+- 公开代码树不再包含内部设计、规划和 Agent 协作文档；历史提交保持不变。
 - 新增 `make release-check` 离线 RC 发布门禁，以及显式开关保护的 `make release-live` 真实 OpenAI/Anthropic 普通与 SSE 联调；同步记录真实联调的密钥、费用和证据边界。
 - 明确离线故障注入与真实 Provider 联调各自负责的发布证据。
 - 增强 PostgreSQL 集成测试容器的就绪检查，避免数据库刚启动时的偶发连接竞态。
