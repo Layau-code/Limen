@@ -3,7 +3,7 @@
 ## v1.0.0-rc1 - 2026-09-19
 
 - 新增 `make release-check` 离线 RC 发布门禁，以及显式开关保护的 `make release-live` 真实 OpenAI/Anthropic 普通与 SSE 联调；同步记录真实联调的密钥、费用和证据边界。
-- 新增 [`docs/plans/2026-09-19-limen-release-gate.md`](docs/plans/2026-09-19-limen-release-gate.md)，明确离线故障注入与真实 Provider 联调各自负责的发布证据。
+- 明确离线故障注入与真实 Provider 联调各自负责的发布证据。
 - 增强 PostgreSQL 集成测试容器的就绪检查，避免数据库刚启动时的偶发连接竞态。
 - 放宽 PostgreSQL 并发集成测试的应用连接 I/O 时间，避免容器调度抖动造成假失败。
 - 增加生产方法注释检查，防止新增代码缺少简体中文用途说明。

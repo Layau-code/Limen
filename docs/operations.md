@@ -56,7 +56,7 @@ Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导�
 
 `make release-check` 是默认的离线门禁，汇总格式、注释、静态分析、竞态、OpenAI 兼容、故障注入、PostgreSQL、构建、冒烟、配置预检、离线演示和基准检查；它不访问真实 Provider，但会使用 Docker 启动临时 PostgreSQL。
 
-创建 `v1.0.0-rc1` 前，再手动设置 `LIMEN_LIVE_TEST=1`、`LIMEN_LIVE_OPENAI_MODEL`、`LIMEN_LIVE_ANTHROPIC_MODEL` 以及两组 Provider Key，运行 `make release-live`。脚本会用最小文本验证两个 Provider 的普通和 SSE 链路，Key、Prompt、完整响应和上游错误正文不会写入日志。真实联调不主动制造 Provider 故障；Fallback 的瞬时错误证据由离线故障注入门禁提供。完整变量和发布证据要求见 [`docs/plans/2026-09-19-limen-release-gate.md`](plans/2026-09-19-limen-release-gate.md)。
+创建 `v1.0.0-rc1` 前，再手动设置 `LIMEN_LIVE_TEST=1`、`LIMEN_LIVE_OPENAI_MODEL`、`LIMEN_LIVE_ANTHROPIC_MODEL` 以及两组 Provider Key，运行 `make release-live`。脚本会用最小文本验证两个 Provider 的普通和 SSE 链路，Key、Prompt、完整响应和上游错误正文不会写入日志。真实联调不主动制造 Provider 故障；Fallback 的瞬时错误证据由离线故障注入门禁提供。
 
 发布二进制必须注入版本元数据：
 

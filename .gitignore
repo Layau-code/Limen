@@ -4,3 +4,8 @@
 bin/
 coverage.out
 .worktrees/
+AGENTS.md
+docs/design.md
+docs/positioning.md
+docs/plans/
+docs/specs/
