@@ -2,11 +2,6 @@
 
 Limen（拉丁语：门槛、入口）是一个面向 Agent 的可解释 AI Gateway。它以 OpenAI 兼容接口接收请求，根据能力、数据等级、质量和成本策略生成可重放的执行计划，再转发到 OpenAI 或 Anthropic。
 
-```text
-Agent / 应用 → 鉴权 → Decision Engine → Gateway Executor → Provider
-                         ↘ Journal / Run / Settlement
-```
-
 当前版本：`v1.0.0-rc1`。支持文本 Chat Completions、普通响应和 SSE；暂不支持 Tools、Vision、Responses API 和多地域部署。
 
 ## 为什么是 Limen
@@ -28,6 +23,8 @@ Agent / 应用 → 鉴权 → Decision Engine → Gateway Executor → Provider
 - 不记录 Prompt、Response 或密钥的日志、指标和可选 OpenTelemetry Trace。
 
 ## 架构
+
+![Limen 项目架构](docs/limen-architecture.png)
 
 Decision Engine 只负责把标准化请求转换成确定性的 `ExecutionPlan`；Gateway Executor 只按计划调用 Provider，不在执行阶段改变路由策略。Run Store、Decision Journal 和 Settlement 独立保存治理状态，使崩溃恢复不需要重放可能已经计费的上游请求。
 

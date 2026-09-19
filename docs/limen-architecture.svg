@@ -1,0 +1,190 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1420" viewBox="0 0 2400 1420" role="img" aria-labelledby="title desc">
+  <title id="title">Limen 项目架构</title>
+  <desc id="desc">展示 Agent 请求经由 OpenAI 兼容 API、鉴权与 Run 治理、确定性决策、可靠执行，最终访问 OpenAI 或 Anthropic，并由 PostgreSQL 保存治理状态的完整链路。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7FAFC"/>
+      <stop offset="1" stop-color="#EEF4F8"/>
+    </linearGradient>
+    <linearGradient id="limen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F766E"/>
+      <stop offset="1" stop-color="#0B5E59"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="9" stdDeviation="13" flood-color="#163047" flood-opacity="0.11"/>
+    </filter>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#476276"/>
+    </marker>
+    <marker id="arrow-teal" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#0F766E"/>
+    </marker>
+    <style>
+      text { font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; fill: #153247; }
+      .title { font-size: 52px; font-weight: 600; letter-spacing: 1px; }
+      .subtitle { font-size: 23px; fill: #5B7181; }
+      .stage { font-size: 18px; font-weight: 600; fill: #0F766E; letter-spacing: 2px; }
+      .box-title { font-size: 27px; font-weight: 600; }
+      .box-copy { font-size: 19px; fill: #50697A; }
+      .box-copy-strong { font-size: 19px; fill: #21465A; font-weight: 600; }
+      .small { font-size: 17px; fill: #607788; }
+      .chip-text { font-size: 16px; fill: #315467; }
+      .white { fill: #FFFFFF; }
+      .white-muted { fill: #CFECE8; }
+      .flow { stroke: #476276; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .return { stroke: #0F766E; stroke-width: 3.5; fill: none; marker-end: url(#arrow-teal); }
+      .data { stroke: #6C8798; stroke-width: 3; stroke-dasharray: 10 9; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="2400" height="1420" fill="url(#bg)"/>
+  <circle cx="2260" cy="110" r="220" fill="#D9EEEB" opacity="0.45"/>
+  <circle cx="120" cy="1370" r="260" fill="#DDEAF3" opacity="0.62"/>
+
+  <text x="120" y="100" class="title">Limen · 可解释 AI Gateway</text>
+  <text x="120" y="145" class="subtitle">从能力契约到可靠执行：每次路由都可解释、可重放、可治理</text>
+
+  <text x="120" y="230" class="stage">在线请求主链路</text>
+  <line x1="120" y1="249" x2="2280" y2="249" stroke="#CBD8E1" stroke-width="2"/>
+
+  <!-- Main flow connectors -->
+  <path d="M390 475 H470" class="flow"/>
+  <path d="M800 475 H880" class="flow"/>
+  <path d="M1240 475 H1320" class="flow"/>
+  <path d="M1680 475 H1760" class="flow"/>
+  <path d="M2090 475 H2170" class="flow"/>
+
+  <!-- Client -->
+  <g filter="url(#shadow)">
+    <rect x="120" y="330" width="270" height="290" rx="24" fill="#FFFFFF" stroke="#D5E0E7" stroke-width="2"/>
+  </g>
+  <circle cx="255" cy="395" r="37" fill="#E4F2F0"/>
+  <path d="M236 410 Q255 389 274 410 M242 382 A13 13 0 1 0 268 382" fill="none" stroke="#0F766E" stroke-width="5" stroke-linecap="round"/>
+  <text x="255" y="466" text-anchor="middle" class="box-title">Agent / 应用</text>
+  <text x="255" y="510" text-anchor="middle" class="box-copy">OpenAI SDK</text>
+  <text x="255" y="543" text-anchor="middle" class="box-copy">或兼容客户端</text>
+
+  <!-- API -->
+  <g filter="url(#shadow)">
+    <rect x="470" y="300" width="330" height="350" rx="24" fill="#FFFFFF" stroke="#D5E0E7" stroke-width="2"/>
+  </g>
+  <rect x="500" y="330" width="84" height="31" rx="15" fill="#E4F2F0"/>
+  <text x="542" y="352" text-anchor="middle" class="chip-text">HTTP</text>
+  <text x="505" y="410" class="box-title">OpenAI 兼容 API</text>
+  <text x="505" y="454" class="box-copy-strong">/v1/chat/completions</text>
+  <text x="505" y="500" class="box-copy">请求校验与标准化</text>
+  <text x="505" y="535" class="box-copy">普通响应 / SSE 转发</text>
+  <text x="505" y="570" class="box-copy">统一错误语义</text>
+  <text x="505" y="613" class="small">入口协议保持兼容</text>
+
+  <!-- Governance -->
+  <g filter="url(#shadow)">
+    <rect x="880" y="300" width="360" height="350" rx="24" fill="#FFFFFF" stroke="#D5E0E7" stroke-width="2"/>
+  </g>
+  <rect x="910" y="330" width="104" height="31" rx="15" fill="#E8EEF7"/>
+  <text x="962" y="352" text-anchor="middle" class="chip-text">GOVERN</text>
+  <text x="915" y="410" class="box-title">鉴权与 Run 治理</text>
+  <text x="915" y="460" class="box-copy">API Key · 租户隔离</text>
+  <text x="915" y="495" class="box-copy">幂等 · 并发准入</text>
+  <text x="915" y="530" class="box-copy">软预算 · 截止时间</text>
+  <text x="915" y="565" class="box-copy">租约 · 取消控制</text>
+  <text x="915" y="613" class="small">先治理，再产生上游费用</text>
+
+  <!-- Decision -->
+  <g filter="url(#shadow)">
+    <rect x="1320" y="285" width="360" height="380" rx="24" fill="url(#limen)"/>
+  </g>
+  <rect x="1350" y="318" width="112" height="31" rx="15" fill="#FFFFFF" opacity="0.16"/>
+  <text x="1406" y="340" text-anchor="middle" class="chip-text white">DECIDE</text>
+  <text x="1355" y="400" class="box-title white">Decision Engine</text>
+  <text x="1355" y="448" class="box-copy white-muted">能力 · 数据等级</text>
+  <text x="1355" y="483" class="box-copy white-muted">质量 · 上下文 · 成本</text>
+  <line x1="1355" y1="514" x2="1645" y2="514" stroke="#7BC4BC" stroke-width="1.5" opacity="0.65"/>
+  <text x="1355" y="554" class="box-copy-strong white">确定性 ExecutionPlan</text>
+  <text x="1355" y="589" class="box-copy white-muted">稳定排序与拒绝原因</text>
+  <text x="1355" y="624" class="small white-muted">input_hash · plan_hash</text>
+
+  <!-- Executor -->
+  <g filter="url(#shadow)">
+    <rect x="1760" y="300" width="330" height="350" rx="24" fill="#FFFFFF" stroke="#D5E0E7" stroke-width="2"/>
+  </g>
+  <rect x="1790" y="330" width="110" height="31" rx="15" fill="#F7EEDC"/>
+  <text x="1845" y="352" text-anchor="middle" class="chip-text">EXECUTE</text>
+  <text x="1795" y="410" class="box-title">Gateway Executor</text>
+  <text x="1795" y="460" class="box-copy">总超时 / 单次超时</text>
+  <text x="1795" y="495" class="box-copy">熔断与并发保护</text>
+  <text x="1795" y="530" class="box-copy">瞬时错误 Fallback</text>
+  <text x="1795" y="565" class="box-copy">SSE 开始后不重放</text>
+  <text x="1795" y="613" class="small">只执行计划，不改变策略</text>
+
+  <!-- Providers -->
+  <g filter="url(#shadow)">
+    <rect x="2170" y="330" width="170" height="290" rx="24" fill="#FFFFFF" stroke="#D5E0E7" stroke-width="2"/>
+  </g>
+  <text x="2255" y="405" text-anchor="middle" class="box-title">Provider</text>
+  <rect x="2200" y="447" width="110" height="42" rx="21" fill="#E4F2F0"/>
+  <text x="2255" y="475" text-anchor="middle" class="box-copy-strong">OpenAI</text>
+  <rect x="2200" y="510" width="110" height="42" rx="21" fill="#E8EEF7"/>
+  <text x="2255" y="538" text-anchor="middle" class="box-copy-strong">Anthropic</text>
+  <text x="2255" y="586" text-anchor="middle" class="small">文本模型</text>
+
+  <!-- Response line -->
+  <path d="M2255 690 V740 H255 V660" class="return"/>
+  <rect x="1003" y="714" width="390" height="50" rx="25" fill="#E2F1EF" stroke="#B9DCD7" stroke-width="1.5"/>
+  <text x="1198" y="747" text-anchor="middle" class="box-copy-strong">响应 / SSE / Usage 原路返回</text>
+
+  <!-- Governance foundation -->
+  <text x="120" y="845" class="stage">持久化治理底座</text>
+  <line x1="120" y1="864" x2="2280" y2="864" stroke="#CBD8E1" stroke-width="2"/>
+
+  <g filter="url(#shadow)">
+    <rect x="260" y="930" width="1880" height="350" rx="30" fill="#FFFFFF" stroke="#C9D7E0" stroke-width="2"/>
+  </g>
+  <rect x="300" y="968" width="240" height="72" rx="18" fill="#153F52"/>
+  <ellipse cx="349" cy="994" rx="22" ry="9" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <path d="M327 994 V1018 C327 1030 371 1030 371 1018 V994 M327 1006 C327 1018 371 1018 371 1006" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <text x="394" y="1013" class="box-title white">PostgreSQL</text>
+  <text x="300" y="1083" class="box-copy">强一致 · 租户 RLS · 跨实例事件通知</text>
+  <text x="300" y="1120" class="small">未配置数据库时，可退化为有限的内存模式</text>
+
+  <line x1="600" y1="970" x2="600" y2="1240" stroke="#D6E1E7" stroke-width="2"/>
+
+  <g>
+    <rect x="650" y="970" width="260" height="112" rx="18" fill="#EDF6F5"/>
+    <text x="780" y="1017" text-anchor="middle" class="box-copy-strong">配置与凭据</text>
+    <text x="780" y="1052" text-anchor="middle" class="small">版本 · 审批 · 加密密钥</text>
+
+    <rect x="940" y="970" width="260" height="112" rx="18" fill="#F0F3F8"/>
+    <text x="1070" y="1017" text-anchor="middle" class="box-copy-strong">Run Ledger</text>
+    <text x="1070" y="1052" text-anchor="middle" class="small">Request · Attempt · 预算</text>
+
+    <rect x="1230" y="970" width="260" height="112" rx="18" fill="#EDF6F5"/>
+    <text x="1360" y="1017" text-anchor="middle" class="box-copy-strong">Decision Journal</text>
+    <text x="1360" y="1052" text-anchor="middle" class="small">Explain · Replay · Diff</text>
+
+    <rect x="1520" y="970" width="260" height="112" rx="18" fill="#F0F3F8"/>
+    <text x="1650" y="1017" text-anchor="middle" class="box-copy-strong">Audit</text>
+    <text x="1650" y="1052" text-anchor="middle" class="small">主体 · 操作 · 配置变更</text>
+
+    <rect x="1810" y="970" width="280" height="112" rx="18" fill="#F8F1E5"/>
+    <text x="1950" y="1017" text-anchor="middle" class="box-copy-strong">Settlement</text>
+    <text x="1950" y="1052" text-anchor="middle" class="small">用量 · 成本 · 失败恢复</text>
+  </g>
+
+  <text x="650" y="1157" class="box-copy-strong">治理闭环</text>
+  <text x="650" y="1195" class="box-copy">准入前读取状态 → 决策时固化快照 → 执行中记录 Attempt → 响应后结算成本</text>
+  <text x="650" y="1231" class="small">崩溃恢复不重放可能已经计费的上游请求</text>
+
+  <!-- Data connections -->
+  <path d="M1060 650 V905 H1070 V930" class="data"/>
+  <path d="M1500 665 V895 H1360 V930" class="data"/>
+  <path d="M1925 650 V895 H1950 V930" class="data"/>
+  <rect x="970" y="832" width="180" height="39" rx="19" fill="#EEF4F8"/>
+  <text x="1060" y="858" text-anchor="middle" class="small">准入 / 取消</text>
+  <rect x="1412" y="832" width="176" height="39" rx="19" fill="#EEF4F8"/>
+  <text x="1500" y="858" text-anchor="middle" class="small">决策快照</text>
+  <rect x="1826" y="832" width="198" height="39" rx="19" fill="#EEF4F8"/>
+  <text x="1925" y="858" text-anchor="middle" class="small">Attempt / 结算</text>
+
+  <text x="120" y="1360" class="small">核心边界：Decision Engine 只生成计划；Gateway Executor 只执行计划。</text>
+</svg>
