@@ -5,6 +5,7 @@
 - 新增 `make release-check` 离线 RC 发布门禁，以及显式开关保护的 `make release-live` 真实 OpenAI/Anthropic 普通与 SSE 联调；同步记录真实联调的密钥、费用和证据边界。
 - 新增 [`docs/plans/2026-09-19-limen-release-gate.md`](docs/plans/2026-09-19-limen-release-gate.md)，明确离线故障注入与真实 Provider 联调各自负责的发布证据。
 - 增强 PostgreSQL 集成测试容器的就绪检查，避免数据库刚启动时的偶发连接竞态。
+- 放宽 PostgreSQL 并发集成测试的应用连接 I/O 时间，避免容器调度抖动造成假失败。
 - 增加生产方法注释检查，防止新增代码缺少简体中文用途说明。
 - 将 Chat 请求解析、字段校验和 SSE 分块转发拆到独立文件，降低 HTTP Handler 的认知负担；接口和兼容行为保持不变。
 - 将 Router 的 DecisionInput/Replay 组装逻辑拆到 `planner.go`，进一步明确“计划生成”和“计划执行”的边界；行为由现有决策与路由测试保护。

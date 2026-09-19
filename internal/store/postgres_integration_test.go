@@ -1186,7 +1186,8 @@ func postgresIntegrationDatabases(t *testing.T) (*sql.DB, *sql.DB, string) {
 				return
 			}
 		}
-		integrationAppDB, integrationSetupErr = OpenPostgres(appURL, 500*time.Millisecond)
+		// 并发集成测试给应用连接保留足够的网络 I/O 时间，避免容器调度抖动制造假失败。
+		integrationAppDB, integrationSetupErr = OpenPostgres(appURL, 2*time.Second)
 		if integrationSetupErr != nil {
 			return
 		}
