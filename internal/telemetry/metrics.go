@@ -27,7 +27,13 @@ const (
 	// RequestDurationSeconds 统计 Chat 请求总耗时。
 	RequestDurationSeconds Metric = "limen_chat_request_duration_seconds"
 	// TimeToFirstByteSeconds 统计 Chat 首字节延迟。
-	TimeToFirstByteSeconds Metric = "limen_chat_ttfb_seconds"
+	TimeToFirstByteSeconds            Metric = "limen_chat_ttfb_seconds"
+	SemanticAssessmentsTotal          Metric = "limen_semantic_assessments_total"
+	SemanticAssessmentDurationSeconds Metric = "limen_semantic_assessment_duration_seconds"
+	SemanticInputTokensTotal          Metric = "limen_semantic_input_tokens_total"
+	SemanticOutputTokensTotal         Metric = "limen_semantic_output_tokens_total"
+	SemanticCostNanoUSDTotal          Metric = "limen_semantic_cost_nano_usd_total"
+	SemanticCostUnknownTotal          Metric = "limen_semantic_cost_unknown_total"
 )
 
 var histogramBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60}
@@ -44,6 +50,12 @@ var metricDefinitions = []metricDefinition{
 	{name: string(SettlementsTotal), help: "Total number of request settlements.", kind: "counter"},
 	{name: string(RequestDurationSeconds), help: "Chat request duration in seconds.", kind: "histogram"},
 	{name: string(TimeToFirstByteSeconds), help: "Time to first byte for chat responses in seconds.", kind: "histogram"},
+	{name: string(SemanticAssessmentsTotal), help: "Total Jev semantic assessments by fixed outcome.", kind: "counter"},
+	{name: string(SemanticAssessmentDurationSeconds), help: "Jev semantic assessment duration in seconds.", kind: "histogram"},
+	{name: string(SemanticInputTokensTotal), help: "Total input tokens used by semantic assessment.", kind: "counter"},
+	{name: string(SemanticOutputTokensTotal), help: "Total output tokens used by semantic assessment.", kind: "counter"},
+	{name: string(SemanticCostNanoUSDTotal), help: "Estimated Jev assessment cost in nano USD using configured prices.", kind: "counter"},
+	{name: string(SemanticCostUnknownTotal), help: "Semantic assessment cost could not be estimated because no price was configured.", kind: "counter"},
 }
 
 // Labels 是有界的业务标签集合，不包含请求、租户或凭据标识。
@@ -83,7 +95,13 @@ func NewRegistry() *Registry {
 
 // Inc 增加一个固定指标，并截断标签值以控制基数和输出大小。
 func (registry *Registry) Inc(metric Metric, labels Labels) {
-	if registry == nil || !knownMetric(metric) {
+	registry.Add(metric, labels, 1)
+}
+
+// Add increments a fixed counter by a nonzero amount.
+// Add 按指定增量更新固定计数器。
+func (registry *Registry) Add(metric Metric, labels Labels, value uint64) {
+	if registry == nil || !knownMetric(metric) || value == 0 {
 		return
 	}
 	labels = normalizeLabels(labels)
@@ -96,13 +114,13 @@ func (registry *Registry) Inc(metric Metric, labels Labels) {
 		registry.samples[metric] = series
 	}
 	if item := series[key]; item != nil {
-		item.value++
+		item.value += value
 		return
 	}
 	if len(series) >= maxSeriesPerMetric {
 		return
 	}
-	series[key] = &sample{labels: labels, value: 1}
+	series[key] = &sample{labels: labels, value: value}
 }
 
 // Observe 记录固定桶的低基数直方图样本，非法数值会被忽略。
@@ -186,12 +204,12 @@ func (registry *Registry) Write(writer io.Writer) (int, error) {
 
 // knownMetric 判断指标是否属于固定计数器集合。
 func knownMetric(metric Metric) bool {
-	return metric == RequestsTotal || metric == AttemptsTotal || metric == SettlementsTotal
+	return metric == RequestsTotal || metric == AttemptsTotal || metric == SettlementsTotal || metric == SemanticAssessmentsTotal || metric == SemanticInputTokensTotal || metric == SemanticOutputTokensTotal || metric == SemanticCostNanoUSDTotal || metric == SemanticCostUnknownTotal
 }
 
 // knownHistogram 判断指标是否属于固定直方图集合。
 func knownHistogram(metric Metric) bool {
-	return metric == RequestDurationSeconds || metric == TimeToFirstByteSeconds
+	return metric == RequestDurationSeconds || metric == TimeToFirstByteSeconds || metric == SemanticAssessmentDurationSeconds
 }
 
 // sortedSampleKeys 返回计数器序列的稳定排序键。

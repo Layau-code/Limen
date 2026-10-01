@@ -52,6 +52,9 @@ func safeLogPath(path string) string {
 		if strings.HasPrefix(path, "/v1/limen/") {
 			return "/v1/limen/*"
 		}
+		if strings.HasPrefix(path, "/ui/") {
+			return "/ui/*"
+		}
 		return "unmatched"
 	}
 }

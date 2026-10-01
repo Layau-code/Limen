@@ -25,6 +25,7 @@ import (
 	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
+	"github.com/huz/limen/internal/semantic"
 	"github.com/huz/limen/internal/store"
 	"github.com/huz/limen/internal/telemetry"
 	"go.opentelemetry.io/otel"
@@ -47,6 +48,17 @@ func main() {
 		logger.Error("invalid OpenAI endpoint", "error", err)
 		os.Exit(1)
 	}
+	typeSafeBaseURL := "https://api.typesafe.ai"
+	typeSafeEndpoint, err := provider.EndpointForBaseURL(typeSafeBaseURL)
+	if err != nil {
+		logger.Error("invalid TypeSafe endpoint", "error", err)
+		os.Exit(1)
+	}
+	typeSafeEndpointID, err := provider.EndpointIDForBaseURL(typeSafeBaseURL)
+	if err != nil {
+		logger.Error("invalid TypeSafe endpoint binding", "error", err)
+		os.Exit(1)
+	}
 	anthropicEndpoint, err := provider.EndpointForBaseURL(cfg.AnthropicBaseURL)
 	if err != nil {
 		logger.Error("invalid Anthropic endpoint", "error", err)
@@ -62,9 +74,10 @@ func main() {
 		logger.Error("invalid Anthropic endpoint binding", "error", err)
 		os.Exit(1)
 	}
-	client := provider.NewSecureHTTPClient(provider.HTTPClientOptions{AllowedEndpoints: []string{openAIEndpoint, anthropicEndpoint}})
+	client := provider.NewSecureHTTPClient(provider.HTTPClientOptions{AllowedEndpoints: []string{openAIEndpoint, anthropicEndpoint, typeSafeEndpoint}})
 	openAI := provider.NewOpenAI(client, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey)
 	anthropic := provider.NewAnthropic(client, cfg.AnthropicBaseURL, cfg.AnthropicAPIKey)
+	jevClient := semantic.NewJevClient(client, cfg.TypeSafeAPIKey, nil)
 	registry := gateway.NewCompatibilityRegistry()
 	if len(cfg.Models) > 0 {
 		models := make([]gateway.Model, 0, len(cfg.Models))
@@ -101,6 +114,7 @@ func main() {
 		os.Exit(1)
 	}
 	router.SetConfigVersion(cfg.ConfigVersion)
+	router.SetSemanticRouting(cfg.Routing.Semantic)
 	health := httpapi.NewHealth()
 	var runService run.Service
 	var decisionStore journal.Store = journal.NewMemoryStore()
@@ -110,6 +124,7 @@ func main() {
 	var credentialStore credentialstore.Store
 	var credentialSetters map[string]httpapi.ProviderCredentialSetter
 	var credentialEndpoints map[string]string
+	var semanticShadowStore semantic.ShadowStore = semantic.NewMemoryShadowStore()
 	var credentialListener *store.CredentialChangeListener
 	var configListener *store.ConfigChangeListener
 	var cancellationListener *store.CancellationEventListener
@@ -171,7 +186,7 @@ func main() {
 			policy.Cooldown = published.Routing.Cooldown
 			policy.EconomyThresholdPercent = published.Routing.EconomyThresholdPercent
 			policy.MinimumAttemptWindow = published.Routing.MinimumAttemptWindow
-			if err := router.ReplaceRegistryWithPolicy(publishedRegistry, published.Version, policy); err != nil {
+			if err := router.ReplaceRegistryWithSemanticPolicy(publishedRegistry, published.Version, policy, published.Routing.Semantic); err != nil {
 				logger.Error("published model registry activation failed", "error", err)
 				os.Exit(1)
 			}
@@ -198,8 +213,9 @@ func main() {
 			}
 			credentials := store.NewPostgresCredentialStore(database, vault)
 			credentialStore = credentials
-			credentialSetters = map[string]httpapi.ProviderCredentialSetter{"openai": openAI, "anthropic": anthropic}
-			credentialEndpoints = map[string]string{"openai": openAIEndpointID, "anthropic": anthropicEndpointID}
+			credentialSetters = map[string]httpapi.ProviderCredentialSetter{"openai": openAI, "anthropic": anthropic, "typesafe": jevClient}
+			credentialEndpoints = map[string]string{"openai": openAIEndpointID, "anthropic": anthropicEndpointID, "typesafe": typeSafeEndpointID}
+			jevClient.SetCredentialResolver(newCredentialResolver(credentials, "typesafe", typeSafeEndpointID))
 			credentialListener, err = store.NewCredentialChangeListener(cfg.DatabaseURL)
 			if err != nil {
 				logger.Warn("credential change listener unavailable", "error", err)
@@ -227,6 +243,24 @@ func main() {
 			}
 		}
 	}
+	if database != nil {
+		semanticShadowStore = store.NewPostgresSemanticShadowStore(database)
+	}
+	metricsRegistry := telemetry.NewRegistry()
+	shadowWorker := semantic.NewShadowWorker(jevClient, semanticShadowStore, router.Replay, 2, 128)
+	shadowWorker.SetObserver(func(evaluation semantic.ShadowEvaluation) {
+		labels := telemetry.Labels{Endpoint: "/v1/chat/completions", Reason: evaluation.Status}
+		metricsRegistry.Inc(telemetry.SemanticAssessmentsTotal, labels)
+		metricsRegistry.Observe(telemetry.SemanticAssessmentDurationSeconds, labels, evaluation.Duration.Seconds())
+		metricsRegistry.Add(telemetry.SemanticInputTokensTotal, labels, uint64(max(evaluation.InputTokens, 0)))
+		metricsRegistry.Add(telemetry.SemanticOutputTokensTotal, labels, uint64(max(evaluation.OutputTokens, 0)))
+		if evaluation.CostKnown {
+			metricsRegistry.Add(telemetry.SemanticCostNanoUSDTotal, labels, uint64(evaluation.CostNanoUSD))
+		} else {
+			metricsRegistry.Inc(telemetry.SemanticCostUnknownTotal, labels)
+		}
+	})
+	defer shadowWorker.Close()
 	if runService == nil && os.Getenv("LIMEN_RUN_STORE") == "memory" {
 		runService = run.NewMemoryService(nil)
 	}
@@ -267,6 +301,9 @@ func main() {
 		Approvals:              approvalStore,
 		ConfigApprovalRequired: cfg.ConfigApprovalRequired,
 		Cancellations:          cancellationHub,
+		SemanticAssessor:       jevClient,
+		SemanticShadow:         shadowWorker,
+		Metrics:                metricsRegistry,
 	})
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -402,7 +439,7 @@ func refreshPublishedConfig(ctx context.Context, tenantID string, configs config
 	policy.Cooldown = published.Routing.Cooldown
 	policy.EconomyThresholdPercent = published.Routing.EconomyThresholdPercent
 	policy.MinimumAttemptWindow = published.Routing.MinimumAttemptWindow
-	return router.ReplaceRegistryWithPolicy(registry, published.Version, policy)
+	return router.ReplaceRegistryWithSemanticPolicy(registry, published.Version, policy, published.Routing.Semantic)
 }
 
 // watchCancellationEvents 将 PostgreSQL 取消通知广播到当前实例的在途请求。

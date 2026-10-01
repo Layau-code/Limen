@@ -89,3 +89,14 @@ func TestLoggingRedactsUnmatchedPath(t *testing.T) {
 		t.Fatalf("unsafe path in log: %s", output.String())
 	}
 }
+
+func TestLoggingClassifiesUIAssetsWithoutDynamicPath(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	WithLogging(logger, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ui/runs/run_8FA2", nil))
+	if !strings.Contains(output.String(), `"path":"/ui/*"`) || strings.Contains(output.String(), "run_8FA2") {
+		t.Fatalf("unsafe UI path in log: %s", output.String())
+	}
+}

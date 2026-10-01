@@ -143,12 +143,15 @@ func (h *Handler) replayDecision(w http.ResponseWriter, r *http.Request) {
 	replay, err := h.router.Replay(record.Input)
 	if err != nil {
 		var decisionErr *decision.DecisionError
-		if errors.As(err, &decisionErr) {
+		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
+			// 无候选也是可回放的确定性结果，继续比较其已记录的计划。
+		} else if errors.As(err, &decisionErr) {
 			writeError(w, http.StatusConflict, "decision algorithm is unavailable", "invalid_request_error", "algorithm_version_unavailable")
 			return
+		} else {
+			writeError(w, http.StatusBadGateway, "decision replay failed", "api_error", "decision_replay_error")
+			return
 		}
-		writeError(w, http.StatusBadGateway, "decision replay failed", "api_error", "decision_replay_error")
-		return
 	}
 	differences := comparePlans(record.Plan, replay)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -192,18 +195,23 @@ func publicDecisionInput(input decision.Input) publicDecisionInputResponse {
 		})
 	}
 	return publicDecisionInputResponse{
-		SchemaVersion:     input.SchemaVersion,
-		AlgorithmVersion:  input.AlgorithmVersion,
-		ConfigVersion:     input.ConfigVersion,
-		EvaluatedAtUnixMS: input.EvaluatedAtUnixMS,
-		Request:           input.Request,
-		Run:               input.Run,
-		Candidates:        candidates,
+		SchemaVersion:      input.SchemaVersion,
+		AlgorithmVersion:   input.AlgorithmVersion,
+		ConfigVersion:      input.ConfigVersion,
+		EvaluatedAtUnixMS:  input.EvaluatedAtUnixMS,
+		Request:            input.Request,
+		Run:                input.Run,
+		Candidates:         candidates,
+		SemanticAssessment: publicSemanticAssessment(input.SemanticAssessment),
 	}
 }
 
 // publicExecutionPlan 将执行计划压缩为可解释但不含上游模型名的视图。
 func publicExecutionPlan(plan decision.ExecutionPlan) publicExecutionPlanResponse {
+	semanticStatus := plan.SemanticStatus
+	if semanticStatus == "" {
+		semanticStatus = "not_evaluated"
+	}
 	candidates := make([]decision.CandidateResult, 0, len(plan.Candidates))
 	for _, candidate := range plan.Candidates {
 		candidate.TargetID = publicTargetID(candidate.TargetID)
@@ -220,6 +228,7 @@ func publicExecutionPlan(plan decision.ExecutionPlan) publicExecutionPlanRespons
 		InputHash:         plan.InputHash,
 		EffectiveStrategy: plan.EffectiveStrategy,
 		Reasons:           append([]string(nil), plan.Reasons...),
+		SemanticStatus:    semanticStatus,
 		Candidates:        candidates,
 		Targets:           targets,
 		PlanHash:          plan.PlanHash,
@@ -234,13 +243,14 @@ type publicDecisionRecordResponse struct {
 }
 
 type publicDecisionInputResponse struct {
-	SchemaVersion     string               `json:"schema_version"`
-	AlgorithmVersion  string               `json:"algorithm_version"`
-	ConfigVersion     string               `json:"config_version,omitempty"`
-	EvaluatedAtUnixMS int64                `json:"evaluated_at_unix_ms"`
-	Request           decision.Request     `json:"request"`
-	Run               decision.RunSnapshot `json:"run"`
-	Candidates        []publicCandidate    `json:"candidates"`
+	SchemaVersion      string                       `json:"schema_version"`
+	AlgorithmVersion   string                       `json:"algorithm_version"`
+	ConfigVersion      string                       `json:"config_version,omitempty"`
+	EvaluatedAtUnixMS  int64                        `json:"evaluated_at_unix_ms"`
+	Request            decision.Request             `json:"request"`
+	Run                decision.RunSnapshot         `json:"run"`
+	Candidates         []publicCandidate            `json:"candidates"`
+	SemanticAssessment *decision.SemanticAssessment `json:"semantic_assessment,omitempty"`
 }
 
 type publicCandidate struct {
@@ -267,9 +277,37 @@ type publicExecutionPlanResponse struct {
 	InputHash         string                     `json:"input_hash"`
 	EffectiveStrategy string                     `json:"effective_strategy"`
 	Reasons           []string                   `json:"reasons"`
+	SemanticStatus    string                     `json:"semantic_status"`
 	Candidates        []decision.CandidateResult `json:"candidates"`
 	Targets           []publicPlanTarget         `json:"targets"`
 	PlanHash          string                     `json:"plan_hash"`
+}
+
+// publicSemanticAssessment 复制语义元数据并将偏好目标标识匿名化。
+func publicSemanticAssessment(value *decision.SemanticAssessment) *decision.SemanticAssessment {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	copy.TaskProbabilities = cloneProbabilityMap(value.TaskProbabilities)
+	copy.ComplexityProbabilities = cloneProbabilityMap(value.ComplexityProbabilities)
+	copy.PreferredTargetIDs = make([]string, 0, len(value.PreferredTargetIDs))
+	for _, targetID := range value.PreferredTargetIDs {
+		copy.PreferredTargetIDs = append(copy.PreferredTargetIDs, publicTargetID(targetID))
+	}
+	return &copy
+}
+
+// cloneProbabilityMap 深拷贝概率映射，避免响应修改内部快照。
+func cloneProbabilityMap(values map[string]float64) map[string]float64 {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 type publicPlanTarget struct {

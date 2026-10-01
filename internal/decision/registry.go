@@ -24,6 +24,7 @@ func NewAlgorithmRegistry() *AlgorithmRegistry {
 	return &AlgorithmRegistry{engines: map[string]algorithmEntry{
 		AlgorithmVersionV1: {engine: engine},
 		AlgorithmVersionV2: {engine: engine},
+		AlgorithmVersionV3: {engine: engine},
 	}}
 }
 

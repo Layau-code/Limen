@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/gateway"
 	"github.com/huz/limen/internal/provider"
@@ -45,6 +46,7 @@ type incomingLimen struct {
 	EstimatedInputTokens  int64    `json:"estimated_input_tokens"`
 	EstimatedOutputTokens int64    `json:"estimated_output_tokens"`
 	Strategy              string   `json:"strategy"`
+	SemanticRouting       *bool    `json:"semantic_routing,omitempty"`
 }
 
 // incomingMessage 是仅允许文本内容的消息结构。
@@ -56,12 +58,14 @@ type incomingMessage struct {
 
 // parsedChatRequest 保存解析后的请求、能力契约和运行时快照。
 type parsedChatRequest struct {
-	Request       provider.ChatRequest
-	Contract      decision.Contract
-	Run           decision.RunSnapshot
-	Registry      *gateway.ModelRegistry
-	ConfigVersion string
-	Policy        *gateway.Policy
+	Request         provider.ChatRequest
+	Contract        decision.Contract
+	Run             decision.RunSnapshot
+	Registry        *gateway.ModelRegistry
+	ConfigVersion   string
+	Policy          *gateway.Policy
+	SemanticRouting config.SemanticRouting
+	SemanticSkip    bool
 }
 
 // unsupportedFieldError 表示当前兼容子集明确拒绝的请求字段。
@@ -164,6 +168,7 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 		request.Messages = append(request.Messages, provider.Message{Role: message.Role, Content: content})
 	}
 	contract := decision.Contract{Active: incoming.Model == "auto" || incoming.Limen != nil}
+	semanticSkip := false
 	if incoming.Limen != nil {
 		contract.RequiredCapabilities = append([]string(nil), incoming.Limen.RequiredCapabilities...)
 		contract.MinimumQualityTier = incoming.Limen.MinimumQualityTier
@@ -172,8 +177,9 @@ func parseChatRequestEnvelope(body []byte) (parsedChatRequest, error) {
 		contract.EstimatedInputTokens = incoming.Limen.EstimatedInputTokens
 		contract.EstimatedOutputTokens = incoming.Limen.EstimatedOutputTokens
 		contract.Strategy = incoming.Limen.Strategy
+		semanticSkip = incoming.Limen.SemanticRouting != nil && !*incoming.Limen.SemanticRouting
 	}
-	return parsedChatRequest{Request: request, Contract: contract}, nil
+	return parsedChatRequest{Request: request, Contract: contract, SemanticSkip: semanticSkip}, nil
 }
 
 // unknownJSONField 将严格 JSON 解码报告的未知字段提取为稳定的 API 字段名。

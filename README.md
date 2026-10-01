@@ -43,6 +43,8 @@ export ANTHROPIC_API_KEY=your-anthropic-key
 ./bin/limen
 ```
 
+启动后可打开观测控制台：<http://localhost:8080/ui/>。未输入 API Key 时显示带有 `Demo data` 标识的安全固定数据，用于离线浏览 Overview、Runs、Run Evidence、Decision Explain/Replay、Models、Usage 和 Settings；输入当前租户的 Limen API Key 后，Models、Run 详情和 Decision Explain/Replay 会按权限读取 live API。控制台只保留 sessionStorage 中的浏览器会话密钥，不展示 Prompt、Response、Tool 参数或 Provider 密钥。
+
 调用逻辑模型：
 
 ```bash
@@ -72,12 +74,15 @@ docker run --rm -p 8080:8080 \
 | `LIMEN_MODELS_FILE` | 启动时模型目录文件 |
 | `OPENAI_API_KEY` / `OPENAI_API_KEY_FILE` | OpenAI 或兼容接口密钥 |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY_FILE` | Anthropic 或兼容接口密钥 |
+| `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_FILE` | 可选的 Jev 语义评估密钥；路由默认关闭 |
 | `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | 自定义 Provider 地址 |
 | `LIMEN_DATABASE_URL` | PostgreSQL DSN；设置后启用持久化治理能力 |
 | `LIMEN_TENANT_ID` | 当前进程绑定的租户，默认 `local` |
 | `LIMEN_REQUEST_TIMEOUT` | 单次请求总时间预算，默认 `60s` |
 
 完整的部署、Key Store、凭据、Run、结算、指标和故障排查说明见 [运维文档](docs/operations.md)。OpenAI 请求字段、错误和 SSE 兼容边界见 [兼容性说明](docs/openai-compatibility.md)。
+
+Jev 语义路由默认关闭。配置文件中的 `routing.semantic.mode` 必须显式切换到 `shadow` 或 `active`，并额外启用公开数据出站；请求还需带有 `limen.data_class="public"` 和 `semantic:external` Scope。该功能只对 `model="auto"` 的文本请求生效，不会把 Prompt 写入决策日志。灰度步骤和配置示例见 [运维文档](docs/operations.md#jev-语义路由)。
 
 ## 开发与验证
 

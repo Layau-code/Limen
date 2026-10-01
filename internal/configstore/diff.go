@@ -37,7 +37,7 @@ func Diff(before, after Record) []Change {
 		}
 		changes = append(changes, diffTargets(id, previous.Targets, model.Targets)...)
 	}
-	if before.Routing != after.Routing {
+	if !reflect.DeepEqual(before.Routing, after.Routing) {
 		changes = append(changes, Change{Path: "routing", Kind: "changed"})
 	}
 	sort.Slice(changes, func(i, j int) bool {

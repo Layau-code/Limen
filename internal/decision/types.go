@@ -14,6 +14,10 @@ const (
 	AlgorithmVersionV1 = "decision.v1"
 	// AlgorithmVersionV2 是采用集合规范化的决策算法。
 	AlgorithmVersionV2 = "decision.v2"
+	// SchemaVersionV2 增加不含正文的语义评估快照。
+	SchemaVersionV2 = "decision-input.v2"
+	// AlgorithmVersionV3 在硬过滤后应用受控语义质量下限和偏好。
+	AlgorithmVersionV3 = "decision.v3"
 )
 
 // Contract 描述一次请求需要的能力和治理约束。
@@ -63,13 +67,39 @@ type Candidate struct {
 
 // Input 是 Decision Engine 的完整、可持久化输入快照。
 type Input struct {
-	SchemaVersion     string      `json:"schema_version"`
-	AlgorithmVersion  string      `json:"algorithm_version"`
-	ConfigVersion     string      `json:"config_version,omitempty"`
-	EvaluatedAtUnixMS int64       `json:"evaluated_at_unix_ms"`
-	Request           Request     `json:"request"`
-	Run               RunSnapshot `json:"run"`
-	Candidates        []Candidate `json:"candidates"`
+	SchemaVersion      string              `json:"schema_version"`
+	AlgorithmVersion   string              `json:"algorithm_version"`
+	ConfigVersion      string              `json:"config_version,omitempty"`
+	EvaluatedAtUnixMS  int64               `json:"evaluated_at_unix_ms"`
+	Request            Request             `json:"request"`
+	Run                RunSnapshot         `json:"run"`
+	Candidates         []Candidate         `json:"candidates"`
+	SemanticAssessment *SemanticAssessment `json:"semantic_assessment,omitempty"`
+}
+
+// SemanticAssessment 是可安全持久化且可 Replay 的 Jev 语义结果，不含请求正文。
+type SemanticAssessment struct {
+	Mode                    string             `json:"mode"`
+	Status                  string             `json:"status"`
+	Reason                  string             `json:"reason,omitempty"`
+	StateHash               string             `json:"state_hash,omitempty"`
+	StateLength             int                `json:"state_length,omitempty"`
+	Truncated               bool               `json:"truncated,omitempty"`
+	StateBuilderVersion     string             `json:"state_builder_version,omitempty"`
+	ModelVersion            string             `json:"model_version,omitempty"`
+	QuestionTemplateVersion string             `json:"question_template_version,omitempty"`
+	MappingVersion          string             `json:"mapping_version,omitempty"`
+	Language                string             `json:"language,omitempty"`
+	TaskType                string             `json:"task_type,omitempty"`
+	TaskProbabilities       map[string]float64 `json:"task_probabilities,omitempty"`
+	TaskConfidence          float64            `json:"task_confidence,omitempty"`
+	Complexity              string             `json:"complexity,omitempty"`
+	ComplexityProbabilities map[string]float64 `json:"complexity_probabilities,omitempty"`
+	ComplexityConfidence    float64            `json:"complexity_confidence,omitempty"`
+	ThresholdProfile        string             `json:"threshold_profile,omitempty"`
+	Applied                 bool               `json:"applied,omitempty"`
+	MinimumQualityTier      int                `json:"minimum_quality_tier,omitempty"`
+	PreferredTargetIDs      []string           `json:"preferred_target_ids,omitempty"`
 }
 
 // CandidateResult 说明一个目标为何被接受或淘汰。
@@ -95,6 +125,7 @@ type ExecutionPlan struct {
 	InputHash         string            `json:"input_hash"`
 	EffectiveStrategy string            `json:"effective_strategy"`
 	Reasons           []string          `json:"reasons"`
+	SemanticStatus    string            `json:"semantic_status,omitempty"`
 	Candidates        []CandidateResult `json:"candidates"`
 	Targets           []PlanTarget      `json:"targets"`
 	PlanHash          string            `json:"plan_hash"`

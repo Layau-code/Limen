@@ -263,6 +263,15 @@ func cloneRecord(record Record) Record {
 		publishedAt := *record.PublishedAt
 		record.PublishedAt = &publishedAt
 	}
+	record.Routing.Semantic.AllowedDataClasses = append([]string(nil), record.Routing.Semantic.AllowedDataClasses...)
+	if record.Routing.Semantic.AssessmentPricing != nil {
+		pricing := *record.Routing.Semantic.AssessmentPricing
+		record.Routing.Semantic.AssessmentPricing = &pricing
+	}
+	record.Routing.Semantic.Rules = append([]config.SemanticRule(nil), record.Routing.Semantic.Rules...)
+	for index := range record.Routing.Semantic.Rules {
+		record.Routing.Semantic.Rules[index].PreferredTargetIDs = append([]string(nil), record.Routing.Semantic.Rules[index].PreferredTargetIDs...)
+	}
 	return record
 }
 

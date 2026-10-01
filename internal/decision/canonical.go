@@ -9,7 +9,7 @@ import (
 
 // CanonicalInput 规范化无序集合后使用固定结构顺序编码决策输入。
 func CanonicalInput(input Input) ([]byte, error) {
-	if input.AlgorithmVersion == AlgorithmVersionV2 {
+	if input.AlgorithmVersion == AlgorithmVersionV2 || input.AlgorithmVersion == AlgorithmVersionV3 {
 		input = canonicalizeInput(input)
 	}
 	return json.Marshal(input)
@@ -26,7 +26,7 @@ func HashInput(input Input) (string, error) {
 
 // HashPlan 计算不包含自身哈希字段的执行计划内容哈希。
 func HashPlan(plan ExecutionPlan) (string, error) {
-	if plan.AlgorithmVersion == AlgorithmVersionV2 {
+	if plan.AlgorithmVersion == AlgorithmVersionV2 || plan.AlgorithmVersion == AlgorithmVersionV3 {
 		plan = canonicalizePlan(plan)
 	}
 	plan.PlanHash = ""
@@ -45,6 +45,7 @@ func hashBytes(encoded []byte) string {
 
 // canonicalizeInput 将能力和数据等级集合排序去重，避免集合顺序影响快照哈希。
 func canonicalizeInput(input Input) Input {
+	input.Candidates = append([]Candidate(nil), input.Candidates...)
 	input.Request.Contract.RequiredCapabilities = sortedUnique(input.Request.Contract.RequiredCapabilities)
 	for index := range input.Candidates {
 		candidate := &input.Candidates[index]
@@ -57,6 +58,11 @@ func canonicalizeInput(input Input) Input {
 			rightKey := input.Candidates[right].ModelID + "\x00" + input.Candidates[right].Target.ID
 			return leftKey < rightKey
 		})
+	}
+	if input.SemanticAssessment != nil {
+		assessment := *input.SemanticAssessment
+		assessment.PreferredTargetIDs = sortedUnique(assessment.PreferredTargetIDs)
+		input.SemanticAssessment = &assessment
 	}
 	return input
 }

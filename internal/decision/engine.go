@@ -1,6 +1,7 @@
 package decision
 
 import (
+	"math"
 	"sort"
 
 	"github.com/huz/limen/internal/catalog"
@@ -33,7 +34,7 @@ func NewEngine() Engine {
 
 // Decide 按固定硬过滤和策略排序生成 ExecutionPlan。
 func (Engine) Decide(input Input) (ExecutionPlan, error) {
-	if input.AlgorithmVersion == AlgorithmVersionV2 {
+	if input.AlgorithmVersion == AlgorithmVersionV2 || input.AlgorithmVersion == AlgorithmVersionV3 {
 		input = canonicalizeInput(input)
 	}
 	if err := validateInput(input); err != nil {
@@ -41,22 +42,20 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 	}
 	active := input.Request.Contract.Active || input.Request.Model == "auto"
 	strategy, reasons := effectiveStrategy(input)
-	results := make([]CandidateResult, 0, len(input.Candidates))
-	accepted := make([]Candidate, 0, len(input.Candidates))
-	for _, candidate := range input.Candidates {
-		result := CandidateResult{ModelID: candidate.ModelID, TargetID: candidate.Target.ID}
-		if active {
-			result.Reason = rejectReason(input, candidate)
-		}
-		if result.Reason == "" {
-			result.Accepted = true
-			result.Reason = "eligible"
-			accepted = append(accepted, candidate)
-		}
-		results = append(results, result)
+	selectionInput := input
+	semanticQuality := input.AlgorithmVersion == AlgorithmVersionV3 && input.SemanticAssessment != nil && input.SemanticAssessment.Applied && input.SemanticAssessment.MinimumQualityTier > input.Request.Contract.MinimumQualityTier
+	if semanticQuality {
+		selectionInput.Request.Contract.MinimumQualityTier = input.SemanticAssessment.MinimumQualityTier
+	}
+	results, accepted := eligibleCandidates(selectionInput, active)
+	if len(accepted) == 0 && semanticQuality {
+		semanticQuality = false
+		selectionInput = input
+		results, accepted = eligibleCandidates(selectionInput, active)
+		reasons = append(reasons, "semantic_quality_fallback")
 	}
 	if len(accepted) == 0 {
-		plan := ExecutionPlan{SchemaVersion: input.SchemaVersion, AlgorithmVersion: input.AlgorithmVersion, ConfigVersion: input.ConfigVersion, Candidates: results, EffectiveStrategy: strategy, Reasons: reasons}
+		plan := ExecutionPlan{SchemaVersion: input.SchemaVersion, AlgorithmVersion: input.AlgorithmVersion, ConfigVersion: input.ConfigVersion, Candidates: results, EffectiveStrategy: strategy, Reasons: reasons, SemanticStatus: semanticStatus(input)}
 		inputHash, err := HashInput(input)
 		if err != nil {
 			return ExecutionPlan{}, err
@@ -69,7 +68,11 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 		return plan, &DecisionError{Code: "no_eligible_target"}
 	}
 	if active {
-		sortCandidates(accepted, input, strategy)
+		preferred := semanticPreferredTargets(input, accepted)
+		if input.SemanticAssessment != nil && input.SemanticAssessment.Applied && len(input.SemanticAssessment.PreferredTargetIDs) > 0 && len(preferred) == 0 {
+			reasons = append(reasons, "semantic_preference_unavailable")
+		}
+		sortCandidatesWithPreferences(accepted, input, strategy, preferred, semanticQuality || len(preferred) > 0)
 	}
 	plan := ExecutionPlan{
 		SchemaVersion:     input.SchemaVersion,
@@ -77,6 +80,7 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 		ConfigVersion:     input.ConfigVersion,
 		EffectiveStrategy: strategy,
 		Reasons:           reasons,
+		SemanticStatus:    semanticStatus(input),
 		Candidates:        results,
 		Targets:           make([]PlanTarget, 0, len(accepted)),
 	}
@@ -95,13 +99,42 @@ func (Engine) Decide(input Input) (ExecutionPlan, error) {
 	return plan, nil
 }
 
+// semanticStatus 返回快照中冻结的语义评估状态。
+func semanticStatus(input Input) string {
+	if input.SemanticAssessment == nil {
+		return ""
+	}
+	return input.SemanticAssessment.Status
+}
+
+// eligibleCandidates 按硬约束生成候选结果和可执行目标。
+func eligibleCandidates(input Input, active bool) ([]CandidateResult, []Candidate) {
+	results := make([]CandidateResult, 0, len(input.Candidates))
+	accepted := make([]Candidate, 0, len(input.Candidates))
+	for _, candidate := range input.Candidates {
+		result := CandidateResult{ModelID: candidate.ModelID, TargetID: candidate.Target.ID}
+		if active {
+			result.Reason = rejectReason(input, candidate)
+		}
+		if result.Reason == "" {
+			result.Accepted, result.Reason = true, "eligible"
+			accepted = append(accepted, candidate)
+		}
+		results = append(results, result)
+	}
+	return results, accepted
+}
+
 // validateInput 校验快照版本、契约边界和外部状态枚举。
 func validateInput(input Input) error {
-	if input.SchemaVersion != SchemaVersionV1 {
+	if input.SchemaVersion != SchemaVersionV1 && input.SchemaVersion != SchemaVersionV2 {
 		return &DecisionError{Code: "unsupported_decision_schema"}
 	}
-	if input.AlgorithmVersion != AlgorithmVersionV1 && input.AlgorithmVersion != AlgorithmVersionV2 {
+	if input.AlgorithmVersion != AlgorithmVersionV1 && input.AlgorithmVersion != AlgorithmVersionV2 && input.AlgorithmVersion != AlgorithmVersionV3 {
 		return &DecisionError{Code: "unsupported_decision_algorithm"}
+	}
+	if (input.AlgorithmVersion == AlgorithmVersionV3 && (input.SchemaVersion != SchemaVersionV2 || input.SemanticAssessment == nil)) || (input.AlgorithmVersion != AlgorithmVersionV3 && (input.SchemaVersion != SchemaVersionV1 || input.SemanticAssessment != nil)) {
+		return &DecisionError{Code: "invalid_decision_snapshot"}
 	}
 	if input.Request.Model == "" || input.EvaluatedAtUnixMS < 0 {
 		return &DecisionError{Code: "invalid_decision_snapshot"}
@@ -130,7 +163,69 @@ func validateInput(input Input) error {
 			return &DecisionError{Code: "invalid_decision_snapshot"}
 		}
 	}
+	if input.SemanticAssessment != nil {
+		if err := validateSemanticAssessment(*input.SemanticAssessment); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateSemanticAssessment 校验冻结语义信号的枚举和概率分布。
+func validateSemanticAssessment(value SemanticAssessment) error {
+	validStatus := value.Status == "assessed" || value.Status == "not_enabled" || value.Status == "not_authorized" || value.Status == "data_class_denied" || value.Status == "no_usable_state" || value.Status == "low_confidence" || value.Status == "provider_timeout" || value.Status == "provider_error" || value.Status == "invalid_response" || value.Status == "version_mismatch" || value.Status == "bypassed"
+	if value.Mode != "active" || !validStatus || value.StateLength < 0 || value.MinimumQualityTier < 0 || value.MinimumQualityTier > 5 || !validProbability(value.TaskConfidence) || !validProbability(value.ComplexityConfidence) {
+		return &DecisionError{Code: "invalid_semantic_snapshot"}
+	}
+	if value.Language != "" && value.Language != "zh" && value.Language != "en" && value.Language != "mixed" && value.Language != "unknown" {
+		return &DecisionError{Code: "invalid_semantic_snapshot"}
+	}
+	if value.Status == "assessed" || value.Status == "low_confidence" {
+		if value.TaskType != "extraction" && value.TaskType != "transformation" && value.TaskType != "writing" && value.TaskType != "code" && value.TaskType != "analysis" && value.TaskType != "other" {
+			return &DecisionError{Code: "invalid_semantic_snapshot"}
+		}
+		if value.Complexity != "simple" && value.Complexity != "standard" && value.Complexity != "complex" {
+			return &DecisionError{Code: "invalid_semantic_snapshot"}
+		}
+		if !validDistribution(value.TaskProbabilities, []string{"extraction", "transformation", "writing", "code", "analysis", "other"}) || !validDistribution(value.ComplexityProbabilities, []string{"simple", "standard", "complex"}) {
+			return &DecisionError{Code: "invalid_semantic_snapshot"}
+		}
+	} else if value.Applied {
+		return &DecisionError{Code: "invalid_semantic_snapshot"}
+	}
+	if value.Applied && (value.Status != "assessed" || value.Truncated || value.MappingVersion == "" || value.ThresholdProfile == "" || value.MinimumQualityTier == 0 && len(value.PreferredTargetIDs) == 0) {
+		return &DecisionError{Code: "invalid_semantic_snapshot"}
+	}
+	for _, id := range value.PreferredTargetIDs {
+		if id == "" {
+			return &DecisionError{Code: "invalid_semantic_snapshot"}
+		}
+	}
+	return nil
+}
+
+// validProbability 判断值是否为有限的 [0,1] 概率。
+func validProbability(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+}
+
+// validDistribution 校验分类概率的键和值及总和。
+func validDistribution(values map[string]float64, allowed []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, item := range allowed {
+		allowedSet[item] = true
+	}
+	sum := 0.0
+	for key, value := range values {
+		if !allowedSet[key] || !validProbability(value) {
+			return false
+		}
+		sum += value
+	}
+	return sum >= 0.95 && sum <= 1.05
 }
 
 // rejectReason 按固定顺序检查候选目标是否违反硬约束。
@@ -198,9 +293,22 @@ func effectiveStrategy(input Input) (string, []string) {
 
 // sortCandidates 使用稳定排序生成可解释且可复现的目标顺序。
 func sortCandidates(candidates []Candidate, input Input, strategy string) {
+	sortCandidatesWithPreferences(candidates, input, strategy, nil, false)
+}
+
+// sortCandidatesWithPreferences 在既有策略中应用受限的语义偏好排序。
+func sortCandidatesWithPreferences(candidates []Candidate, input Input, strategy string, preferred map[string]bool, semanticOrder bool) {
 	useEstimatedCost := hasEstimatedCost(input) && allPriced(candidates)
 	sort.SliceStable(candidates, func(i, j int) bool {
 		left, right := candidates[i], candidates[j]
+		if semanticOrder {
+			if healthRank(left.Health) != healthRank(right.Health) {
+				return healthRank(left.Health) < healthRank(right.Health)
+			}
+			if len(preferred) > 0 && preferred[left.Target.ID] != preferred[right.Target.ID] {
+				return preferred[left.Target.ID]
+			}
+		}
 		if strategy == StrategyEconomy {
 			if compareCost(left, right, input, useEstimatedCost) != 0 {
 				return compareCost(left, right, input, useEstimatedCost) < 0
@@ -223,6 +331,24 @@ func sortCandidates(candidates []Candidate, input Input, strategy string) {
 		rightID := right.ModelID + "\x00" + right.Target.ID
 		return leftID < rightID
 	})
+}
+
+// semanticPreferredTargets 仅保留当前硬约束后仍合格的偏好目标。
+func semanticPreferredTargets(input Input, candidates []Candidate) map[string]bool {
+	if input.AlgorithmVersion != AlgorithmVersionV3 || input.SemanticAssessment == nil || !input.SemanticAssessment.Applied || len(input.SemanticAssessment.PreferredTargetIDs) == 0 {
+		return nil
+	}
+	wanted := make(map[string]bool, len(input.SemanticAssessment.PreferredTargetIDs))
+	for _, id := range input.SemanticAssessment.PreferredTargetIDs {
+		wanted[id] = true
+	}
+	available := make(map[string]bool)
+	for _, candidate := range candidates {
+		if wanted[candidate.Target.ID] {
+			available[candidate.Target.ID] = true
+		}
+	}
+	return available
 }
 
 // hasEstimatedCost 判断请求是否提供了完整的输入和输出 Token 估算。

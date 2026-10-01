@@ -48,6 +48,23 @@ type rejectingLeaseService struct {
 	*run.MemoryService
 }
 
+func TestObservabilityUIIsServedWithoutAPIAuth(t *testing.T) {
+	handler := New("limen-secret", nil)
+	request := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "data-app=\"limen-observability\"") {
+		t.Fatalf("ui shell = %d %q", response.Code, response.Body.String())
+	}
+
+	route := httptest.NewRequest(http.MethodGet, "/ui/runs/run_8FA2", nil)
+	routeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(routeResponse, route)
+	if routeResponse.Code != http.StatusOK || !strings.Contains(routeResponse.Body.String(), "data-app=\"limen-observability\"") {
+		t.Fatalf("ui route = %d %q", routeResponse.Code, routeResponse.Body.String())
+	}
+}
+
 // AcquireRequestLease 模拟多实例竞争下租约已被其他执行实例持有。
 func (service *rejectingLeaseService) AcquireRequestLease(context.Context, string, string, string, time.Time, time.Duration) (run.Request, error) {
 	return run.Request{}, run.ErrLeaseUnavailable

@@ -11,13 +11,14 @@ import (
 type Scope string
 
 const (
-	ScopeInference    Scope = "inference"
-	ScopeRunsRead     Scope = "runs:read"
-	ScopeRunsWrite    Scope = "runs:write"
-	ScopeDecisions    Scope = "decisions:read"
-	ScopeConfigsRead  Scope = "configs:read"
-	ScopeConfigsWrite Scope = "configs:write"
-	ScopeAdmin        Scope = "admin"
+	ScopeInference        Scope = "inference"
+	ScopeRunsRead         Scope = "runs:read"
+	ScopeRunsWrite        Scope = "runs:write"
+	ScopeDecisions        Scope = "decisions:read"
+	ScopeConfigsRead      Scope = "configs:read"
+	ScopeConfigsWrite     Scope = "configs:write"
+	ScopeSemanticExternal Scope = "semantic:external"
+	ScopeAdmin            Scope = "admin"
 )
 
 // Principal 表示已通过鉴权的租户身份，不暴露原始 API Key；Subject 是非敏感的凭据身份标识。
@@ -80,7 +81,7 @@ func (authenticator StaticAuthenticator) AuthenticateContext(_ context.Context, 
 
 // AllScopes 返回单机开发模式的完整 Scope 集合副本。
 func AllScopes() []Scope {
-	return []Scope{ScopeInference, ScopeRunsRead, ScopeRunsWrite, ScopeDecisions, ScopeConfigsRead, ScopeConfigsWrite, ScopeAdmin}
+	return []Scope{ScopeInference, ScopeRunsRead, ScopeRunsWrite, ScopeDecisions, ScopeConfigsRead, ScopeConfigsWrite, ScopeSemanticExternal, ScopeAdmin}
 }
 
 // IsKnownScope 判断 Scope 是否属于 Limen 固定权限集合。

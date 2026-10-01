@@ -48,6 +48,37 @@ type Routing struct {
 	Cooldown                time.Duration
 	EconomyThresholdPercent int
 	MinimumAttemptWindow    time.Duration
+	Semantic                SemanticRouting
+}
+
+// SemanticRouting 定义版本化的 Jev 语义信号策略。默认关闭，且默认不授权正文出站。
+type SemanticRouting struct {
+	Mode                    string         `json:"mode"`
+	ExternalEnabled         bool           `json:"external_enabled,omitempty"`
+	Provider                string         `json:"provider,omitempty"`
+	ModelVersion            string         `json:"model_version,omitempty"`
+	StateBuilderVersion     string         `json:"state_builder_version,omitempty"`
+	QuestionTemplateVersion string         `json:"question_template_version,omitempty"`
+	MappingVersion          string         `json:"mapping_version,omitempty"`
+	AllowedDataClasses      []string       `json:"allowed_data_classes,omitempty"`
+	Timeout                 time.Duration  `json:"timeout,omitempty"`
+	SamplePercent           int            `json:"sample_percent,omitempty"`
+	AssessmentPricing       *Pricing       `json:"assessment_pricing,omitempty"`
+	Rules                   []SemanticRule `json:"rules,omitempty"`
+}
+
+// SemanticRule 将可信的封闭语义类别映射到更高质量下限或首选目标集合。
+type SemanticRule struct {
+	TaskType                    string   `json:"task_type"`
+	Complexity                  string   `json:"complexity"`
+	Language                    string   `json:"language,omitempty"`
+	MinimumTaskConfidence       float64  `json:"minimum_task_confidence"`
+	MinimumComplexityConfidence float64  `json:"minimum_complexity_confidence"`
+	MinimumProbabilityMargin    float64  `json:"minimum_probability_margin"`
+	MinimumQualityTier          int      `json:"minimum_quality_tier,omitempty"`
+	PreferredTargetIDs          []string `json:"preferred_target_ids,omitempty"`
+	ThresholdProfile            string   `json:"threshold_profile"`
+	EvaluationReport            string   `json:"evaluation_report,omitempty"`
 }
 
 // DefaultRouting 返回未指定模型文件参数时使用的路由默认值。
@@ -58,6 +89,7 @@ func DefaultRouting() Routing {
 		Cooldown:                30 * time.Second,
 		EconomyThresholdPercent: 20,
 		MinimumAttemptWindow:    250 * time.Millisecond,
+		Semantic:                SemanticRouting{Mode: "off", Provider: "typesafe", ModelVersion: "jev-1.13.0", StateBuilderVersion: "recent-user.v1", QuestionTemplateVersion: "task-complexity.zh.v1", MappingVersion: "task-target.v1", Timeout: 200 * time.Millisecond, SamplePercent: 5},
 	}
 }
 
@@ -72,6 +104,7 @@ type Config struct {
 	OpenAIBaseURL          string
 	AnthropicAPIKey        string
 	AnthropicBaseURL       string
+	TypeSafeAPIKey         string
 	Models                 []Model
 	Routing                Routing
 	RequestTimeout         time.Duration
@@ -88,11 +121,27 @@ type modelsDocument struct {
 }
 
 type routingDocument struct {
-	AttemptTimeout          string `json:"attempt_timeout"`
-	FailureThreshold        *int   `json:"failure_threshold"`
-	Cooldown                string `json:"cooldown"`
-	EconomyThresholdPercent *int   `json:"economy_threshold_percent"`
-	MinimumAttemptWindow    string `json:"minimum_attempt_window"`
+	AttemptTimeout          string                  `json:"attempt_timeout"`
+	FailureThreshold        *int                    `json:"failure_threshold"`
+	Cooldown                string                  `json:"cooldown"`
+	EconomyThresholdPercent *int                    `json:"economy_threshold_percent"`
+	MinimumAttemptWindow    string                  `json:"minimum_attempt_window"`
+	Semantic                semanticRoutingDocument `json:"semantic"`
+}
+
+type semanticRoutingDocument struct {
+	Mode                    string         `json:"mode"`
+	ExternalEnabled         bool           `json:"external_enabled"`
+	Provider                string         `json:"provider"`
+	ModelVersion            string         `json:"model_version"`
+	StateBuilderVersion     string         `json:"state_builder_version"`
+	QuestionTemplateVersion string         `json:"question_template_version"`
+	MappingVersion          string         `json:"mapping_version"`
+	AllowedDataClasses      []string       `json:"allowed_data_classes"`
+	Timeout                 string         `json:"timeout"`
+	SamplePercent           *int           `json:"sample_percent"`
+	AssessmentPricing       *Pricing       `json:"assessment_pricing"`
+	Rules                   []SemanticRule `json:"rules"`
 }
 
 // Load 从环境变量读取配置，并校验启动所需的密钥。
@@ -102,6 +151,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	openAIAPIKey, err := loadSecret("OPENAI_API_KEY", "OPENAI_API_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	typeSafeAPIKey, err := loadSecret("TYPESAFE_API_KEY", "TYPESAFE_API_KEY_FILE")
 	if err != nil {
 		return Config{}, err
 	}
@@ -119,6 +172,7 @@ func Load() (Config, error) {
 		OpenAIBaseURL:       valueOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		AnthropicAPIKey:     anthropicAPIKey,
 		AnthropicBaseURL:    valueOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		TypeSafeAPIKey:      typeSafeAPIKey,
 		Routing:             DefaultRouting(),
 		RequestTimeout:      60 * time.Second,
 		ConfigVersion:       "compatibility-v1",
@@ -281,6 +335,9 @@ func ParseModels(contents []byte, defaults Routing) ([]Model, Routing, string, e
 	if err := validateModels(document.Models); err != nil {
 		return nil, Routing{}, "", err
 	}
+	if err := validateSemanticTargets(routing.Semantic, document.Models); err != nil {
+		return nil, Routing{}, "", err
+	}
 	version, err := hashModelsDocument(document)
 	if err != nil {
 		return nil, Routing{}, "", err
@@ -348,7 +405,183 @@ func parseRouting(document routingDocument, defaults Routing) (Routing, error) {
 		}
 		routing.MinimumAttemptWindow = minimumWindow
 	}
+	semantic, err := parseSemanticRouting(document.Semantic)
+	if err != nil {
+		return Routing{}, err
+	}
+	routing.Semantic = semantic
 	return routing, nil
+}
+
+// parseSemanticRouting 解析并校验语义路由配置。
+func parseSemanticRouting(document semanticRoutingDocument) (SemanticRouting, error) {
+	semantic := SemanticRouting{Mode: "off", Provider: "typesafe", ModelVersion: "jev-1.13.0", StateBuilderVersion: "recent-user.v1", QuestionTemplateVersion: "task-complexity.zh.v1", MappingVersion: "task-target.v1", Timeout: 200 * time.Millisecond, SamplePercent: 5}
+	if document.Mode != "" {
+		semantic.Mode = document.Mode
+	}
+	if semantic.Mode != "off" && semantic.Mode != "shadow" && semantic.Mode != "active" {
+		return SemanticRouting{}, errors.New("routing.semantic.mode must be off, shadow, or active")
+	}
+	if document.ExternalEnabled {
+		semantic.ExternalEnabled = true
+	}
+	if document.Provider != "" {
+		semantic.Provider = document.Provider
+	}
+	if document.ModelVersion != "" {
+		semantic.ModelVersion = document.ModelVersion
+	}
+	if document.StateBuilderVersion != "" {
+		semantic.StateBuilderVersion = document.StateBuilderVersion
+	}
+	if document.QuestionTemplateVersion != "" {
+		semantic.QuestionTemplateVersion = document.QuestionTemplateVersion
+	}
+	if document.MappingVersion != "" {
+		semantic.MappingVersion = document.MappingVersion
+	}
+	if document.AllowedDataClasses != nil {
+		semantic.AllowedDataClasses = append([]string(nil), document.AllowedDataClasses...)
+	}
+	if document.Timeout != "" {
+		value, err := parsePositiveDuration("routing.semantic.timeout", document.Timeout)
+		if err != nil || value > 5*time.Second {
+			return SemanticRouting{}, errors.New("routing.semantic.timeout must be between 1ns and 5s")
+		}
+		semantic.Timeout = value
+	}
+	if document.SamplePercent != nil {
+		if *document.SamplePercent < 0 || *document.SamplePercent > 100 {
+			return SemanticRouting{}, errors.New("routing.semantic.sample_percent must be between 0 and 100")
+		}
+		semantic.SamplePercent = *document.SamplePercent
+	}
+	if document.AssessmentPricing != nil {
+		pricing := *document.AssessmentPricing
+		semantic.AssessmentPricing = &pricing
+	}
+	semantic.Rules = append([]SemanticRule(nil), document.Rules...)
+	for i := range semantic.Rules {
+		semantic.Rules[i].PreferredTargetIDs = append([]string(nil), semantic.Rules[i].PreferredTargetIDs...)
+	}
+	if err := validateSemanticRouting(semantic); err != nil {
+		return SemanticRouting{}, err
+	}
+	return semantic, nil
+}
+
+// validateSemanticRouting 检查语义配置的固定版本、白名单和启用条件。
+func validateSemanticRouting(semantic SemanticRouting) error {
+	if semantic.Provider != "typesafe" {
+		return errors.New("routing.semantic.provider must be typesafe")
+	}
+	if !validJevVersion(semantic.ModelVersion) {
+		return errors.New("routing.semantic.model_version must be a fixed Jev version")
+	}
+	if semantic.StateBuilderVersion != "recent-user.v1" {
+		return errors.New("unsupported routing.semantic.state_builder_version")
+	}
+	if semantic.QuestionTemplateVersion != "task-complexity.zh.v1" && semantic.QuestionTemplateVersion != "task-complexity.en.v1" && semantic.QuestionTemplateVersion != "task-complexity.auto.v1" {
+		return errors.New("unsupported routing.semantic.question_template_version")
+	}
+	if semantic.MappingVersion != "task-target.v1" {
+		return errors.New("unsupported routing.semantic.mapping_version")
+	}
+	seenClass := map[string]bool{}
+	for _, class := range semantic.AllowedDataClasses {
+		if class != "public" || seenClass[class] {
+			return errors.New("routing.semantic.allowed_data_classes may contain only unique public")
+		}
+		seenClass[class] = true
+	}
+	seen := map[string]bool{}
+	for _, rule := range semantic.Rules {
+		if !validSemanticTask(rule.TaskType) || !validSemanticComplexity(rule.Complexity) || (rule.Language != "" && rule.Language != "zh" && rule.Language != "en") {
+			return errors.New("routing.semantic.rules contains an unsupported task, complexity, or language")
+		}
+		key := rule.TaskType + "\x00" + rule.Complexity + "\x00" + rule.Language
+		if seen[key] {
+			return errors.New("routing.semantic.rules contains a duplicate rule")
+		}
+		seen[key] = true
+		if rule.MinimumTaskConfidence < 0.5 || rule.MinimumTaskConfidence > 1 || rule.MinimumComplexityConfidence < 0.5 || rule.MinimumComplexityConfidence > 1 || rule.MinimumProbabilityMargin <= 0 || rule.MinimumProbabilityMargin > 1 {
+			return errors.New("routing.semantic rule thresholds must be between 0 and 1")
+		}
+		if rule.MinimumQualityTier < 0 || rule.MinimumQualityTier > 5 || rule.ThresholdProfile == "" {
+			return errors.New("routing.semantic rule requires a threshold profile and valid quality tier")
+		}
+		if rule.MinimumQualityTier == 0 && len(rule.PreferredTargetIDs) == 0 {
+			return errors.New("routing.semantic rule must define a quality tier or preferred targets")
+		}
+		if semantic.Mode == "active" && strings.TrimSpace(rule.EvaluationReport) == "" {
+			return errors.New("active semantic rules require evaluation_report")
+		}
+		targets := map[string]bool{}
+		for _, id := range rule.PreferredTargetIDs {
+			if strings.TrimSpace(id) == "" || targets[id] {
+				return errors.New("routing.semantic rule has an invalid preferred target")
+			}
+			targets[id] = true
+		}
+	}
+	if semantic.Mode == "active" && (!semantic.ExternalEnabled || len(semantic.Rules) == 0 || len(semantic.AllowedDataClasses) == 0) {
+		return errors.New("active semantic routing requires external_enabled, allowed_data_classes, and rules")
+	}
+	return nil
+}
+
+// validateSemanticTargets 确认语义偏好目标在模型目录中唯一存在。
+func validateSemanticTargets(semantic SemanticRouting, models []Model) error {
+	known := map[string]int{}
+	for _, model := range models {
+		for _, target := range model.Targets {
+			known[target.ID]++
+		}
+	}
+	for _, rule := range semantic.Rules {
+		for _, id := range rule.PreferredTargetIDs {
+			if known[id] == 0 {
+				return fmt.Errorf("routing.semantic preferred target %q is not in the model directory", id)
+			}
+			if known[id] > 1 {
+				return fmt.Errorf("routing.semantic preferred target %q is ambiguous", id)
+			}
+		}
+	}
+	return nil
+}
+
+// validJevVersion 只接受由数字组成的固定 Jev 三段版本号。
+func validJevVersion(value string) bool {
+	version, ok := strings.CutPrefix(value, "jev-")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// validSemanticTask 判断任务类型是否属于支持的固定枚举。
+func validSemanticTask(value string) bool {
+	return value == "extraction" || value == "transformation" || value == "writing" || value == "code" || value == "analysis" || value == "other"
+}
+
+// validSemanticComplexity 判断复杂度是否属于支持的固定枚举。
+func validSemanticComplexity(value string) bool {
+	return value == "simple" || value == "standard" || value == "complex"
 }
 
 // validateModels 校验逻辑模型、目标数量和唯一性。

@@ -14,7 +14,7 @@ Limen 兼容的是 OpenAI Chat Completions 的受支持子集，不宣称完整�
 | `temperature` | 支持 | 由 Provider 适配器转换。 |
 | `stream` | 支持 | 普通响应或 OpenAI 风格 SSE。 |
 | `stream_options.include_usage` | 支持 | 仅在 `stream=true` 时接受布尔值；控制 OpenAI SSE 是否请求最终用量事件。 |
-| `limen` | Limen 扩展 | 能力、数据等级和 `balanced/economy` 策略契约。 |
+| `limen` | Limen 扩展 | 能力、数据等级和 `balanced/economy` 策略契约；在启用语义路由时可用 `semantic_routing:false` 跳过 Jev。 |
 | `tools`、`tool_choice` | 明确拒绝 | 返回 `400 unsupported_field`。 |
 | `response_format` | 明确拒绝 | 当前不实现结构化输出。 |
 | `n`、`logprobs` | 明确拒绝 | 当前不实现多候选和 Logprobs。 |

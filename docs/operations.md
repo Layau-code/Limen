@@ -6,6 +6,12 @@
 
 启动失败通常表示配置错误：检查 JSON 是否严格匹配示例、模型 ID 是否重复、目标 Provider 是否支持、时长是否为正数，以及实际引用的 Provider Key 是否存在。生产 Provider Base URL 必须是绝对 HTTPS 地址且不能含用户信息；测试代码注入的 `httptest` Client 不受此配置限制。
 
+## 观测控制台
+
+打开 `GET /ui/` 可使用嵌入式 Limen Observability 控制台。没有输入 API Key 时，页面使用带有 `Demo data` 标识的安全固定数据；不会把固定数据伪装成生产状态。输入当前租户 API Key 后，浏览器只在当前 sessionStorage 会话中保存密钥，并通过 `Authorization: Bearer` 读取 `/v1/models`、`/v1/limen/runs/{run_id}` 和 `/v1/limen/decisions/{decision_id}` 及其 Replay 接口；退出连接会清除该值。
+
+live 观测至少需要 `inference`、`runs:read` 和 `decisions` Scope。配置、审计和凭据管理仍按各自控制面 Scope 鉴权。控制台故意不展示 Prompt、Response、Tool 参数、API Key、Provider 凭据或原始上游错误正文；Replay 页面明确为 decision-only，不会发起 Provider 调用。
+
 ## 健康检查
 
 - `GET /livez`：无需鉴权，进程可响应即返回 `200`。
@@ -39,6 +45,50 @@
 Exporter 在后台批量发送。初始化失败会禁用 Trace，运行时导出失败只记录不含端点和凭据的通用告警，不影响模型请求。进程关闭时最多等待 5 秒刷新 Trace。
 
 `GET /metrics` 需要 `admin` Scope。排障时，`limen_provider_attempts_total` 表示实际发出的上游调用；`circuit_open` 等未调用步骤只保留在 Decision 和 Trace 中。模型、状态和原因均为归一化低基数标签，不应使用它恢复原始请求内容。
+
+## Jev 语义路由
+
+Jev 用于为 `model="auto"` 的文本请求给出受控的任务类型和复杂度信号；确定性 Decision Engine 仍负责能力、质量下限、数据等级、预算、健康和最终目标排序。默认 `routing.semantic.mode` 为 `off`，且 `external_enabled` 默认关闭。Jev API Key 可通过 `TYPESAFE_API_KEY`/`TYPESAFE_API_KEY_FILE` 提供；启用凭据保险库时也可轮换 `typesafe` 凭据。
+
+先在版本化模型配置的 `routing` 下显式允许公开数据并开启影子采样。示例规则只供演练，不能据此切到 `active`：
+
+```json
+{
+  "routing": {
+    "semantic": {
+      "mode": "shadow",
+      "external_enabled": true,
+      "provider": "typesafe",
+      "model_version": "jev-1.13.0",
+      "state_builder_version": "recent-user.v1",
+      "question_template_version": "task-complexity.auto.v1",
+      "mapping_version": "task-target.v1",
+      "allowed_data_classes": ["public"],
+      "timeout": "200ms",
+      "sample_percent": 5,
+      "rules": [
+        {
+          "task_type": "code",
+          "complexity": "complex",
+          "language": "zh",
+          "minimum_task_confidence": 0.8,
+          "minimum_complexity_confidence": 0.8,
+          "minimum_probability_margin": 0.15,
+          "minimum_quality_tier": 4,
+          "preferred_target_ids": ["anthropic-primary"],
+          "threshold_profile": "code-complex-zh.v1"
+        }
+      ]
+    }
+  }
+}
+```
+
+每条进入外部评估的请求还必须通过两道独立授权：配置 `external_enabled=true`，并由 API Key 显式拥有 `semantic:external` Scope；请求必须声明 `limen.data_class="public"`。显式模型、兼容模式、未授权请求、无用户文本和 `limen.semantic_routing=false` 都不会调用 Jev。网关只向 Jev 发送最近最多三条用户/助手文本，最多 4 KiB；最新用户消息本身超限时直接跳过。正文只在调用和有界影子队列的进程内存中短暂存在，决策快照与 `semantic_shadow_evaluations` 只保存哈希、长度、分类概率、耗时和反事实计划。
+
+影子请求不会改变真实计划；队列容量固定，队列满会丢弃该样本并计数。影子模式至少需要 PostgreSQL 才能持久化结果，单机模式只使用进程内存。可用 `POST /v1/limen/decisions/semantic-preview` 对单条公开样本做有名的在线预览；它需要 `inference`、`decisions` 和 `semantic:external`，不会保存正文或决策。
+
+通过影子样本和独立留出集验证分类质量、中文/英文覆盖、高成本升级率、总成本、超时回退与缺样率后，才发布 `active` 规则。启用规则必须带经人工验证的 `evaluation_report` 标识和固定 Jev 版本；规则阈值要来自项目评估样本，不能直接照抄上面的示例。若配置了 `assessment_pricing`（输入/输出每百万 Token 的美元单价），网关会估算并单独计量 Jev 成本；未配置价格时会显示成本未知，并持续统计 Token。`active` 调用初始上限为 200ms，且不超过请求剩余预算的 10%；失败会按固定状态回退到原规则。GET Decision 仅公开语义类别与分布，不公开原始状态文本；Replay 使用已存信号，不会再次请求 Jev。
 
 请求日志和 HTTP Trace 的 `ttfb_ms` 表示首次写出响应正文的延迟；SSE 首段已 Flush 时即可观察该值，不代表完整响应或结算已经结束。
 

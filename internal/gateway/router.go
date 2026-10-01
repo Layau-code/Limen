@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huz/limen/internal/catalog"
+	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/decision"
 	"github.com/huz/limen/internal/provider"
 	"go.opentelemetry.io/otel"
@@ -32,6 +33,7 @@ type Router struct {
 	registryMu        sync.RWMutex
 	registry          *ModelRegistry
 	configVersion     string
+	semanticRouting   config.SemanticRouting
 	policy            Policy
 	providerEndpoints map[string]string
 	breakers          map[string]*circuitBreaker
@@ -68,12 +70,13 @@ type AttemptStartHook func(decision.PlanTarget) error
 
 // ChatOptions 描述一次 Chat 执行所需的可选治理快照和审计钩子。
 type ChatOptions struct {
-	Run           decision.RunSnapshot
-	Registry      *ModelRegistry
-	ConfigVersion string
-	Policy        *Policy
-	BeforeExecute func(decision.Input, decision.ExecutionPlan) error
-	BeforeAttempt AttemptStartHook
+	Run                decision.RunSnapshot
+	Registry           *ModelRegistry
+	ConfigVersion      string
+	Policy             *Policy
+	SemanticAssessment *decision.SemanticAssessment
+	BeforeExecute      func(decision.Input, decision.ExecutionPlan) error
+	BeforeAttempt      AttemptStartHook
 }
 
 // Decision 描述一次请求实际经过的安全路由路径。
@@ -149,6 +152,12 @@ func (router *Router) ReplaceRegistry(registry *ModelRegistry, version string) e
 
 // ReplaceRegistryWithPolicy 替换模型目录和路由策略，供配置版本发布使用。
 func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version string, policy Policy) error {
+	return router.ReplaceRegistryWithSemanticPolicy(registry, version, policy, router.SemanticRouting())
+}
+
+// ReplaceRegistryWithSemanticPolicy atomically publishes model, reliability, and semantic routing policy.
+// ReplaceRegistryWithSemanticPolicy 原子发布模型目录及完整路由策略。
+func (router *Router) ReplaceRegistryWithSemanticPolicy(registry *ModelRegistry, version string, policy Policy, semanticRouting config.SemanticRouting) error {
 	if registry == nil || len(registry.List()) == 0 {
 		return errors.New("model registry is required")
 	}
@@ -180,8 +189,64 @@ func (router *Router) ReplaceRegistryWithPolicy(registry *ModelRegistry, version
 	router.registry = registry
 	router.breakers = nextBreakers
 	router.policy = policy
+	router.semanticRouting = cloneSemanticRouting(semanticRouting)
 	router.configVersion = strings.TrimSpace(version)
 	return nil
+}
+
+// SetSemanticRouting replaces the process-local initial semantic routing policy.
+// SetSemanticRouting 设置进程启动阶段使用的语义路由策略。
+func (router *Router) SetSemanticRouting(semanticRouting config.SemanticRouting) {
+	if router == nil {
+		return
+	}
+	router.registryMu.Lock()
+	router.semanticRouting = cloneSemanticRouting(semanticRouting)
+	router.registryMu.Unlock()
+}
+
+// SemanticRouting returns an isolated copy of the active semantic policy.
+// SemanticRouting 返回当前语义策略的隔离副本。
+func (router *Router) SemanticRouting() config.SemanticRouting {
+	if router == nil {
+		return config.SemanticRouting{Mode: "off"}
+	}
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return cloneSemanticRouting(router.semanticRouting)
+}
+
+// RoutingSnapshot 在同一读锁内冻结目录、版本和策略，避免评估期间发布配置造成混用。
+func (router *Router) RoutingSnapshot() (*ModelRegistry, string, Policy, config.SemanticRouting) {
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.registry, router.configVersion, router.policy, cloneSemanticRouting(router.semanticRouting)
+}
+
+// cloneSemanticRouting 深拷贝配置中的可变字段。
+func cloneSemanticRouting(value config.SemanticRouting) config.SemanticRouting {
+	value.AllowedDataClasses = append([]string(nil), value.AllowedDataClasses...)
+	value.Rules = append([]config.SemanticRule(nil), value.Rules...)
+	if value.AssessmentPricing != nil {
+		pricing := *value.AssessmentPricing
+		value.AssessmentPricing = &pricing
+	}
+	for index := range value.Rules {
+		value.Rules[index].PreferredTargetIDs = append([]string(nil), value.Rules[index].PreferredTargetIDs...)
+	}
+	return value
+}
+
+// cloneFloatMap 深拷贝浮点映射。
+func cloneFloatMap(values map[string]float64) map[string]float64 {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 // SetProviderEndpointIDs 设置各 Provider 的进程级 endpoint 绑定，并校验当前模型目录。
@@ -253,6 +318,17 @@ func (router *Router) ConfigVersion() string {
 	return router.configVersion
 }
 
+// IsCompatibilityMode reports whether the active registry is the legacy pass-through catalog.
+// IsCompatibilityMode 判断当前是否使用旧版直通目录。
+func (router *Router) IsCompatibilityMode() bool {
+	if router == nil {
+		return true
+	}
+	router.registryMu.RLock()
+	defer router.registryMu.RUnlock()
+	return router.registry == nil || router.registry.IsCompatibility()
+}
+
 // ObservableModelID 将请求模型归一为来自当前目录的安全低基数标识。
 func (router *Router) ObservableModelID(requested string) string {
 	if requested == "auto" {
@@ -312,6 +388,16 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 	} else {
 		input, plan, err = router.planWithRegistryAndRunPolicy(request, contract, options.Registry, options.ConfigVersion, options.Run, policy)
 	}
+	if options.SemanticAssessment != nil && input.SchemaVersion != "" {
+		input.SchemaVersion = decision.SchemaVersionV2
+		input.AlgorithmVersion = decision.AlgorithmVersionV3
+		assessment := *options.SemanticAssessment
+		assessment.TaskProbabilities = cloneFloatMap(assessment.TaskProbabilities)
+		assessment.ComplexityProbabilities = cloneFloatMap(assessment.ComplexityProbabilities)
+		assessment.PreferredTargetIDs = append([]string(nil), assessment.PreferredTargetIDs...)
+		input.SemanticAssessment = &assessment
+		plan, err = router.engine.Decide(input)
+	}
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.String("limen.config.version", plan.ConfigVersion),
@@ -330,6 +416,11 @@ func (router *Router) chatWithContract(parent context.Context, request provider.
 		span.SetStatus(codes.Error, "")
 		var decisionErr *decision.DecisionError
 		if errors.As(err, &decisionErr) && decisionErr.Code == "no_eligible_target" {
+			if options.BeforeExecute != nil && input.AlgorithmVersion == decision.AlgorithmVersionV3 {
+				if hookErr := options.BeforeExecute(input, plan); hookErr != nil {
+					return Result{Input: input, Plan: plan}, hookErr
+				}
+			}
 			return Result{Input: input, Plan: plan}, &NoEligibleTargetError{Plan: plan}
 		}
 		return Result{Input: input, Plan: plan}, err

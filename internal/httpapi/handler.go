@@ -17,6 +17,7 @@ import (
 	"github.com/huz/limen/internal/audit"
 	"github.com/huz/limen/internal/auth"
 	"github.com/huz/limen/internal/catalog"
+	"github.com/huz/limen/internal/config"
 	"github.com/huz/limen/internal/configstore"
 	"github.com/huz/limen/internal/cost"
 	"github.com/huz/limen/internal/credentialstore"
@@ -25,7 +26,9 @@ import (
 	"github.com/huz/limen/internal/journal"
 	"github.com/huz/limen/internal/provider"
 	"github.com/huz/limen/internal/run"
+	"github.com/huz/limen/internal/semantic"
 	"github.com/huz/limen/internal/telemetry"
+	"github.com/huz/limen/internal/web"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -64,6 +67,8 @@ type Handler struct {
 	credentialEndpoints    map[string]string
 	cancellations          *run.CancellationHub
 	credentialMu           sync.Mutex
+	semanticAssessor       semantic.Assessor
+	semanticShadow         *semantic.ShadowWorker
 }
 
 const runTenantID = "local"
@@ -138,6 +143,9 @@ type HandlerOptions struct {
 	Approvals              approval.Store
 	ConfigApprovalRequired bool
 	Cancellations          *run.CancellationHub
+	SemanticAssessor       semantic.Assessor
+	SemanticShadow         *semantic.ShadowWorker
+	Metrics                *telemetry.Registry
 }
 
 // NewWithHealthAndRunsForTenantAuthenticatorJournalConfigCredentials 创建完整数据面和凭据控制面。
@@ -213,6 +221,10 @@ func NewWithOptions(options HandlerOptions) http.Handler {
 	if audits == nil {
 		audits = audit.NewMemoryStore()
 	}
+	metrics := options.Metrics
+	if metrics == nil {
+		metrics = telemetry.NewRegistry()
+	}
 	handler := &Handler{
 		authenticator:          authenticator,
 		router:                 router,
@@ -225,15 +237,19 @@ func NewWithOptions(options HandlerOptions) http.Handler {
 		configApprovalRequired: configApprovalRequired,
 		audit:                  audits,
 		apiKeys:                apiKeys,
-		metrics:                telemetry.NewRegistry(),
+		metrics:                metrics,
 		credentials:            credentials,
 		credentialSetters:      setters,
 		credentialEndpoints:    endpoints,
 		cancellations:          cancellationHub,
+		semanticAssessor:       options.SemanticAssessor,
+		semanticShadow:         options.SemanticShadow,
 	}
 	mux := http.NewServeMux()
+	mux.Handle("GET /ui/", web.Handler())
 	mux.HandleFunc("POST /v1/chat/completions", handler.chatCompletions)
 	mux.HandleFunc("POST /v1/limen/decisions/dry-run", handler.dryRun)
+	mux.HandleFunc("POST /v1/limen/decisions/semantic-preview", handler.semanticPreview)
 	mux.HandleFunc("GET /v1/limen/decisions/{decision_id}", handler.getDecision)
 	mux.HandleFunc("POST /v1/limen/decisions/{decision_id}/replay", handler.replayDecision)
 	mux.HandleFunc("GET /v1/limen/configs", handler.listConfigs)
@@ -795,6 +811,20 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 	if !h.authenticateScopes(w, r, scopes...) {
 		return
 	}
+	requestBudget := 60 * time.Second
+	var requestRegistry *gateway.ModelRegistry
+	var requestConfigVersion string
+	var requestPolicy gateway.Policy
+	var requestSemantic config.SemanticRouting
+	if h.router != nil {
+		requestRegistry, requestConfigVersion, requestPolicy, requestSemantic = h.router.RoutingSnapshot()
+		if requestPolicy.RequestTimeout > 0 {
+			requestBudget = requestPolicy.RequestTimeout
+		}
+	}
+	requestContext, cancelRequest := context.WithTimeout(r.Context(), requestBudget)
+	defer cancelRequest()
+	*r = *r.WithContext(requestContext)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "invalid_body")
@@ -814,6 +844,8 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 		*metricModel = "unavailable"
 	} else {
 		*metricModel = h.router.ObservableModelID(envelope.Request.Model)
+		envelope.Registry, envelope.ConfigVersion = requestRegistry, requestConfigVersion
+		envelope.Policy, envelope.SemanticRouting = &requestPolicy, requestSemantic
 	}
 	if !h.applyRunContract(w, r, &envelope) {
 		return
@@ -822,6 +854,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadGateway, "provider unavailable", "api_error", "provider_unavailable")
 		return
 	}
+	if envelope.Run.RemainingDeadline > 0 {
+		runContext, cancelRun := context.WithTimeout(r.Context(), envelope.Run.RemainingDeadline)
+		defer cancelRun()
+		*r = *r.WithContext(runContext)
+	}
 	stopCancellation := h.watchRunCancellation(r, h.requestTenantID(r), strings.TrimSpace(r.Header.Get("X-Limen-Run-ID")))
 	defer stopCancellation()
 	requestID, releaseLease, admitted := h.admitRunRequest(w, r, body)
@@ -829,7 +866,8 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer releaseLease()
-	h.forward(w, r, envelope.Request, envelope.Contract, envelope.Run, envelope.Registry, envelope.ConfigVersion, envelope.Policy, requestID)
+	semanticAssessment, semanticState, shadowSemantic := h.prepareSemantic(r, envelope)
+	h.forward(w, r, envelope.Request, envelope.Contract, envelope.Run, envelope.Registry, envelope.ConfigVersion, envelope.Policy, requestID, semanticAssessment, semanticState, shadowSemantic, envelope.SemanticRouting)
 }
 
 // applyRunContract 将 Run 固定策略注入请求，并拒绝客户端覆盖治理边界。
@@ -850,8 +888,10 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 	envelope.Contract.Strategy = runItem.Strategy
 	envelope.Contract.Active = true
 	policy := gateway.Policy{}
-	if h.router != nil {
-		policy = h.router.Policy()
+	if envelope.Policy != nil {
+		policy = *envelope.Policy
+	} else if h.router != nil {
+		envelope.Registry, envelope.ConfigVersion, policy, envelope.SemanticRouting = h.router.RoutingSnapshot()
 	}
 	remainingDeadline := time.Duration(0)
 	if !runItem.Deadline.IsZero() {
@@ -860,7 +900,7 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 			remainingDeadline = 0
 		}
 	}
-	if configVersion := strings.TrimSpace(runItem.ConfigVersion); configVersion != "" && configVersion != "runtime" && h.router != nil && configVersion != h.router.ConfigVersion() {
+	if configVersion := strings.TrimSpace(runItem.ConfigVersion); configVersion != "" && configVersion != "runtime" && h.router != nil && configVersion != envelope.ConfigVersion {
 		if h.configs == nil {
 			writeError(w, http.StatusConflict, "Run configuration version is unavailable", "invalid_request_error", "config_version_unavailable")
 			return false
@@ -881,6 +921,7 @@ func (h *Handler) applyRunContract(w http.ResponseWriter, r *http.Request, envel
 		}
 		envelope.Registry = registry
 		envelope.ConfigVersion = record.Version
+		envelope.SemanticRouting = record.Routing.Semantic
 		policy.AttemptTimeout = record.Routing.AttemptTimeout
 		policy.FailureThreshold = record.Routing.FailureThreshold
 		policy.Cooldown = record.Routing.Cooldown
@@ -1233,7 +1274,7 @@ func attemptState(report gateway.AttemptReport) run.AttemptState {
 }
 
 // forward 调用路由选中的 Provider，并转发普通内容或 SSE 数据。
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, registry *gateway.ModelRegistry, configVersion string, policy *gateway.Policy, runRequestID string) {
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provider.ChatRequest, contract decision.Contract, runSnapshot decision.RunSnapshot, registry *gateway.ModelRegistry, configVersion string, policy *gateway.Policy, runRequestID string, semanticAssessment *decision.SemanticAssessment, semanticState semantic.State, shadowSemantic bool, semanticRouting config.SemanticRouting) {
 	tenantID := h.requestTenantID(r)
 	// 仅传递租户标识，Provider 再按绑定的 endpoint 解析实际密钥。
 	request.TenantID = tenantID
@@ -1268,10 +1309,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 	}
 	decisionID := ""
 	result, err := h.router.ChatWithOptions(r.Context(), request, contract, gateway.ChatOptions{
-		Run:           runSnapshot,
-		Registry:      registry,
-		ConfigVersion: configVersion,
-		Policy:        policy,
+		Run:                runSnapshot,
+		Registry:           registry,
+		ConfigVersion:      configVersion,
+		Policy:             policy,
+		SemanticAssessment: semanticAssessment,
 		BeforeExecute: func(input decision.Input, plan decision.ExecutionPlan) error {
 			id, recordErr := h.recordDecision(r.Context(), tenantID, input, plan)
 			if recordErr != nil {
@@ -1288,6 +1330,14 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, request provid
 		BeforeAttempt: beforeAttempt,
 	})
 	attemptReports = result.Attempts
+	if shadowSemantic && decisionID != "" && h.semanticShadow != nil {
+		queued := h.semanticShadow.Submit(semantic.ShadowJob{TenantID: tenantID, DecisionID: decisionID, State: semanticState, Config: semanticRouting, Input: result.Input})
+		outcome := "queued"
+		if !queued {
+			outcome = "queue_dropped"
+		}
+		h.metrics.Inc(telemetry.SemanticAssessmentsTotal, telemetry.Labels{Endpoint: "/v1/chat/completions", Reason: outcome})
+	}
 	metricModel := h.router.ObservableModelID(request.Model)
 	for _, attempt := range result.Attempts {
 		h.metrics.Inc(telemetry.AttemptsTotal, telemetry.Labels{
